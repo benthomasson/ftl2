@@ -35,6 +35,29 @@ check_docker() {
     fi
 }
 
+# Set up SSH key authentication for all containers
+setup_ssh_keys() {
+    local ssh_key="$HOME/.ssh/ftl2_multihost_rsa"
+
+    # Generate SSH key if it doesn't exist
+    if [ ! -f "$ssh_key" ]; then
+        echo "  Generating SSH key..."
+        ssh-keygen -t rsa -b 4096 -f "$ssh_key" -N "" -C "ftl2-multihost" > /dev/null 2>&1
+    fi
+
+    # Copy public key to all containers
+    echo "  Copying SSH key to containers..."
+    for container in "${CONTAINERS[@]}"; do
+        docker exec "$container" mkdir -p /config/.ssh 2>/dev/null
+        cat "${ssh_key}.pub" | docker exec -i "$container" tee /config/.ssh/authorized_keys > /dev/null
+        docker exec "$container" chmod 700 /config/.ssh
+        docker exec "$container" chmod 600 /config/.ssh/authorized_keys
+        docker exec "$container" chown -R 1000:1000 /config/.ssh
+    done
+
+    echo -e "${GREEN}  SSH key configured: $ssh_key${NC}"
+}
+
 # Start all containers
 start_containers() {
     echo -e "${GREEN}Starting multi-host SSH environment...${NC}"
@@ -70,6 +93,18 @@ start_containers() {
     else
         echo -e "${YELLOW}Warning: Health check timeout, but containers may still work${NC}"
     fi
+
+    # Install Python in all containers
+    echo
+    echo -e "${YELLOW}Installing Python in containers...${NC}"
+    for container in "${CONTAINERS[@]}"; do
+        docker exec "$container" apk add python3 > /dev/null 2>&1
+    done
+    echo -e "${GREEN}Python installed in all containers${NC}"
+
+    # Set up SSH key authentication
+    echo -e "${YELLOW}Setting up SSH key authentication...${NC}"
+    setup_ssh_keys
 
     echo
     show_info
@@ -110,18 +145,18 @@ show_info() {
     echo -e "${GREEN}SSH Connection Information:${NC}"
     echo
     echo "  web01:"
-    echo "    ssh -p 2222 testuser@localhost"
+    echo "    ssh -p 2222 -i ~/.ssh/ftl2_multihost_rsa testuser@localhost"
     echo "    Host: 127.0.0.1:2222"
     echo
     echo "  web02:"
-    echo "    ssh -p 2223 testuser@localhost"
+    echo "    ssh -p 2223 -i ~/.ssh/ftl2_multihost_rsa testuser@localhost"
     echo "    Host: 127.0.0.1:2223"
     echo
     echo "  db01:"
-    echo "    ssh -p 2224 testuser@localhost"
+    echo "    ssh -p 2224 -i ~/.ssh/ftl2_multihost_rsa testuser@localhost"
     echo "    Host: 127.0.0.1:2224"
     echo
-    echo "  Password for all: testpass"
+    echo "  Auth: SSH key (~/.ssh/ftl2_multihost_rsa)"
     echo
 
     echo -e "${GREEN}FTL2 Commands:${NC}"

@@ -5,27 +5,24 @@
 # - webservers: web01, web02 (port 2222, 2223)
 # - databases: db01 (port 2224)
 
-all:
-  children:
-    # Web Server Group
-    webservers:
-      # Variables shared by all webservers
-      vars:
-        server_role: webserver
-        http_port: 80
-        app_name: example-web-app
+# Web Server Group
+webservers:
+  # Variables shared by all webservers
+  vars:
+    server_role: webserver
+    http_port: 80
+    app_name: example-web-app
 
-      # Individual web server hosts
-      hosts:
+  # Individual web server hosts
+  hosts:
         web01:
           ansible_host: 127.0.0.1
           ansible_port: 2222
           ansible_user: testuser
           ansible_connection: ssh
           ansible_python_interpreter: /usr/bin/python3
-          vars:
-            ansible_password: testpass
-            server_id: 1
+          ssh_private_key_file: ~/.ssh/ftl2_multihost_rsa
+          server_id: 1
 
         web02:
           ansible_host: 127.0.0.1
@@ -33,29 +30,27 @@ all:
           ansible_user: testuser
           ansible_connection: ssh
           ansible_python_interpreter: /usr/bin/python3
-          vars:
-            ansible_password: testpass
-            server_id: 2
+          ssh_private_key_file: ~/.ssh/ftl2_multihost_rsa
+          server_id: 2
 
-    # Database Server Group
-    databases:
-      # Variables shared by all database servers
-      vars:
-        server_role: database
-        db_port: 5432
-        db_name: production
+# Database Server Group
+databases:
+  # Variables shared by all database servers
+  vars:
+    server_role: database
+    db_port: 5432
+    db_name: production
 
-      # Individual database hosts
-      hosts:
-        db01:
-          ansible_host: 127.0.0.1
-          ansible_port: 2224
-          ansible_user: testuser
-          ansible_connection: ssh
-          ansible_python_interpreter: /usr/bin/python3
-          vars:
-            ansible_password: testpass
-            server_id: 1
+  # Individual database hosts
+  hosts:
+    db01:
+      ansible_host: 127.0.0.1
+      ansible_port: 2224
+      ansible_user: testuser
+      ansible_connection: ssh
+      ansible_python_interpreter: /usr/bin/python3
+      ssh_private_key_file: ~/.ssh/ftl2_multihost_rsa
+      server_id: 1
 
 # Notes:
 #

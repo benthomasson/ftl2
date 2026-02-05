@@ -28,10 +28,12 @@ Created 5 basic modules in `src/ftl2/modules/`:
 - **Test**: Remote execution working with ping, shell, setup, file, copy modules
 - **Fixed**: Switched from password auth to SSH key auth
 
-### Example 03: Multi-Host 📝
-- **Status**: Created but untested
-- **Files**: All created
-- **Depends**: On resolving Example 02 issues
+### Example 03: Multi-Host ✅
+- **Status**: WORKING
+- **Files**: All created and tested
+- **Authentication**: SSH key-based (automatic setup via setup.sh)
+- **Test**: Successfully pinged all 3 hosts in parallel
+- **Fixed**: Inventory structure (flattened groups) and SSH key copying
 
 ## Resolved Issues
 
