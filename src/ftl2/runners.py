@@ -69,6 +69,11 @@ class ExecutionContext:
         """Get module arguments from execution config."""
         return self.execution_config.module_args
 
+    @property
+    def dry_run(self) -> bool:
+        """Check if this is a dry-run execution."""
+        return self.execution_config.dry_run
+
 
 @dataclass
 class Gate:
@@ -240,6 +245,10 @@ class LocalModuleRunner(ModuleRunner):
                     error=f"Module {context.module_name} not found in {module_dirs}",
                 )
 
+            # Handle dry-run mode
+            if context.dry_run:
+                return self._dry_run_result(host, context.module_name, merged_args, module_path)
+
             # Execute the module based on its type
             # Python modules (.py extension) use JSON or new-style interface
             # Non-Python modules are treated as binary executables
@@ -355,6 +364,91 @@ class LocalModuleRunner(ModuleRunner):
         """
         pass
 
+    def _dry_run_result(
+        self,
+        host: HostConfig,
+        module_name: str,
+        module_args: dict[str, Any],
+        module_path: Path,
+    ) -> ModuleResult:
+        """Generate dry-run preview result without executing.
+
+        Args:
+            host: Host configuration
+            module_name: Name of the module
+            module_args: Arguments that would be passed
+            module_path: Path to the module file
+
+        Returns:
+            ModuleResult with dry-run preview information
+        """
+        preview = self._generate_preview(module_name, module_args)
+
+        return ModuleResult(
+            host_name=host.name,
+            success=True,
+            changed=False,
+            output={
+                "dry_run": True,
+                "would_execute": True,
+                "module": module_name,
+                "module_path": str(module_path),
+                "connection": "local",
+                "args": module_args,
+                "preview": preview,
+            },
+        )
+
+    def _generate_preview(self, module_name: str, module_args: dict[str, Any]) -> str:
+        """Generate human-readable preview of what would happen.
+
+        Args:
+            module_name: Name of the module
+            module_args: Arguments to the module
+
+        Returns:
+            Human-readable preview string
+        """
+        if module_name == "ping":
+            data = module_args.get("data", "pong")
+            return f"Would test connectivity (response: {data})"
+
+        elif module_name == "file":
+            path = module_args.get("path", "<unknown>")
+            state = module_args.get("state", "<unknown>")
+            mode = module_args.get("mode")
+
+            if state == "touch":
+                preview = f"Would create file: {path}"
+            elif state == "directory":
+                preview = f"Would create directory: {path}"
+            elif state == "absent":
+                preview = f"Would remove: {path}"
+            elif state == "file":
+                preview = f"Would verify file exists: {path}"
+            else:
+                preview = f"Would manage file: {path} (state={state})"
+
+            if mode:
+                preview += f" with mode {mode}"
+            return preview
+
+        elif module_name == "shell":
+            cmd = module_args.get("cmd", "<unknown>")
+            return f"Would execute: {cmd}"
+
+        elif module_name == "copy":
+            src = module_args.get("src", "<unknown>")
+            dest = module_args.get("dest", "<unknown>")
+            return f"Would copy {src} to {dest}"
+
+        elif module_name == "setup":
+            return "Would gather system facts"
+
+        else:
+            args_str = ", ".join(f"{k}={v}" for k, v in module_args.items())
+            return f"Would execute module '{module_name}' with args: {args_str}"
+
 
 class RemoteModuleRunner(ModuleRunner):
     """Runner for executing modules remotely via SSH gates.
@@ -423,6 +517,13 @@ class RemoteModuleRunner(ModuleRunner):
         module_path = find_module(module_dirs, context.module_name)
         if module_path is None:
             raise ModuleExecutionError(f"Module {context.module_name} not found in {module_dirs}")
+
+        # Handle dry-run mode - return preview without connecting
+        if context.dry_run:
+            return self._dry_run_result(
+                host, context.module_name, merged_args, module_path,
+                ssh_host, ssh_port, ssh_user
+            )
 
         # Initialize gate builder if needed
         if self.gate_builder is None:
@@ -831,6 +932,100 @@ class RemoteModuleRunner(ModuleRunner):
             pass  # Ignore errors during shutdown
         finally:
             gate.conn.close()
+
+    def _dry_run_result(
+        self,
+        host: HostConfig,
+        module_name: str,
+        module_args: dict[str, Any],
+        module_path: Path,
+        ssh_host: str,
+        ssh_port: int,
+        ssh_user: str,
+    ) -> ModuleResult:
+        """Generate dry-run preview result without connecting.
+
+        Args:
+            host: Host configuration
+            module_name: Name of the module
+            module_args: Arguments that would be passed
+            module_path: Path to the module file
+            ssh_host: SSH hostname/IP
+            ssh_port: SSH port
+            ssh_user: SSH username
+
+        Returns:
+            ModuleResult with dry-run preview information
+        """
+        preview = self._generate_preview(module_name, module_args)
+
+        return ModuleResult(
+            host_name=host.name,
+            success=True,
+            changed=False,
+            output={
+                "dry_run": True,
+                "would_execute": True,
+                "module": module_name,
+                "module_path": str(module_path),
+                "connection": "ssh",
+                "ssh_host": ssh_host,
+                "ssh_port": ssh_port,
+                "ssh_user": ssh_user,
+                "args": module_args,
+                "preview": preview,
+            },
+        )
+
+    def _generate_preview(self, module_name: str, module_args: dict[str, Any]) -> str:
+        """Generate human-readable preview of what would happen.
+
+        Args:
+            module_name: Name of the module
+            module_args: Arguments to the module
+
+        Returns:
+            Human-readable preview string
+        """
+        if module_name == "ping":
+            data = module_args.get("data", "pong")
+            return f"Would test connectivity (response: {data})"
+
+        elif module_name == "file":
+            path = module_args.get("path", "<unknown>")
+            state = module_args.get("state", "<unknown>")
+            mode = module_args.get("mode")
+
+            if state == "touch":
+                preview = f"Would create file: {path}"
+            elif state == "directory":
+                preview = f"Would create directory: {path}"
+            elif state == "absent":
+                preview = f"Would remove: {path}"
+            elif state == "file":
+                preview = f"Would verify file exists: {path}"
+            else:
+                preview = f"Would manage file: {path} (state={state})"
+
+            if mode:
+                preview += f" with mode {mode}"
+            return preview
+
+        elif module_name == "shell":
+            cmd = module_args.get("cmd", "<unknown>")
+            return f"Would execute: {cmd}"
+
+        elif module_name == "copy":
+            src = module_args.get("src", "<unknown>")
+            dest = module_args.get("dest", "<unknown>")
+            return f"Would copy {src} to {dest}"
+
+        elif module_name == "setup":
+            return "Would gather system facts"
+
+        else:
+            args_str = ", ".join(f"{k}={v}" for k, v in module_args.items())
+            return f"Would execute module '{module_name}' with args: {args_str}"
 
     async def cleanup(self) -> None:
         """Close all cached gate connections."""

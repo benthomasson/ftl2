@@ -102,6 +102,7 @@ class ExecutionConfig:
         host_args: Host-specific argument overrides (higher precedence than module_args)
         modules: Additional modules to include in gate builds
         dependencies: Python packages required by the module
+        dry_run: If True, show what would happen without executing
 
     Example:
         >>> config = ExecutionConfig(
@@ -118,6 +119,7 @@ class ExecutionConfig:
     host_args: dict[str, dict[str, Any]] = field(default_factory=dict)
     modules: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
+    dry_run: bool = False
 
     def __post_init__(self) -> None:
         """Validate and normalize configuration after initialization."""

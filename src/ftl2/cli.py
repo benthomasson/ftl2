@@ -99,6 +99,94 @@ def format_results_text(
     return "\n".join(lines)
 
 
+def format_dry_run_json(
+    results: ExecutionResults,
+    module: str,
+) -> str:
+    """Format dry-run results as JSON.
+
+    Args:
+        results: Dry-run results from module preview
+        module: Name of module that would be executed
+
+    Returns:
+        JSON string with structured dry-run preview
+    """
+    host_previews: dict[str, Any] = {}
+    for host_name, result in results.results.items():
+        host_previews[host_name] = {
+            "would_execute": result.output.get("would_execute", True),
+            "module": result.output.get("module", module),
+            "connection": result.output.get("connection", "unknown"),
+            "args": result.output.get("args", {}),
+            "preview": result.output.get("preview", ""),
+        }
+        # Include SSH details for remote hosts
+        if result.output.get("connection") == "ssh":
+            host_previews[host_name]["ssh_host"] = result.output.get("ssh_host")
+            host_previews[host_name]["ssh_port"] = result.output.get("ssh_port")
+            host_previews[host_name]["ssh_user"] = result.output.get("ssh_user")
+
+    output = {
+        "dry_run": True,
+        "module": module,
+        "total_hosts": results.total_hosts,
+        "hosts": host_previews,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return json.dumps(output, indent=2)
+
+
+def format_dry_run_text(
+    results: ExecutionResults,
+    module: str,
+) -> str:
+    """Format dry-run results as human-readable text.
+
+    Args:
+        results: Dry-run results from module preview
+        module: Name of module that would be executed
+
+    Returns:
+        Formatted text string
+    """
+    lines = [
+        "",
+        "Dry Run Preview:",
+        f"Module: {module}",
+        f"Would execute on {results.total_hosts} host(s):",
+        "",
+    ]
+
+    for host_name, result in results.results.items():
+        connection = result.output.get("connection", "unknown")
+        preview = result.output.get("preview", "No preview available")
+
+        if connection == "ssh":
+            ssh_host = result.output.get("ssh_host", "unknown")
+            ssh_port = result.output.get("ssh_port", 22)
+            ssh_user = result.output.get("ssh_user", "unknown")
+            lines.append(f"  {host_name} ({ssh_user}@{ssh_host}:{ssh_port}):")
+        else:
+            lines.append(f"  {host_name} (local):")
+
+        lines.append(f"    {preview}")
+
+        # Show args if present
+        args = result.output.get("args", {})
+        if args:
+            args_str = ", ".join(f"{k}={v}" for k, v in args.items())
+            lines.append(f"    Args: {args_str}")
+
+        lines.append("")
+
+    lines.append("No changes made (dry-run mode)")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
 # Main CLI group
 @click.group(invoke_without_command=True)
 @click.option("--version", is_flag=True, help="Show version and exit")
@@ -441,6 +529,7 @@ def validate_execution_requirements(inventory, module_name: str, module_dirs: li
 @click.option("--args", "-a", help="Module arguments in key=value format")
 @click.option("--format", "-f", "output_format", type=click.Choice(["text", "json"]),
               default="text", help="Output format (default: text)")
+@click.option("--dry-run", is_flag=True, help="Show what would happen without executing")
 @click.option("--debug", is_flag=True, help="Show debug logging")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose logging")
 def run_module(
@@ -450,6 +539,7 @@ def run_module(
     requirements: Optional[str],
     args: Optional[str],
     output_format: str,
+    dry_run: bool,
     debug: bool,
     verbose: bool,
 ) -> None:
@@ -467,6 +557,8 @@ def run_module(
         ftl2 run -m file -i inventory.yml -a "path=/tmp/test state=touch"
 
         ftl2 run -m shell -i hosts.yml -a "cmd='uptime'" --verbose
+
+        ftl2 run -m file -i hosts.yml -a "path=/tmp/test state=absent" --dry-run
     """
     # Configure logging
     # For JSON output, suppress logging to avoid polluting the output
@@ -526,6 +618,7 @@ def run_module(
                 module_args=parse_module_args(args),
                 modules=[module],
                 dependencies=dependencies,
+                dry_run=dry_run,
             )
 
             # Create gate configuration
@@ -558,20 +651,29 @@ def run_module(
     # Run the async operations
     results, duration = asyncio.run(run_async())
 
-    # Display results based on format
-    if output_format == "json":
-        click.echo(format_results_json(results, module, duration))
-    else:
-        click.echo(format_results_text(results, verbose=verbose or debug))
-
-    # Exit with error if any host failed
-    if not results.is_success():
-        # For JSON format, the error info is already in the output
-        # Use exit code to indicate failure without extra message
+    # Display results based on format and mode
+    if dry_run:
+        # Dry-run mode - show preview
         if output_format == "json":
-            raise SystemExit(1)
+            click.echo(format_dry_run_json(results, module))
         else:
-            raise click.ClickException(f"{results.failed} host(s) failed execution")
+            click.echo(format_dry_run_text(results, module))
+        # Dry-run always succeeds (no actual execution)
+    else:
+        # Normal execution mode
+        if output_format == "json":
+            click.echo(format_results_json(results, module, duration))
+        else:
+            click.echo(format_results_text(results, verbose=verbose or debug))
+
+        # Exit with error if any host failed
+        if not results.is_success():
+            # For JSON format, the error info is already in the output
+            # Use exit code to indicate failure without extra message
+            if output_format == "json":
+                raise SystemExit(1)
+            else:
+                raise click.ClickException(f"{results.failed} host(s) failed execution")
 
 
 def main() -> None:

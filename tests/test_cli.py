@@ -501,3 +501,119 @@ webservers:
             assert "SSH key not found" in result.output
         finally:
             inv_path.unlink()
+
+
+class TestDryRun:
+    """Tests for dry-run mode."""
+
+    def test_dry_run_help(self):
+        """Test --dry-run option appears in help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["run", "--help"])
+        assert result.exit_code == 0
+        assert "--dry-run" in result.output
+
+    def test_format_dry_run_text(self):
+        """Test dry-run text output formatting."""
+        from ftl2.cli import format_dry_run_text
+        from ftl2.executor import ExecutionResults
+        from ftl2.types import ModuleResult
+
+        results = ExecutionResults(
+            results={
+                "localhost": ModuleResult(
+                    host_name="localhost",
+                    success=True,
+                    changed=False,
+                    output={
+                        "dry_run": True,
+                        "would_execute": True,
+                        "module": "file",
+                        "connection": "local",
+                        "args": {"path": "/tmp/test", "state": "touch"},
+                        "preview": "Would create file: /tmp/test",
+                    },
+                ),
+            }
+        )
+
+        output = format_dry_run_text(results, "file")
+
+        assert "Dry Run Preview:" in output
+        assert "Module: file" in output
+        assert "localhost (local):" in output
+        assert "Would create file: /tmp/test" in output
+        assert "No changes made (dry-run mode)" in output
+
+    def test_format_dry_run_json(self):
+        """Test dry-run JSON output formatting."""
+        import json
+        from ftl2.cli import format_dry_run_json
+        from ftl2.executor import ExecutionResults
+        from ftl2.types import ModuleResult
+
+        results = ExecutionResults(
+            results={
+                "web01": ModuleResult(
+                    host_name="web01",
+                    success=True,
+                    changed=False,
+                    output={
+                        "dry_run": True,
+                        "would_execute": True,
+                        "module": "ping",
+                        "connection": "ssh",
+                        "ssh_host": "192.168.1.10",
+                        "ssh_port": 22,
+                        "ssh_user": "admin",
+                        "args": {},
+                        "preview": "Would test connectivity (response: pong)",
+                    },
+                ),
+            }
+        )
+
+        output = format_dry_run_json(results, "ping")
+        parsed = json.loads(output)
+
+        assert parsed["dry_run"] is True
+        assert parsed["module"] == "ping"
+        assert parsed["total_hosts"] == 1
+        assert "timestamp" in parsed
+        assert parsed["hosts"]["web01"]["would_execute"] is True
+        assert parsed["hosts"]["web01"]["connection"] == "ssh"
+        assert parsed["hosts"]["web01"]["ssh_host"] == "192.168.1.10"
+        assert parsed["hosts"]["web01"]["preview"] == "Would test connectivity (response: pong)"
+
+    def test_format_dry_run_text_ssh(self):
+        """Test dry-run text output for SSH hosts."""
+        from ftl2.cli import format_dry_run_text
+        from ftl2.executor import ExecutionResults
+        from ftl2.types import ModuleResult
+
+        results = ExecutionResults(
+            results={
+                "web01": ModuleResult(
+                    host_name="web01",
+                    success=True,
+                    changed=False,
+                    output={
+                        "dry_run": True,
+                        "would_execute": True,
+                        "module": "shell",
+                        "connection": "ssh",
+                        "ssh_host": "192.168.1.10",
+                        "ssh_port": 2222,
+                        "ssh_user": "deploy",
+                        "args": {"cmd": "uptime"},
+                        "preview": "Would execute: uptime",
+                    },
+                ),
+            }
+        )
+
+        output = format_dry_run_text(results, "shell")
+
+        assert "web01 (deploy@192.168.1.10:2222):" in output
+        assert "Would execute: uptime" in output
+        assert "Args: cmd=uptime" in output
