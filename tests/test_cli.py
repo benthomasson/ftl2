@@ -265,6 +265,43 @@ webservers:
             module_dir.rmdir()
 
 
+class TestTestSsh:
+    """Tests for ftl2 test-ssh command."""
+
+    def test_test_ssh_no_ssh_hosts(self):
+        """Test test-ssh with inventory containing only local hosts."""
+        import tempfile
+        from pathlib import Path
+
+        yaml_content = """
+all:
+  hosts:
+    localhost:
+      ansible_host: 127.0.0.1
+      ansible_connection: local
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_content)
+            f.flush()
+            inv_path = Path(f.name)
+
+        try:
+            runner = CliRunner()
+            result = runner.invoke(cli, ["test-ssh", "-i", str(inv_path)])
+            assert result.exit_code == 0
+            assert "No SSH hosts found" in result.output
+        finally:
+            inv_path.unlink()
+
+    def test_test_ssh_help(self):
+        """Test test-ssh help output."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["test-ssh", "--help"])
+        assert result.exit_code == 0
+        assert "--inventory" in result.output
+        assert "--timeout" in result.output
+
+
 class TestInventoryValidate:
     """Tests for ftl2 inventory validate command."""
 

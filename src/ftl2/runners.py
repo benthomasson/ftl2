@@ -508,6 +508,7 @@ class RemoteModuleRunner(ModuleRunner):
         ssh_key_file: str | None,
         interpreter: str,
         context: ExecutionContext,
+        max_retries: int = 3,
     ) -> Gate:
         """Establish SSH connection and create gate.
 
@@ -519,27 +520,35 @@ class RemoteModuleRunner(ModuleRunner):
             ssh_key_file: SSH private key file path (optional, for key auth)
             interpreter: Remote Python interpreter path
             context: Execution context with gate config
+            max_retries: Maximum connection retry attempts (default: 3)
 
         Returns:
             Active Gate connection
 
         Raises:
-            Exception: On connection or gate creation failure
+            Exception: On connection or gate creation failure after max retries
         """
-        # Retry loop for connection issues
-        while True:
+        import asyncio
+
+        last_error = None
+        auth_method = "SSH key" if ssh_key_file else ("password" if ssh_password else "default keys")
+
+        for attempt in range(1, max_retries + 1):
             try:
+                logger.info(f"Connecting to {ssh_host}:{ssh_port} (attempt {attempt}/{max_retries})")
+
                 # Connect to SSH
                 connect_kwargs = {
                     "host": ssh_host,
                     "port": ssh_port,
                     "username": ssh_user,
                     "known_hosts": None,
-                    "connect_timeout": 3600,  # 1 hour
+                    "connect_timeout": 30,  # 30 seconds per attempt
                 }
                 # Add authentication method
                 if ssh_password:
                     connect_kwargs["password"] = ssh_password
+                    logger.debug("Using password authentication")
                 elif ssh_key_file:
                     # Expand ~ in path
                     import os
@@ -549,7 +558,6 @@ class RemoteModuleRunner(ModuleRunner):
                 else:
                     logger.debug("No password or key file provided, using default SSH keys")
 
-                logger.debug(f"SSH connect_kwargs: {connect_kwargs}")
                 conn = await asyncssh.connect(**connect_kwargs)
 
                 # Verify Python version
@@ -562,16 +570,54 @@ class RemoteModuleRunner(ModuleRunner):
                 # Start gate process
                 gate_process = await self._open_gate(conn, gate_file, interpreter)
 
+                logger.info(f"Connected to {ssh_host}:{ssh_port} successfully")
                 return Gate(conn, gate_process, temp_dir)
+
+            except asyncssh.misc.PermissionDenied as e:
+                # Authentication failures should not retry - they won't succeed
+                logger.error(
+                    f"Authentication failed for {ssh_user}@{ssh_host}:{ssh_port}\n"
+                    f"  Auth method: {auth_method}\n"
+                    f"  Suggestion: Verify credentials or SSH key is in authorized_keys"
+                )
+                raise RuntimeError(
+                    f"SSH authentication failed for {ssh_user}@{ssh_host}:{ssh_port} "
+                    f"using {auth_method}"
+                ) from e
 
             except (
                 ConnectionRefusedError,
                 ConnectionResetError,
                 asyncssh.misc.ConnectionLost,
                 TimeoutError,
+                OSError,
             ) as e:
-                logger.warning(f"Connection failed, retrying: {type(e).__name__}")
-                continue
+                last_error = e
+                error_type = type(e).__name__
+
+                if attempt < max_retries:
+                    # Exponential backoff: 1s, 2s, 4s
+                    delay = 2 ** (attempt - 1)
+                    logger.warning(
+                        f"Connection to {ssh_host}:{ssh_port} failed ({error_type}), "
+                        f"retrying in {delay}s (attempt {attempt}/{max_retries})"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"Failed to connect to {ssh_host}:{ssh_port} after {max_retries} attempts\n"
+                        f"  Last error: {error_type}: {e}\n"
+                        f"  Suggestions:\n"
+                        f"    - Verify host is reachable: ping {ssh_host}\n"
+                        f"    - Check SSH service is running: nc -zv {ssh_host} {ssh_port}\n"
+                        f"    - Verify firewall allows connections"
+                    )
+
+        # All retries exhausted
+        raise RuntimeError(
+            f"Failed to connect to {ssh_host}:{ssh_port} after {max_retries} attempts. "
+            f"Last error: {last_error}"
+        )
 
     async def _check_version(self, conn: SSHClientConnection, interpreter: str) -> None:
         """Verify remote Python version meets requirements.

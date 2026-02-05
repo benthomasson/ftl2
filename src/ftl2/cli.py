@@ -112,6 +112,122 @@ def inventory_validate(inventory: str, check_ssh: bool) -> None:
     click.echo()
 
 
+@cli.command("test-ssh")
+@click.option("--inventory", "-i", required=True, help="Inventory file (YAML format)")
+@click.option("--timeout", "-t", default=10, help="Connection timeout in seconds")
+def test_ssh(inventory: str, timeout: int) -> None:
+    """Test SSH connectivity to all hosts in inventory.
+
+    Attempts to connect to each SSH host and reports success/failure.
+    Useful for verifying SSH setup before running modules.
+
+    Examples:
+        ftl2 test-ssh -i hosts.yml
+
+        ftl2 test-ssh -i inventory.yml --timeout 5
+    """
+    import asyncio
+    import socket
+
+    try:
+        inv = load_inventory(inventory)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+
+    all_hosts = inv.get_all_hosts()
+    ssh_hosts = {name: host for name, host in all_hosts.items()
+                 if host.ansible_connection == "ssh"}
+
+    if not ssh_hosts:
+        click.echo("No SSH hosts found in inventory")
+        return
+
+    click.echo(f"\nTesting SSH connectivity to {len(ssh_hosts)} host(s)...\n")
+
+    async def test_host(host_name: str, host) -> tuple[str, bool, str]:
+        """Test SSH connectivity to a single host."""
+        addr = host.ansible_host
+        port = host.ansible_port
+        user = host.ansible_user or "root"
+
+        # Step 1: Test port connectivity
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((addr, port))
+            sock.close()
+
+            if result != 0:
+                return (host_name, False, f"Port {port} not reachable")
+        except socket.error as e:
+            return (host_name, False, f"Socket error: {e}")
+
+        # Step 2: Test SSH authentication
+        try:
+            import asyncssh
+            import os
+
+            ssh_password = host.get_var("ansible_password")
+            ssh_key_file = host.get_var("ssh_private_key_file")
+
+            connect_kwargs = {
+                "host": addr,
+                "port": port,
+                "username": user,
+                "known_hosts": None,
+                "connect_timeout": timeout,
+            }
+
+            if ssh_password:
+                connect_kwargs["password"] = ssh_password
+            elif ssh_key_file:
+                expanded_key = os.path.expanduser(ssh_key_file)
+                connect_kwargs["client_keys"] = [expanded_key]
+
+            conn = await asyncssh.connect(**connect_kwargs)
+            conn.close()
+            return (host_name, True, "OK")
+
+        except asyncio.TimeoutError:
+            return (host_name, False, "Connection timeout")
+        except Exception as e:
+            error_msg = str(e)
+            # Simplify common error messages
+            if "Permission denied" in error_msg:
+                return (host_name, False, "Authentication failed (permission denied)")
+            elif "Connection refused" in error_msg:
+                return (host_name, False, "Connection refused")
+            return (host_name, False, f"SSH error: {error_msg[:50]}")
+
+    async def run_tests():
+        """Run all SSH tests concurrently."""
+        tasks = [test_host(name, host) for name, host in ssh_hosts.items()]
+        return await asyncio.gather(*tasks)
+
+    results = asyncio.run(run_tests())
+
+    # Display results
+    success_count = 0
+    fail_count = 0
+
+    for host_name, success, message in results:
+        host = ssh_hosts[host_name]
+        addr = host.ansible_host
+        port = host.ansible_port
+
+        if success:
+            click.echo(f"  {host_name} ({addr}:{port}): OK")
+            success_count += 1
+        else:
+            click.echo(f"  {host_name} ({addr}:{port}): FAILED - {message}")
+            fail_count += 1
+
+    click.echo(f"\nResults: {success_count} passed, {fail_count} failed")
+
+    if fail_count > 0:
+        raise click.ClickException(f"{fail_count} host(s) failed SSH connectivity test")
+
+
 def parse_module_args(args: str | None) -> dict[str, str]:
     """Parse module arguments from command-line string into dictionary format.
 
