@@ -1066,3 +1066,113 @@ servers:
         assert "--parallel" in result.output
         assert "--timeout" in result.output
         assert "Safe defaults" in result.output
+
+
+class TestRetryLogic:
+    """Test retry logic and error classification."""
+
+    def test_is_transient_error(self):
+        """Test transient error classification."""
+        from ftl2.retry import is_transient_error, is_permanent_error
+        from ftl2.exceptions import ErrorTypes
+
+        # Transient errors should be retried
+        assert is_transient_error(ErrorTypes.CONNECTION_TIMEOUT)
+        assert is_transient_error(ErrorTypes.CONNECTION_REFUSED)
+        assert is_transient_error(ErrorTypes.HOST_UNREACHABLE)
+
+        # Permanent errors should not be retried
+        assert is_permanent_error(ErrorTypes.AUTHENTICATION_FAILED)
+        assert is_permanent_error(ErrorTypes.PERMISSION_DENIED)
+        assert is_permanent_error(ErrorTypes.MODULE_NOT_FOUND)
+
+    def test_should_retry_smart(self):
+        """Test smart retry logic."""
+        from ftl2.retry import should_retry
+        from ftl2.exceptions import ErrorTypes
+
+        # Smart retry: only transient errors
+        assert should_retry(ErrorTypes.CONNECTION_TIMEOUT, smart_retry=True)
+        assert not should_retry(ErrorTypes.AUTHENTICATION_FAILED, smart_retry=True)
+
+        # Non-smart retry: retry most errors
+        assert should_retry(ErrorTypes.CONNECTION_TIMEOUT, smart_retry=False)
+        assert should_retry(ErrorTypes.AUTHENTICATION_FAILED, smart_retry=False)
+        # But not module not found
+        assert not should_retry(ErrorTypes.MODULE_NOT_FOUND, smart_retry=False)
+
+    def test_retry_config_delay_backoff(self):
+        """Test exponential backoff calculation."""
+        from ftl2.retry import RetryConfig
+
+        config = RetryConfig(
+            initial_delay=5.0,
+            backoff_factor=2.0,
+            max_delay=60.0,
+        )
+
+        # First delay should be initial
+        delay1 = config.get_delay(1)
+        assert 4.5 <= delay1 <= 5.5  # Allow for jitter
+
+        # Second delay should be doubled
+        delay2 = config.get_delay(2)
+        assert 9.0 <= delay2 <= 11.0
+
+        # Third delay should be quadrupled
+        delay3 = config.get_delay(3)
+        assert 18.0 <= delay3 <= 22.0
+
+    def test_retry_config_max_delay_cap(self):
+        """Test that max delay is capped."""
+        from ftl2.retry import RetryConfig
+
+        config = RetryConfig(
+            initial_delay=10.0,
+            backoff_factor=10.0,
+            max_delay=30.0,
+        )
+
+        # Very high attempt should be capped at max_delay
+        delay = config.get_delay(10)
+        assert delay <= 33.0  # max_delay + jitter
+
+    def test_circuit_breaker_check(self):
+        """Test circuit breaker threshold."""
+        from ftl2.retry import check_circuit_breaker, CircuitBreakerConfig
+
+        config = CircuitBreakerConfig(
+            enabled=True,
+            threshold_percent=30.0,
+            min_hosts=5,
+        )
+
+        # Below threshold - don't trigger
+        assert not check_circuit_breaker(10, 2, config)  # 20%
+
+        # Above threshold - trigger
+        assert check_circuit_breaker(10, 4, config)  # 40%
+
+        # Too few hosts - don't trigger
+        assert not check_circuit_breaker(3, 3, config)  # 100% but only 3 hosts
+
+    def test_circuit_breaker_disabled(self):
+        """Test that disabled circuit breaker never triggers."""
+        from ftl2.retry import check_circuit_breaker, CircuitBreakerConfig
+
+        config = CircuitBreakerConfig(enabled=False)
+
+        # Even 100% failure shouldn't trigger when disabled
+        assert not check_circuit_breaker(10, 10, config)
+
+    def test_run_help_shows_retry_options(self):
+        """Test that run help shows retry options."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["run", "--help"])
+
+        assert result.exit_code == 0
+        assert "--retry" in result.output
+        assert "--retry-delay" in result.output
+        assert "--smart-retry" in result.output
+        assert "--circuit-breaker" in result.output
+        assert "Retry options" in result.output

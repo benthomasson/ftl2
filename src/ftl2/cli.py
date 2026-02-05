@@ -30,6 +30,12 @@ from ftl2.safety import (
     DEFAULT_TIMEOUT,
     MAX_PARALLEL,
 )
+from ftl2.retry import (
+    RetryConfig,
+    CircuitBreakerConfig,
+    RetryStats,
+    is_transient_error,
+)
 from ftl2.runners import ExecutionContext
 from ftl2.types import ExecutionConfig, GateConfig, ModuleResult
 
@@ -84,6 +90,10 @@ def format_results_json(
     if errors_list:
         output["errors"] = errors_list
 
+    # Add retry stats if available
+    if results.retry_stats:
+        output["retry_stats"] = results.retry_stats.to_dict()
+
     return json.dumps(output, indent=2)
 
 
@@ -129,6 +139,15 @@ def format_results_text(
         for result in failed_results:
             lines.append("")
             lines.append(result.error_context.format_text())
+        lines.append("")
+
+    # Show retry stats if available
+    if results.retry_stats and (
+        results.retry_stats.succeeded_after_retry > 0 or
+        results.retry_stats.failed_after_retries > 0 or
+        results.retry_stats.circuit_breaker_triggered
+    ):
+        lines.append(results.retry_stats.format_text())
         lines.append("")
 
     return "\n".join(lines)
@@ -742,6 +761,14 @@ def validate_execution_requirements(inventory, module_name: str, module_dirs: li
               help=f"Number of concurrent host connections (default: {DEFAULT_PARALLEL}, max: {MAX_PARALLEL})")
 @click.option("--timeout", "-t", type=int, default=DEFAULT_TIMEOUT,
               help=f"Execution timeout in seconds (default: {DEFAULT_TIMEOUT})")
+@click.option("--retry", type=int, default=0,
+              help="Number of retry attempts for failed hosts (default: 0)")
+@click.option("--retry-delay", type=float, default=5.0,
+              help="Initial delay between retries in seconds (default: 5)")
+@click.option("--smart-retry", is_flag=True,
+              help="Only retry transient errors (connection timeout, etc.)")
+@click.option("--circuit-breaker", type=float, default=0,
+              help="Stop if failure percentage exceeds threshold (e.g., 30 for 30%%)")
 @click.option("--debug", is_flag=True, help="Show debug logging")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose logging")
 def run_module(
@@ -755,6 +782,10 @@ def run_module(
     allow_destructive: bool,
     parallel: int,
     timeout: int,
+    retry: int,
+    retry_delay: float,
+    smart_retry: bool,
+    circuit_breaker: float,
     debug: bool,
     verbose: bool,
 ) -> None:
@@ -768,6 +799,11 @@ def run_module(
     - Destructive commands require --allow-destructive flag
     - Default parallel connections: 10 (max: 100)
     - Default timeout: 300 seconds (5 minutes)
+
+    Retry options:
+    - --retry N: Retry failed hosts up to N times
+    - --smart-retry: Only retry transient errors (timeouts, connection issues)
+    - --circuit-breaker N: Stop if N% of hosts are failing
 
     Examples:
         ftl2 run -m ping -i hosts.yml
@@ -783,6 +819,10 @@ def run_module(
         ftl2 run -m shell -i hosts.yml -a "cmd='rm -rf /old'" --allow-destructive
 
         ftl2 run -m ping -i hosts.yml --parallel 50 --timeout 600
+
+        ftl2 run -m ping -i hosts.yml --retry 3 --smart-retry
+
+        ftl2 run -m setup -i hosts.yml --retry 2 --circuit-breaker 30
     """
     # Configure logging
     # For JSON output, suppress logging to avoid polluting the output
@@ -887,8 +927,25 @@ def run_module(
                 gate_config=gate_config,
             )
 
+            # Create retry configuration
+            retry_cfg = RetryConfig(
+                max_attempts=retry,
+                initial_delay=retry_delay,
+                smart_retry=smart_retry,
+            )
+
+            # Create circuit breaker configuration
+            cb_cfg = CircuitBreakerConfig(
+                enabled=circuit_breaker > 0,
+                threshold_percent=circuit_breaker,
+            )
+
             # Create executor and run (parallel controls concurrent connections)
-            executor = ModuleExecutor(chunk_size=parallel)
+            executor = ModuleExecutor(
+                chunk_size=parallel,
+                retry_config=retry_cfg,
+                circuit_breaker_config=cb_cfg,
+            )
             try:
                 with logger.scope("Module execution"):
                     results = await executor.run(inv, context)
