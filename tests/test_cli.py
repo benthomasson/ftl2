@@ -3,13 +3,13 @@
 from click.testing import CliRunner
 
 from ftl2 import __version__
-from ftl2.cli import main, parse_module_args
+from ftl2.cli import cli, parse_module_args
 
 
 def test_cli_version():
     """Test CLI version output."""
     runner = CliRunner()
-    result = runner.invoke(main, ["--version"])
+    result = runner.invoke(cli, ["--version"])
     assert result.exit_code == 0
     assert __version__ in result.output
 
@@ -17,9 +17,18 @@ def test_cli_version():
 def test_cli_help():
     """Test CLI help output."""
     runner = CliRunner()
-    result = runner.invoke(main, ["--help"])
+    result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "FTL2" in result.output
+    assert "run" in result.output
+    assert "inventory" in result.output
+
+
+def test_cli_run_help():
+    """Test CLI run command help output."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["run", "--help"])
+    assert result.exit_code == 0
     assert "--module" in result.output
     assert "--inventory" in result.output
 
@@ -27,15 +36,15 @@ def test_cli_help():
 def test_cli_missing_module():
     """Test CLI error when module not specified."""
     runner = CliRunner()
-    result = runner.invoke(main, ["-i", "inventory.yml"])
+    result = runner.invoke(cli, ["run", "-i", "inventory.yml"])
     assert result.exit_code != 0
-    assert "Must specify --module" in result.output
+    # Click automatically adds error message for required option
 
 
 def test_cli_missing_inventory():
     """Test CLI error when inventory not specified."""
     runner = CliRunner()
-    result = runner.invoke(main, ["-m", "ping"])
+    result = runner.invoke(cli, ["run", "-m", "ping"])
     assert result.exit_code != 0
     # Click automatically adds error message for required option
 
@@ -254,3 +263,106 @@ webservers:
             inv_path.unlink()
             (module_dir / "ping.py").unlink()
             module_dir.rmdir()
+
+
+class TestInventoryValidate:
+    """Tests for ftl2 inventory validate command."""
+
+    def test_inventory_validate_success(self):
+        """Test inventory validate with valid inventory."""
+        import tempfile
+        from pathlib import Path
+
+        yaml_content = """
+webservers:
+  hosts:
+    web01:
+      ansible_host: 192.168.1.10
+      ansible_connection: local
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_content)
+            f.flush()
+            inv_path = Path(f.name)
+
+        try:
+            runner = CliRunner()
+            result = runner.invoke(cli, ["inventory", "validate", "-i", str(inv_path)])
+            assert result.exit_code == 0
+            assert "1 host(s)" in result.output
+            assert "1 group(s)" in result.output
+            assert "web01" in result.output
+            assert "All checks passed" in result.output
+        finally:
+            inv_path.unlink()
+
+    def test_inventory_validate_empty(self):
+        """Test inventory validate with empty inventory."""
+        import tempfile
+        from pathlib import Path
+
+        yaml_content = ""
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_content)
+            f.flush()
+            inv_path = Path(f.name)
+
+        try:
+            runner = CliRunner()
+            result = runner.invoke(cli, ["inventory", "validate", "-i", str(inv_path)])
+            assert result.exit_code != 0
+            assert "No hosts loaded" in result.output
+        finally:
+            inv_path.unlink()
+
+    def test_inventory_validate_ssh_no_auth(self):
+        """Test inventory validate catches missing SSH auth."""
+        import tempfile
+        from pathlib import Path
+
+        yaml_content = """
+webservers:
+  hosts:
+    web01:
+      ansible_host: 192.168.1.10
+      ansible_connection: ssh
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_content)
+            f.flush()
+            inv_path = Path(f.name)
+
+        try:
+            runner = CliRunner()
+            result = runner.invoke(cli, ["inventory", "validate", "-i", str(inv_path)])
+            assert result.exit_code != 0
+            assert "No SSH authentication configured" in result.output
+        finally:
+            inv_path.unlink()
+
+    def test_inventory_validate_check_ssh_missing_key(self):
+        """Test inventory validate --check-ssh catches missing key file."""
+        import tempfile
+        from pathlib import Path
+
+        yaml_content = """
+webservers:
+  hosts:
+    web01:
+      ansible_host: 192.168.1.10
+      ansible_connection: ssh
+      ssh_private_key_file: /tmp/nonexistent_key_12345.pem
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_content)
+            f.flush()
+            inv_path = Path(f.name)
+
+        try:
+            runner = CliRunner()
+            result = runner.invoke(cli, ["inventory", "validate", "-i", str(inv_path), "--check-ssh"])
+            assert result.exit_code != 0
+            assert "SSH key not found" in result.output
+        finally:
+            inv_path.unlink()

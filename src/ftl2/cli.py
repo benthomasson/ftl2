@@ -11,12 +11,105 @@ import click
 
 from ftl2 import __version__
 from ftl2.executor import ModuleExecutor
-from ftl2.inventory import load_inventory
+from ftl2.inventory import load_inventory, Inventory
 from ftl2.logging import configure_logging, get_logger
 from ftl2.runners import ExecutionContext
 from ftl2.types import ExecutionConfig, GateConfig
 
 logger = get_logger("ftl2.cli")
+
+
+# Main CLI group
+@click.group(invoke_without_command=True)
+@click.option("--version", is_flag=True, help="Show version and exit")
+@click.pass_context
+def cli(ctx: click.Context, version: bool) -> None:
+    """FTL2 - Fast automation framework for AI-assisted development."""
+    if version:
+        click.echo(f"ftl2 {__version__}")
+        ctx.exit(0)
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+# Inventory subcommand group
+@cli.group()
+def inventory() -> None:
+    """Inventory management commands."""
+    pass
+
+
+@inventory.command("validate")
+@click.option("--inventory", "-i", required=True, help="Inventory file (YAML format)")
+@click.option("--check-ssh", is_flag=True, help="Also validate SSH key files exist")
+def inventory_validate(inventory: str, check_ssh: bool) -> None:
+    """Validate inventory structure and show summary.
+
+    Loads the inventory file and displays:
+    - Number of groups and hosts loaded
+    - Host details (connection type, address, port)
+    - Validation warnings for common issues
+    """
+    try:
+        inv = load_inventory(inventory)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+
+    all_hosts = inv.get_all_hosts()
+    groups = inv.list_groups()
+
+    click.echo(f"\nInventory: {inventory}")
+    click.echo(f"Loaded {len(all_hosts)} host(s) from {len(groups)} group(s)\n")
+
+    # Show groups and their hosts
+    for group in groups:
+        host_count = len(group.hosts)
+        click.echo(f"  {group.name} ({host_count} host{'s' if host_count != 1 else ''}):")
+
+        for host_name, host in group.hosts.items():
+            conn_type = host.ansible_connection
+            addr = host.ansible_host
+            port = host.ansible_port
+
+            if conn_type == "local":
+                click.echo(f"    - {host_name} (local)")
+            else:
+                click.echo(f"    - {host_name} ({addr}:{port})")
+
+    # Validation checks
+    click.echo("\nValidation:")
+    warnings = []
+    errors = []
+
+    for host_name, host in all_hosts.items():
+        # Check SSH authentication
+        if host.ansible_connection == "ssh":
+            ssh_password = host.get_var("ansible_password")
+            ssh_key_file = host.get_var("ssh_private_key_file")
+
+            if not ssh_password and not ssh_key_file:
+                errors.append(f"{host_name}: No SSH authentication configured")
+            elif ssh_key_file and check_ssh:
+                expanded = Path(ssh_key_file).expanduser()
+                if not expanded.exists():
+                    errors.append(f"{host_name}: SSH key not found: {expanded}")
+
+        # Check for missing ansible_host
+        if not host.ansible_host:
+            warnings.append(f"{host_name}: Missing ansible_host")
+
+    if not errors and not warnings:
+        click.echo("  All checks passed")
+    else:
+        for warning in warnings:
+            click.echo(f"  Warning: {warning}")
+        for error in errors:
+            click.echo(f"  Error: {error}")
+
+    if errors:
+        raise click.ClickException(f"{len(errors)} validation error(s) found")
+
+    click.echo()
 
 
 def parse_module_args(args: str | None) -> dict[str, str]:
@@ -144,17 +237,16 @@ def validate_execution_requirements(inventory, module_name: str, module_dirs: li
                     )
 
 
-@click.command()
-@click.option("--module", "-m", help="Module to execute")
+@cli.command("run")
+@click.option("--module", "-m", required=True, help="Module to execute")
 @click.option("--module-dir", "-M", help="Module directory to search for modules")
 @click.option("--inventory", "-i", required=True, help="Inventory file (YAML format)")
 @click.option("--requirements", "-r", help="Python requirements file")
 @click.option("--args", "-a", help="Module arguments in key=value format")
 @click.option("--debug", is_flag=True, help="Show debug logging")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose logging")
-@click.version_option(version=__version__)
-def main(
-    module: Optional[str],
+def run_module(
+    module: str,
     module_dir: Optional[str],
     inventory: str,
     requirements: Optional[str],
@@ -162,31 +254,19 @@ def main(
     debug: bool,
     verbose: bool,
 ) -> None:
-    """FTL2 - Refactored automation framework.
+    """Execute a module across inventory hosts.
 
-    Execute automation modules across an inventory of hosts with support for
-    variable references, host-specific arguments, and remote execution.
+    Runs the specified automation module on all hosts in the inventory,
+    with support for variable references, host-specific arguments, and
+    remote execution via SSH.
 
-    Args:
-        module: Module name to execute
-        module_dir: Directory to search for modules
-        inventory: YAML inventory file (required)
-        requirements: Python requirements file for dependencies
-        args: Module arguments in key=value format
-        debug: Enable debug logging
-        verbose: Enable verbose logging
+    Examples:
+        ftl2 run -m ping -i hosts.yml
 
-    Example:
-        >>> ftl2 --module ping --inventory hosts.yml
+        ftl2 run -m file -i inventory.yml -a "path=/tmp/test state=touch"
 
-        >>> ftl2 -m file -i inventory.yml -a "path=/tmp/test state=touch"
-
-        >>> ftl2 --module copy --inventory hosts.yml --debug
+        ftl2 run -m shell -i hosts.yml -a "cmd='uptime'" --verbose
     """
-    # Validate required options
-    if not module:
-        raise click.ClickException("Must specify --module")
-
     # Configure logging
     if debug:
         configure_logging(level=logging.DEBUG, debug=True)
@@ -281,10 +361,15 @@ def main(
     asyncio.run(run_async())
 
 
+def main() -> None:
+    """Package entry point for the FTL2 command-line interface."""
+    cli()
+
+
 def entry_point() -> None:
     """Package entry point for the FTL2 command-line interface."""
-    main()
+    cli()
 
 
 if __name__ == "__main__":
-    main()
+    cli()
