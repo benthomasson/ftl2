@@ -1043,3 +1043,57 @@ class TestExecuteRemoteStreaming:
         assert result.success is False
         assert "Invalid JSON" in result.error
         assert len(result.events) == 1  # Events still captured
+
+
+class TestBundleEventSupport:
+    """Tests for event emission support in bundles."""
+
+    def test_bundle_includes_events_module(self):
+        """Test that bundles include ftl2/events.py."""
+        from ftl2.module_loading.bundle import list_bundle_contents
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "test_mod.py"
+            module.write_text("def main(): pass")
+
+            bundle = build_bundle(module, dependencies=[])
+            contents = list_bundle_contents(bundle)
+
+            assert "ftl2/events.py" in contents
+            assert "ftl2/__init__.py" in contents
+
+    def test_bundled_module_can_emit_events(self):
+        """Test that a bundled Ansible module can import and use ftl2.events."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "event_mod.py"
+            module.write_text('''
+from ansible.module_utils.basic import AnsibleModule
+from ftl2.events import emit_progress, emit_log
+
+def main():
+    module = AnsibleModule(argument_spec={})
+
+    emit_log("Starting", level="info")
+    emit_progress(50, "Halfway")
+    emit_progress(100, "Done")
+
+    module.exit_json(changed=True, msg="events emitted")
+
+if __name__ == "__main__":
+    main()
+''')
+
+            bundle = build_bundle(module, dependencies=[])
+            result = execute_bundle_local(bundle, {})
+
+            assert result.success is True
+            assert result.output["msg"] == "events emitted"
+            assert len(result.events) == 3
+
+            # Verify event types
+            assert result.events[0]["event"] == "log"
+            assert result.events[0]["message"] == "Starting"
+            assert result.events[1]["event"] == "progress"
+            assert result.events[1]["percent"] == 50
+            assert result.events[2]["event"] == "progress"
+            assert result.events[2]["percent"] == 100

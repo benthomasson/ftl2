@@ -17,6 +17,19 @@ from ftl2.module_loading.fqcn import resolve_fqcn, find_ansible_builtin_path
 
 logger = logging.getLogger(__name__)
 
+
+def _get_ftl2_package_root() -> Path:
+    """Get the root path of the ftl2 package."""
+    import ftl2
+    return Path(ftl2.__file__).parent
+
+
+# FTL2 modules to include in bundles for module use
+# These enable features like event streaming from bundled Ansible modules
+FTL2_BUNDLE_INCLUDES = [
+    "events.py",  # Event emission support for progress/log/data
+]
+
 # Entry point template for the bundle
 # This makes the ZIP executable via: python bundle.zip
 #
@@ -188,6 +201,9 @@ def build_bundle(
             except (OSError, UnicodeDecodeError) as e:
                 logger.warning(f"Failed to add dependency {dep_path}: {e}")
 
+        # Add FTL2 support modules (e.g., events.py for progress reporting)
+        _add_ftl2_support_modules(zf, added_paths)
+
         # Add __init__.py files for package structure
         _add_package_init_files(zf, added_paths)
 
@@ -208,6 +224,34 @@ def build_bundle(
     logger.info(f"Built bundle: {info}")
 
     return Bundle(info=info, data=zip_bytes)
+
+
+def _add_ftl2_support_modules(zf: zipfile.ZipFile, added_paths: set[str]) -> None:
+    """Add FTL2 support modules to the bundle.
+
+    These modules enable features like event streaming from within
+    bundled Ansible modules. They are added under the ftl2/ namespace.
+    """
+    ftl2_root = _get_ftl2_package_root()
+
+    for module_file in FTL2_BUNDLE_INCLUDES:
+        source_path = ftl2_root / module_file
+        if not source_path.exists():
+            logger.warning(f"FTL2 support module not found: {source_path}")
+            continue
+
+        # Add under ftl2/ namespace
+        archive_path = f"ftl2/{module_file}"
+        if archive_path in added_paths:
+            continue
+
+        try:
+            content = source_path.read_text()
+            zf.writestr(archive_path, content)
+            added_paths.add(archive_path)
+            logger.debug(f"Added FTL2 support module: {archive_path}")
+        except (OSError, UnicodeDecodeError) as e:
+            logger.warning(f"Failed to add FTL2 module {module_file}: {e}")
 
 
 def _add_package_init_files(zf: zipfile.ZipFile, added_paths: set[str]) -> None:
