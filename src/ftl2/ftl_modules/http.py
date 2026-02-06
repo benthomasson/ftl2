@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from ftl2.ftl_modules.exceptions import FTLModuleError
+from ftl2.events import emit_progress
 
 __all__ = ["ftl_uri", "ftl_get_url"]
 
@@ -125,8 +126,11 @@ async def ftl_get_url(
     force: bool = True,
     timeout: int = 300,
     headers: dict[str, str] | None = None,
+    emit_events: bool = True,
 ) -> dict[str, Any]:
-    """Download a file asynchronously.
+    """Download a file asynchronously with progress events.
+
+    Uses streaming download with progress reporting for large files.
 
     Args:
         url: URL to download
@@ -135,6 +139,7 @@ async def ftl_get_url(
         force: Overwrite if destination exists (default True)
         timeout: Download timeout in seconds
         headers: Optional request headers
+        emit_events: Whether to emit progress events (default True)
 
     Returns:
         Result dict with:
@@ -145,6 +150,9 @@ async def ftl_get_url(
 
     Raises:
         FTLModuleError: If download fails or checksum doesn't match
+
+    Events:
+        progress: Emitted during download with percent, current, total bytes
     """
     dest_path = Path(dest)
     headers = headers or {}
@@ -172,17 +180,53 @@ async def ftl_get_url(
                 "msg": "File exists and force=False",
             }
 
-        # Download file
+        # Ensure parent directory exists
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Streaming download with progress
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            content = response.content
+            async with client.stream("GET", url, headers=headers) as response:
+                response.raise_for_status()
+
+                # Get content length for progress reporting
+                total_size = int(response.headers.get("content-length", 0))
+                downloaded = 0
+                hasher = hashlib.sha256()
+
+                # Extract filename for progress message
+                filename = dest_path.name
+
+                if emit_events and total_size > 0:
+                    emit_progress(
+                        percent=0,
+                        message=f"Downloading {filename}",
+                        current=0,
+                        total=total_size,
+                    )
+
+                # Stream to file
+                with open(dest_path, "wb") as f:
+                    async for chunk in response.aiter_bytes(chunk_size=65536):
+                        f.write(chunk)
+                        hasher.update(chunk)
+                        downloaded += len(chunk)
+
+                        if emit_events and total_size > 0:
+                            percent = int(downloaded * 100 / total_size)
+                            emit_progress(
+                                percent=percent,
+                                message=f"Downloading {filename}",
+                                current=downloaded,
+                                total=total_size,
+                            )
 
         # Verify checksum if provided
-        actual_checksum = hashlib.sha256(content).hexdigest()
+        actual_checksum = hasher.hexdigest()
         if checksum:
             expected = _normalize_checksum(checksum)
             if actual_checksum != expected:
+                # Remove bad file
+                dest_path.unlink(missing_ok=True)
                 raise FTLModuleError(
                     f"Checksum mismatch: expected {expected}, got {actual_checksum}",
                     url=url,
@@ -191,16 +235,12 @@ async def ftl_get_url(
                     actual_checksum=actual_checksum,
                 )
 
-        # Write file
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        dest_path.write_bytes(content)
-
         return {
             "changed": True,
             "dest": str(dest_path),
             "url": url,
             "checksum": f"sha256:{actual_checksum}",
-            "size": len(content),
+            "size": downloaded,
         }
 
     except httpx.TimeoutException:

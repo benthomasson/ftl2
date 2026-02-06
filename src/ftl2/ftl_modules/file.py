@@ -3,6 +3,8 @@
 These modules handle file system operations like creating, copying,
 and managing files and directories. They run in-process for maximum
 performance.
+
+Supports event streaming for progress reporting on long-running operations.
 """
 
 import grp
@@ -15,6 +17,7 @@ from typing import Any
 from jinja2 import Template
 
 from ftl2.ftl_modules.exceptions import FTLModuleError
+from ftl2.events import emit_progress, emit_log
 
 __all__ = ["ftl_file", "ftl_copy", "ftl_template"]
 
@@ -153,10 +156,12 @@ def ftl_copy(
     mode: str | None = None,
     force: bool = True,
     backup: bool = False,
+    emit_events: bool = True,
 ) -> dict[str, Any]:
-    """Copy a file.
+    """Copy a file with progress events.
 
-    Uses shutil.copy2 to preserve metadata (timestamps, etc).
+    Uses chunked copy with progress reporting for large files.
+    Preserves file metadata (timestamps, etc).
 
     Args:
         src: Source file path
@@ -164,12 +169,16 @@ def ftl_copy(
         mode: Optional file mode for destination (e.g., "0644")
         force: Overwrite if destination exists (default True)
         backup: Create backup of destination if it exists
+        emit_events: Whether to emit progress events (default True)
 
     Returns:
         Result dict with changed status, src, dest
 
     Raises:
         FTLModuleError: If copy fails
+
+    Events:
+        progress: Emitted during copy with percent, current, total bytes
     """
     src_path = Path(src)
     dest_path = Path(dest)
@@ -215,9 +224,36 @@ def ftl_copy(
                 backup_path = dest_path.with_suffix(dest_path.suffix + ".bak")
                 shutil.copy2(dest_path, backup_path)
 
-        # Copy file
+        # Copy file with progress
         if changed:
-            shutil.copy2(src_path, dest_path)
+            total_size = src_path.stat().st_size
+            copied = 0
+            chunk_size = 65536  # 64KB chunks
+
+            if emit_events:
+                emit_progress(
+                    percent=0,
+                    message=f"Copying {src_path.name}",
+                    current=0,
+                    total=total_size,
+                )
+
+            with open(src_path, "rb") as f_in, open(dest_path, "wb") as f_out:
+                while chunk := f_in.read(chunk_size):
+                    f_out.write(chunk)
+                    copied += len(chunk)
+
+                    if emit_events and total_size > 0:
+                        percent = int(copied * 100 / total_size)
+                        emit_progress(
+                            percent=percent,
+                            message=f"Copying {src_path.name}",
+                            current=copied,
+                            total=total_size,
+                        )
+
+            # Preserve metadata (like shutil.copy2)
+            shutil.copystat(src_path, dest_path)
 
         # Apply mode if specified
         if mode:
