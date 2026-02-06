@@ -11,12 +11,15 @@ Features:
 """
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import asyncssh
+
+from ftl2.events import parse_event
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +199,103 @@ class SSHHost:
         except asyncio.TimeoutError:
             logger.error(f"Command timed out after {timeout}s: {command[:50]}")
             return "", f"Command timed out after {timeout}s", -1
+
+    async def run_streaming(
+        self,
+        command: str,
+        stdin: str = "",
+        timeout: int = 300,
+        event_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[str, str, int, list[dict[str, Any]]]:
+        """Run a command with real-time event streaming.
+
+        Unlike run(), this method streams stderr line by line and invokes
+        the event_callback for each event as it's emitted. This enables
+        real-time progress reporting for remote module execution.
+
+        Args:
+            command: Command to execute
+            stdin: Input to send to command's stdin
+            timeout: Command timeout in seconds
+            event_callback: Called for each event as it's emitted (optional)
+
+        Returns:
+            Tuple of (stdout, stderr, return_code, events)
+            - stdout: Command stdout
+            - stderr: Non-event stderr lines
+            - return_code: Exit code
+            - events: List of parsed event dicts
+
+        Example:
+            def on_progress(event):
+                print(f"Progress: {event.get('percent', 0)}%")
+
+            stdout, stderr, rc, events = await host.run_streaming(
+                "python3 /tmp/bundle.pyz",
+                stdin=json_params,
+                event_callback=on_progress,
+            )
+        """
+        conn = await self.connect()
+
+        logger.debug(f"Running (streaming) on {self.config.hostname}: {command[:100]}")
+
+        events: list[dict[str, Any]] = []
+        other_stderr_lines: list[str] = []
+
+        try:
+            async with conn.create_process(command) as process:
+                # Send stdin if provided
+                if stdin:
+                    process.stdin.write(stdin)
+                    await process.stdin.drain()
+                process.stdin.write_eof()
+
+                async def read_stderr_streaming():
+                    """Read stderr line by line, parsing events."""
+                    async for line in process.stderr:
+                        line = line.rstrip('\n\r')
+                        event = parse_event(line)
+                        if event is not None:
+                            events.append(event)
+                            if event_callback:
+                                try:
+                                    event_callback(event)
+                                except Exception as e:
+                                    logger.warning(f"Event callback error: {e}")
+                        else:
+                            other_stderr_lines.append(line)
+
+                async def read_stdout():
+                    """Read all stdout."""
+                    return await process.stdout.read()
+
+                # Run with timeout
+                try:
+                    stdout, _ = await asyncio.wait_for(
+                        asyncio.gather(read_stdout(), read_stderr_streaming()),
+                        timeout=timeout,
+                    )
+                except asyncio.TimeoutError:
+                    process.kill()
+                    logger.error(f"Command timed out after {timeout}s: {command[:50]}")
+                    return "", f"Command timed out after {timeout}s", -1, events
+
+                await process.wait()
+
+                stderr = "\n".join(other_stderr_lines)
+                return_code = process.returncode or 0
+
+                logger.debug(
+                    f"Streaming command completed: rc={return_code}, "
+                    f"stdout={len(stdout)} bytes, events={len(events)}"
+                )
+
+                return stdout, stderr, return_code, events
+
+        except Exception as e:
+            logger.error(f"Streaming command failed: {e}")
+            raise
 
     async def has_file(self, path: str) -> bool:
         """Check if a file exists on the remote host.

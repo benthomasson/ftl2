@@ -522,6 +522,20 @@ class RemoteHost(Protocol):
         """
         ...
 
+    async def run_streaming(
+        self,
+        command: str,
+        stdin: str = "",
+        timeout: int = 300,
+        event_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[str, str, int, list[dict[str, Any]]]:
+        """Run a command with real-time event streaming.
+
+        Returns:
+            Tuple of (stdout, stderr, return_code, events)
+        """
+        ...
+
     async def has_file(self, path: str) -> bool:
         """Check if a file exists on the remote host."""
         ...
@@ -631,6 +645,124 @@ async def execute_remote_with_staging(
     """
     bundle_path = await stage_bundle_remote(host, bundle, bundle_dir)
     return await execute_remote(host, bundle_path, params, timeout, check_mode)
+
+
+async def execute_remote_streaming(
+    host: RemoteHost,
+    bundle_path: str,
+    params: dict[str, Any],
+    timeout: int = 300,
+    check_mode: bool = False,
+    event_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> ExecutionResult:
+    """Execute a bundle on a remote host with real-time event streaming.
+
+    Unlike execute_remote(), this function streams stderr line by line
+    and invokes the event_callback for each event as it's emitted.
+
+    Args:
+        host: Remote host to execute on
+        bundle_path: Path to bundle on remote host
+        params: Module parameters
+        timeout: Execution timeout in seconds
+        check_mode: Whether to run in check mode
+        event_callback: Called for each event as it's emitted
+
+    Returns:
+        ExecutionResult with output, status, and collected events
+    """
+    # Build module args
+    module_args = dict(params)
+    if check_mode:
+        module_args["_ansible_check_mode"] = True
+
+    stdin_data = json.dumps({"ANSIBLE_MODULE_ARGS": module_args})
+
+    logger.debug(f"Executing remote bundle (streaming): {bundle_path}")
+
+    try:
+        stdout, stderr, return_code, events = await host.run_streaming(
+            f"python3 {bundle_path}",
+            stdin=stdin_data,
+            timeout=timeout,
+            event_callback=event_callback,
+        )
+
+        # Parse result from stdout
+        try:
+            output = json.loads(stdout) if stdout.strip() else {}
+        except json.JSONDecodeError as e:
+            return ExecutionResult(
+                success=False,
+                error=f"Invalid JSON output: {e}",
+                return_code=return_code,
+                stdout=stdout,
+                stderr=stderr,
+                events=events,
+            )
+
+        # Check for failure indicators
+        failed = output.get("failed", False)
+        if failed or return_code != 0:
+            return ExecutionResult(
+                success=False,
+                changed=output.get("changed", False),
+                output=output,
+                error=output.get("msg", stderr or "Unknown error"),
+                return_code=return_code,
+                stdout=stdout,
+                stderr=stderr,
+                events=events,
+            )
+
+        return ExecutionResult(
+            success=True,
+            changed=output.get("changed", False),
+            output=output,
+            return_code=return_code,
+            stdout=stdout,
+            stderr=stderr,
+            events=events,
+        )
+
+    except Exception as e:
+        return ExecutionResult(
+            success=False,
+            error=f"Remote execution failed: {e}",
+            return_code=-1,
+        )
+
+
+async def execute_remote_with_staging_streaming(
+    host: RemoteHost,
+    bundle: Bundle,
+    params: dict[str, Any],
+    timeout: int = 300,
+    check_mode: bool = False,
+    bundle_dir: str = "/tmp/ftl2_bundles",
+    event_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> ExecutionResult:
+    """Stage bundle if needed and execute on remote host with event streaming.
+
+    Convenience function that handles staging automatically and provides
+    real-time event streaming.
+
+    Args:
+        host: Remote host to execute on
+        bundle: Bundle to execute
+        params: Module parameters
+        timeout: Execution timeout in seconds
+        check_mode: Whether to run in check mode
+        bundle_dir: Directory on remote host for bundles
+        event_callback: Called for each event as it's emitted
+
+    Returns:
+        ExecutionResult with output, status, and collected events
+    """
+    bundle_path = await stage_bundle_remote(host, bundle, bundle_dir)
+    return await execute_remote_streaming(
+        host, bundle_path, params, timeout, check_mode, event_callback
+    )
 
 
 @dataclass

@@ -17,7 +17,9 @@ from ftl2.module_loading.executor import (
     execute_local_fqcn_streaming,
     execute_bundle_local,
     execute_remote,
+    execute_remote_streaming,
     execute_remote_with_staging,
+    execute_remote_with_staging_streaming,
     stage_bundle_remote,
     get_module_utils_pythonpath,
     ModuleExecutor,
@@ -905,3 +907,139 @@ if __name__ == "__main__":
             # Execution should still succeed despite callback errors
             assert result.success is True
             assert len(result.events) == 2
+
+
+class TestExecuteRemoteStreaming:
+    """Tests for remote streaming execution functions."""
+
+    @pytest.mark.asyncio
+    async def test_execute_remote_streaming(self):
+        """Test remote streaming execution with events."""
+        host = AsyncMock()
+
+        # Simulate events being emitted
+        async def mock_run_streaming(command, stdin="", timeout=300, event_callback=None):
+            events = [
+                {"event": "progress", "percent": 0},
+                {"event": "progress", "percent": 50},
+                {"event": "progress", "percent": 100},
+            ]
+            # Call callback for each event
+            if event_callback:
+                for event in events:
+                    event_callback(event)
+            return (
+                json.dumps({"changed": True, "msg": "done"}),
+                "",
+                0,
+                events,
+            )
+
+        host.run_streaming = mock_run_streaming
+
+        events_received = []
+        result = await execute_remote_streaming(
+            host,
+            "/tmp/bundle.pyz",
+            {"key": "value"},
+            event_callback=lambda e: events_received.append(e),
+        )
+
+        assert result.success is True
+        assert result.output["msg"] == "done"
+        assert len(result.events) == 3
+        assert len(events_received) == 3
+        assert events_received[0]["percent"] == 0
+        assert events_received[2]["percent"] == 100
+
+    @pytest.mark.asyncio
+    async def test_execute_remote_streaming_failure(self):
+        """Test remote streaming with module failure."""
+        host = AsyncMock()
+
+        async def mock_run_streaming(command, stdin="", timeout=300, event_callback=None):
+            events = [{"event": "progress", "percent": 50}]
+            if event_callback:
+                for event in events:
+                    event_callback(event)
+            return (
+                json.dumps({"failed": True, "msg": "error occurred"}),
+                "",
+                1,
+                events,
+            )
+
+        host.run_streaming = mock_run_streaming
+
+        result = await execute_remote_streaming(
+            host,
+            "/tmp/bundle.pyz",
+            {},
+        )
+
+        assert result.success is False
+        assert "error occurred" in result.error
+        assert len(result.events) == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_remote_with_staging_streaming(self):
+        """Test combined staging and streaming execution."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "mod.py"
+            module.write_text("def main(args): return {}")
+
+            bundle = build_bundle(module, dependencies=[])
+
+            host = AsyncMock()
+            host.has_file.return_value = False
+
+            async def mock_run_streaming(command, stdin="", timeout=300, event_callback=None):
+                events = [{"event": "progress", "percent": 100}]
+                if event_callback:
+                    for event in events:
+                        event_callback(event)
+                return (
+                    json.dumps({"changed": True, "staged": True}),
+                    "",
+                    0,
+                    events,
+                )
+
+            host.run_streaming = mock_run_streaming
+
+            events_received = []
+            result = await execute_remote_with_staging_streaming(
+                host,
+                bundle,
+                {},
+                event_callback=lambda e: events_received.append(e),
+            )
+
+            assert result.success is True
+            assert result.output["staged"] is True
+            assert len(result.events) == 1
+            assert len(events_received) == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_remote_streaming_invalid_json(self):
+        """Test handling invalid JSON from remote."""
+        host = AsyncMock()
+
+        async def mock_run_streaming(command, stdin="", timeout=300, event_callback=None):
+            events = [{"event": "progress", "percent": 50}]
+            if event_callback:
+                for event in events:
+                    event_callback(event)
+            return ("not valid json", "", 0, events)
+
+        host.run_streaming = mock_run_streaming
+
+        result = await execute_remote_streaming(
+            host,
+            "/tmp/bundle.pyz",
+            {},
+        )
+
+        assert result.success is False
+        assert "Invalid JSON" in result.error
+        assert len(result.events) == 1  # Events still captured
