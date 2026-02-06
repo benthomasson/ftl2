@@ -18,6 +18,15 @@ from ftl2.module_loading.dependencies import (
     ModuleUtilsImport,
     DependencyResult,
 )
+from ftl2.module_loading.bundle import (
+    build_bundle,
+    build_bundle_from_fqcn,
+    verify_bundle,
+    list_bundle_contents,
+    Bundle,
+    BundleInfo,
+    BundleCache,
+)
 
 __all__ = [
     # FQCN parsing
@@ -32,4 +41,12 @@ __all__ = [
     "resolve_module_util_import",
     "ModuleUtilsImport",
     "DependencyResult",
+    # Bundle building
+    "build_bundle",
+    "build_bundle_from_fqcn",
+    "verify_bundle",
+    "list_bundle_contents",
+    "Bundle",
+    "BundleInfo",
+    "BundleCache",
 ]
