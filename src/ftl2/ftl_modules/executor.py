@@ -306,10 +306,15 @@ async def _execute_ftl_module(
     """Execute an FTL module function.
 
     Handles both sync and async module functions.
+    FTL modules may optionally accept a check_mode parameter.
     """
-    # Add check mode to params if needed
-    if check_mode:
-        params = {**params, "_ansible_check_mode": True}
+    # Get function signature to check if it accepts check_mode
+    sig = inspect.signature(module_func)
+    accepts_check_mode = "check_mode" in sig.parameters
+
+    # Prepare params - pass check_mode if the function accepts it
+    if accepts_check_mode:
+        params = {**params, "check_mode": check_mode}
 
     # Check if module is async
     if inspect.iscoroutinefunction(module_func):
@@ -318,6 +323,11 @@ async def _execute_ftl_module(
         # Sync function - run in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, lambda: module_func(**params))
+
+    # If check_mode is enabled but module doesn't support it,
+    # add a note to the result
+    if check_mode and not accepts_check_mode and isinstance(result, dict):
+        result = {**result, "_check_mode_unsupported": True}
 
     return result
 

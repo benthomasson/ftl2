@@ -5,14 +5,146 @@ ftl.module_name() syntax for automation scripts.
 """
 
 import asyncio
+import os
+import time
+from enum import Enum
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from ftl2.automation.proxy import ModuleProxy
 from ftl2.ftl_modules import list_modules, ExecuteResult
 from ftl2.inventory import Inventory, HostGroup, load_inventory, load_localhost
 from ftl2.types import HostConfig
 from ftl2.ssh import SSHHost
+
+
+class OutputMode(Enum):
+    """Output modes for automation context.
+
+    Attributes:
+        QUIET: Suppress all output
+        NORMAL: Show errors only
+        VERBOSE: Show all execution details
+        EVENTS: Emit structured events (for programmatic consumption)
+    """
+
+    QUIET = "quiet"
+    NORMAL = "normal"
+    VERBOSE = "verbose"
+    EVENTS = "events"
+
+
+# Type alias for event callbacks
+EventCallback = Callable[[dict[str, Any]], None]
+
+
+class AutomationError(Exception):
+    """Error raised when automation fails with fail_fast=True.
+
+    Attributes:
+        result: The ExecuteResult that caused the failure
+        message: Error message
+    """
+
+    def __init__(self, message: str, result: "ExecuteResult | None" = None):
+        super().__init__(message)
+        self.result = result
+        self.message = message
+
+    def __str__(self) -> str:
+        if self.result:
+            return f"{self.message} (module: {self.result.module}, host: {self.result.host})"
+        return self.message
+
+
+class SecretsProxy:
+    """Proxy for secure access to secrets.
+
+    Provides dictionary-like access to secrets loaded from environment
+    variables. Secrets are never logged or exposed in string representations.
+
+    Example:
+        ftl.secrets["AWS_ACCESS_KEY_ID"]  # Get secret value
+        "API_KEY" in ftl.secrets          # Check if secret exists
+        ftl.secrets.keys()                # List secret names (not values)
+    """
+
+    def __init__(self, secret_names: list[str]):
+        """Initialize secrets from environment variables.
+
+        Args:
+            secret_names: List of environment variable names to load
+        """
+        self._secrets: dict[str, str | None] = {}
+        self._loaded_names: set[str] = set()
+
+        for name in secret_names:
+            value = os.environ.get(name)
+            self._secrets[name] = value
+            if value is not None:
+                self._loaded_names.add(name)
+
+    def __getitem__(self, key: str) -> str:
+        """Get a secret value.
+
+        Args:
+            key: Secret name
+
+        Returns:
+            Secret value
+
+        Raises:
+            KeyError: If secret not found or not set
+        """
+        if key not in self._secrets:
+            raise KeyError(f"Secret '{key}' was not requested in automation(secrets=[...])")
+
+        value = self._secrets[key]
+        if value is None:
+            raise KeyError(f"Secret '{key}' is not set in environment")
+
+        return value
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        """Get a secret value with optional default.
+
+        Args:
+            key: Secret name
+            default: Default value if not found
+
+        Returns:
+            Secret value or default
+        """
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __contains__(self, key: str) -> bool:
+        """Check if a secret exists and is set."""
+        return key in self._loaded_names
+
+    def keys(self) -> list[str]:
+        """Get list of requested secret names (not values)."""
+        return list(self._secrets.keys())
+
+    def loaded_keys(self) -> list[str]:
+        """Get list of secrets that were successfully loaded."""
+        return list(self._loaded_names)
+
+    def __len__(self) -> int:
+        """Number of loaded secrets."""
+        return len(self._loaded_names)
+
+    def __repr__(self) -> str:
+        """Safe representation that doesn't expose values."""
+        loaded = list(self._loaded_names)
+        missing = [k for k in self._secrets if k not in self._loaded_names]
+        return f"SecretsProxy(loaded={loaded}, missing={missing})"
+
+    def __str__(self) -> str:
+        """Safe string that doesn't expose values."""
+        return f"<SecretsProxy: {len(self._loaded_names)} secrets loaded>"
 
 
 class HostsProxy:
@@ -98,14 +230,20 @@ class AutomationContext:
         modules: List of enabled module names (None = all)
         check_mode: Whether to run in dry-run mode
         verbose: Whether to enable verbose output
+        quiet: Whether to suppress all output
+        output_mode: Output mode (quiet, normal, verbose, events)
     """
 
     def __init__(
         self,
         modules: list[str] | None = None,
         inventory: str | Path | Inventory | dict[str, Any] | None = None,
+        secrets: list[str] | None = None,
         check_mode: bool = False,
         verbose: bool = False,
+        quiet: bool = False,
+        on_event: EventCallback | None = None,
+        fail_fast: bool = False,
     ):
         """Initialize the automation context.
 
@@ -116,17 +254,86 @@ class AutomationContext:
                 - Inventory object directly
                 - Dict with inventory structure
                 - None for localhost-only execution
+            secrets: List of environment variable names to load as secrets.
+                Secrets are accessed via ftl.secrets["NAME"] and are never
+                logged or exposed in string representations.
             check_mode: Enable dry-run mode (modules report what would change)
             verbose: Enable verbose output for debugging
+            quiet: Suppress all output (overrides verbose)
+            on_event: Callback function for structured events. Receives dict
+                with keys: event, module, host, timestamp, and event-specific data.
+            fail_fast: Stop execution on first error. When True, raises
+                AutomationError on first module failure. Default is False
+                (continue and collect errors).
         """
         self._enabled_modules = modules
         self._inventory = self._load_inventory(inventory)
+        self._secrets_proxy = SecretsProxy(secrets or [])
         self.check_mode = check_mode
-        self.verbose = verbose
+        self.verbose = verbose and not quiet
+        self.quiet = quiet
+        self._on_event = on_event
+        self.fail_fast = fail_fast
         self._proxy = ModuleProxy(self)
         self._results: list[ExecuteResult] = []
         self._hosts_proxy: HostsProxy | None = None
         self._ssh_connections: dict[str, SSHHost] = {}
+        self._start_time: float | None = None
+
+    @property
+    def output_mode(self) -> OutputMode:
+        """Get the current output mode."""
+        if self.quiet:
+            return OutputMode.QUIET
+        if self._on_event is not None:
+            return OutputMode.EVENTS
+        if self.verbose:
+            return OutputMode.VERBOSE
+        return OutputMode.NORMAL
+
+    @property
+    def failed(self) -> bool:
+        """Check if any module execution has failed.
+
+        Returns:
+            True if any result has success=False
+
+        Example:
+            async with automation() as ftl:
+                await ftl.file(path="/nonexistent", state="touch")
+                if ftl.failed:
+                    print("Something went wrong!")
+        """
+        return any(not r.success for r in self._results)
+
+    @property
+    def errors(self) -> list[ExecuteResult]:
+        """Get all failed execution results.
+
+        Returns:
+            List of ExecuteResult objects where success=False
+
+        Example:
+            async with automation() as ftl:
+                await ftl.file(path="/nonexistent", state="touch")
+                for error in ftl.errors:
+                    print(f"{error.module} on {error.host}: {error.error}")
+        """
+        return [r for r in self._results if not r.success]
+
+    @property
+    def error_messages(self) -> list[str]:
+        """Get error messages from all failed executions.
+
+        Returns:
+            List of error message strings
+
+        Example:
+            if ftl.failed:
+                for msg in ftl.error_messages:
+                    print(f"Error: {msg}")
+        """
+        return [r.error for r in self._results if not r.success and r.error]
 
     def _load_inventory(
         self, inventory: str | Path | Inventory | dict[str, Any] | None
@@ -192,6 +399,26 @@ class AutomationContext:
         return self._hosts_proxy
 
     @property
+    def secrets(self) -> SecretsProxy:
+        """Access secrets loaded from environment variables.
+
+        Secrets are loaded from environment variables specified in the
+        automation(secrets=[...]) parameter. Values are never logged or
+        exposed in string representations.
+
+        Returns:
+            SecretsProxy for dictionary-like secret access
+
+        Example:
+            ftl.secrets["AWS_ACCESS_KEY_ID"]  # Get secret value
+            "API_KEY" in ftl.secrets          # Check if secret exists
+            ftl.secrets.get("KEY", "default") # Get with default
+            ftl.secrets.keys()                # List requested secret names
+            ftl.secrets.loaded_keys()         # List successfully loaded secrets
+        """
+        return self._secrets_proxy
+
+    @property
     def available_modules(self) -> list[str]:
         """List of available module names."""
         all_modules = list_modules()
@@ -245,26 +472,71 @@ class AutomationContext:
         """
         from ftl2.ftl_modules import execute
 
-        # Inject check_mode if enabled
-        if self.check_mode:
-            params = {**params, "_ansible_check_mode": True}
+        start_time = time.time()
 
-        # Execute and track result
+        # Emit start event
+        self._emit_event({
+            "event": "module_start",
+            "module": module_name,
+            "host": "localhost",
+            "check_mode": self.check_mode,
+        })
+
+        # Execute and track result (check_mode passed to executor)
         result = await execute(module_name, params, check_mode=self.check_mode)
         self._results.append(result)
 
-        if self.verbose:
-            self._log_result(module_name, result)
+        duration = time.time() - start_time
+
+        # Emit complete event
+        self._emit_event({
+            "event": "module_complete",
+            "module": module_name,
+            "host": "localhost",
+            "success": result.success,
+            "changed": result.changed,
+            "check_mode": self.check_mode,
+            "duration": duration,
+            "error": result.error,
+        })
+
+        # Log in verbose mode (not quiet)
+        if self.verbose and not self.quiet:
+            self._log_result(module_name, result, duration)
+        elif not self.quiet and not result.success:
+            # In normal mode, show errors
+            self._log_error(module_name, result)
+
+        # Fail fast if enabled and module failed
+        if self.fail_fast and not result.success:
+            raise AutomationError(
+                f"Module '{module_name}' failed: {result.error}",
+                result=result,
+            )
 
         return result.output
 
-    def _log_result(self, module_name: str, result: ExecuteResult) -> None:
+    def _emit_event(self, event: dict[str, Any]) -> None:
+        """Emit an event to the callback if registered."""
+        if self._on_event is not None:
+            event["timestamp"] = time.time()
+            self._on_event(event)
+
+    def _log_result(
+        self, module_name: str, result: ExecuteResult, duration: float | None = None
+    ) -> None:
         """Log execution result in verbose mode."""
         status = "ok" if result.success else "FAILED"
         changed = " (changed)" if result.changed else ""
-        print(f"[{module_name}] {status}{changed}")
+        check = " [CHECK MODE]" if self.check_mode else ""
+        timing = f" ({duration:.2f}s)" if duration is not None else ""
+        print(f"[{module_name}] {status}{changed}{check}{timing}")
         if result.error:
             print(f"  Error: {result.error}")
+
+    def _log_error(self, module_name: str, result: ExecuteResult) -> None:
+        """Log error in normal mode."""
+        print(f"[{module_name}] FAILED: {result.error}")
 
     async def run_on(
         self,
@@ -334,23 +606,48 @@ class AutomationContext:
         """Execute module on a single host."""
         from ftl2.ftl_modules import execute
 
+        start_time = time.time()
+
+        # Emit start event
+        self._emit_event({
+            "event": "module_start",
+            "module": module_name,
+            "host": host.name,
+            "check_mode": self.check_mode,
+        })
+
         if host.is_local:
             # Local execution
             result = await execute(module_name, params, check_mode=self.check_mode)
             result.host = host.name
-            if self.verbose:
-                self._log_result(f"{host.name}:{module_name}", result)
-            return result
+        else:
+            # Remote execution via SSH
+            ssh_host = await self._get_ssh_connection(host)
+            result = await execute(module_name, params, host=ssh_host, check_mode=self.check_mode)
+            result.host = host.name
 
-        # Remote execution via SSH
-        ssh_host = await self._get_ssh_connection(host)
+        duration = time.time() - start_time
 
-        # Use the ftl_modules executor with host
-        result = await execute(module_name, params, host=ssh_host, check_mode=self.check_mode)
-        result.host = host.name
+        # Emit complete event
+        self._emit_event({
+            "event": "module_complete",
+            "module": module_name,
+            "host": host.name,
+            "success": result.success,
+            "changed": result.changed,
+            "check_mode": self.check_mode,
+            "duration": duration,
+            "error": result.error,
+        })
 
-        if self.verbose:
-            self._log_result(f"{host.name}:{module_name}", result)
+        # Log based on output mode
+        if self.verbose and not self.quiet:
+            self._log_result(f"{host.name}:{module_name}", result, duration)
+        elif not self.quiet and not result.success:
+            self._log_error(f"{host.name}:{module_name}", result)
+
+        # Note: fail_fast is not applied here because run_on uses asyncio.gather
+        # for concurrent execution. Use ftl.failed and ftl.errors after run_on.
 
         return result
 
