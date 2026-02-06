@@ -59,6 +59,18 @@ from ftl2.workflow import (
     delete_workflow,
     add_step_to_workflow,
 )
+from ftl2.host_filter import (
+    filter_hosts,
+    get_group_hosts_mapping,
+    format_filter_summary,
+)
+from ftl2.config_profiles import (
+    ConfigProfile,
+    load_profile,
+    save_profile,
+    list_profiles,
+    delete_profile,
+)
 from ftl2.runners import ExecutionContext
 from ftl2.types import ExecutionConfig, GateConfig, ModuleResult
 
@@ -1048,6 +1060,262 @@ def workflow_delete(workflow_id: str, yes: bool) -> None:
         raise click.ClickException(f"Failed to delete workflow: {workflow_id}")
 
 
+# Config subcommand group
+@cli.group()
+def config() -> None:
+    """Configuration profile management.
+
+    Save and reuse common execution configurations.
+    """
+    pass
+
+
+@config.command("save")
+@click.argument("name")
+@click.option("--module", "-m", required=True, help="Module to execute")
+@click.option("--args", "-a", help="Module arguments in key=value format")
+@click.option("--description", "-d", help="Profile description")
+@click.option("--parallel", "-p", type=int, help="Number of concurrent connections")
+@click.option("--timeout", "-t", type=int, help="Execution timeout in seconds")
+@click.option("--retry", type=int, help="Number of retry attempts")
+@click.option("--retry-delay", type=float, help="Delay between retries")
+@click.option("--smart-retry", is_flag=True, default=None, help="Only retry transient errors")
+@click.option("--circuit-breaker", type=float, help="Circuit breaker threshold")
+@click.option("--format", "-f", "output_format", type=click.Choice(["text", "json"]),
+              help="Output format")
+@click.option("--allow-destructive", is_flag=True, default=None, help="Allow destructive commands")
+def config_save(
+    name: str,
+    module: str,
+    args: Optional[str],
+    description: Optional[str],
+    parallel: Optional[int],
+    timeout: Optional[int],
+    retry: Optional[int],
+    retry_delay: Optional[float],
+    smart_retry: Optional[bool],
+    circuit_breaker: Optional[float],
+    output_format: Optional[str],
+    allow_destructive: Optional[bool],
+) -> None:
+    """Save a configuration profile.
+
+    Create a reusable configuration with common options.
+    Use template variables with {{var_name}} syntax in arguments.
+
+    Examples:
+        ftl2 config save web-deploy -m copy -a "src=app.tgz dest=/opt/"
+
+        ftl2 config save db-backup -m shell -a "cmd='pg_dump db'" --parallel 1
+
+        ftl2 config save deploy-template -m copy -a "src={{app_path}} dest={{dest}}"
+    """
+    parsed_args = parse_module_args(args)
+
+    profile = ConfigProfile(
+        name=name,
+        module=module,
+        args=parsed_args,
+        description=description or "",
+        parallel=parallel,
+        timeout=timeout,
+        retry=retry,
+        retry_delay=retry_delay,
+        smart_retry=smart_retry if smart_retry else None,
+        circuit_breaker=circuit_breaker,
+        format=output_format,
+        allow_destructive=allow_destructive if allow_destructive else None,
+    )
+
+    path = save_profile(profile)
+    click.echo(f"Profile '{name}' saved to {path}")
+
+    # Show template variables if any
+    template_vars = profile.get_template_variables()
+    if template_vars:
+        click.echo(f"Template variables: {', '.join(template_vars)}")
+        click.echo("Use --var name=value when running this profile")
+
+
+@config.command("list")
+@click.option("--format", "-f", "output_format", type=click.Choice(["text", "json"]),
+              default="text", help="Output format")
+def config_list(output_format: str) -> None:
+    """List all saved configuration profiles.
+
+    Examples:
+        ftl2 config list
+
+        ftl2 config list --format json
+    """
+    profiles = list_profiles()
+
+    if not profiles:
+        click.echo("No profiles found.")
+        return
+
+    if output_format == "json":
+        click.echo(json.dumps({"profiles": profiles}, indent=2))
+    else:
+        click.echo("\nSaved Profiles:")
+        click.echo("-" * 30)
+        for name in profiles:
+            profile = load_profile(name)
+            if profile:
+                desc = f" - {profile.description}" if profile.description else ""
+                click.echo(f"  {name} ({profile.module}){desc}")
+            else:
+                click.echo(f"  {name}")
+        click.echo(f"\nTotal: {len(profiles)} profile(s)")
+        click.echo("")
+
+
+@config.command("show")
+@click.argument("name")
+@click.option("--format", "-f", "output_format", type=click.Choice(["text", "json"]),
+              default="text", help="Output format")
+def config_show(name: str, output_format: str) -> None:
+    """Show details of a configuration profile.
+
+    Examples:
+        ftl2 config show web-deploy
+
+        ftl2 config show web-deploy --format json
+    """
+    profile = load_profile(name)
+
+    if profile is None:
+        raise click.ClickException(f"Profile not found: {name}")
+
+    if output_format == "json":
+        click.echo(json.dumps(profile.to_dict(), indent=2))
+    else:
+        click.echo("")
+        click.echo(profile.format_text())
+        template_vars = profile.get_template_variables()
+        if template_vars:
+            click.echo(f"\nTemplate variables: {', '.join(template_vars)}")
+        click.echo("")
+
+
+@config.command("delete")
+@click.argument("name")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+def config_delete(name: str, yes: bool) -> None:
+    """Delete a configuration profile.
+
+    Examples:
+        ftl2 config delete web-deploy
+
+        ftl2 config delete web-deploy -y
+    """
+    profile = load_profile(name)
+
+    if profile is None:
+        raise click.ClickException(f"Profile not found: {name}")
+
+    if not yes:
+        click.confirm(f"Delete profile '{name}'?", abort=True)
+
+    if delete_profile(name):
+        click.echo(f"Profile '{name}' deleted.")
+    else:
+        raise click.ClickException(f"Failed to delete profile: {name}")
+
+
+@config.command("run")
+@click.argument("name")
+@click.option("--inventory", "-i", required=True, help="Inventory file (YAML format)")
+@click.option("--var", "-v", multiple=True, help="Template variable (name=value)")
+@click.option("--limit", "-l", type=str, help="Limit execution to matching hosts")
+@click.option("--format", "-f", "output_format", type=click.Choice(["text", "json"]),
+              help="Override output format")
+def config_run(
+    name: str,
+    inventory: str,
+    var: tuple[str, ...],
+    limit: Optional[str],
+    output_format: Optional[str],
+) -> None:
+    """Run a saved configuration profile.
+
+    Executes a module with saved configuration options.
+    Use --var to substitute template variables.
+
+    Examples:
+        ftl2 config run web-deploy -i hosts.yml
+
+        ftl2 config run deploy-template -i hosts.yml --var app_path=/local/app --var dest=/opt/
+
+        ftl2 config run web-deploy -i hosts.yml --limit web01
+    """
+    profile = load_profile(name)
+
+    if profile is None:
+        raise click.ClickException(f"Profile not found: {name}")
+
+    # Parse template variables
+    variables: dict[str, str] = {}
+    for v in var:
+        if "=" not in v:
+            raise click.ClickException(f"Invalid variable format: {v}. Expected name=value")
+        var_name, var_value = v.split("=", 1)
+        variables[var_name] = var_value
+
+    # Check for missing template variables
+    template_vars = profile.get_template_variables()
+    missing = [v for v in template_vars if v not in variables]
+    if missing:
+        raise click.ClickException(
+            f"Missing template variables: {', '.join(missing)}\n"
+            f"Use --var {missing[0]}=value to provide them"
+        )
+
+    # Apply template variables to arguments
+    args = profile.apply_args_with_vars(variables)
+    args_str = " ".join(f"{k}={v}" for k, v in args.items())
+
+    # Build command arguments
+    cmd_args = ["run", "-m", profile.module, "-i", inventory]
+
+    if args_str:
+        cmd_args.extend(["-a", args_str])
+
+    if limit:
+        cmd_args.extend(["--limit", limit])
+
+    # Apply saved options
+    fmt = output_format or profile.format
+    if fmt:
+        cmd_args.extend(["--format", fmt])
+
+    if profile.parallel is not None:
+        cmd_args.extend(["--parallel", str(profile.parallel)])
+
+    if profile.timeout is not None:
+        cmd_args.extend(["--timeout", str(profile.timeout)])
+
+    if profile.retry is not None:
+        cmd_args.extend(["--retry", str(profile.retry)])
+
+    if profile.retry_delay is not None:
+        cmd_args.extend(["--retry-delay", str(profile.retry_delay)])
+
+    if profile.smart_retry:
+        cmd_args.append("--smart-retry")
+
+    if profile.circuit_breaker is not None:
+        cmd_args.extend(["--circuit-breaker", str(profile.circuit_breaker)])
+
+    if profile.allow_destructive:
+        cmd_args.append("--allow-destructive")
+
+    # Execute by invoking the run command
+    click.echo(f"Running profile '{name}' with module '{profile.module}'")
+    ctx = click.get_current_context()
+    ctx.invoke(cli, args=cmd_args)
+
+
 @cli.command("run")
 @click.option("--module", "-m", required=True, help="Module to execute")
 @click.option("--module-dir", "-M", multiple=True, help="Module directory to search (can specify multiple, searched before built-ins)")
@@ -1088,6 +1356,12 @@ def workflow_delete(workflow_id: str, yes: bool) -> None:
               help="Track this execution as part of a workflow")
 @click.option("--step", type=str, default=None,
               help="Name/label for this workflow step (requires --workflow-id)")
+@click.option("--limit", "-l", type=str, default=None,
+              help="Limit execution to matching hosts (patterns: web*,!db*,@group)")
+@click.option("--save-results", type=click.Path(), default=None,
+              help="Save execution results to file for later use")
+@click.option("--retry-failed", type=click.Path(exists=True), default=None,
+              help="Retry only hosts that failed in a previous results file")
 def run_module(
     module: str,
     module_dir: tuple[str, ...],
@@ -1112,6 +1386,9 @@ def run_module(
     progress: bool,
     workflow_id: Optional[str],
     step: Optional[str],
+    limit: Optional[str],
+    save_results: Optional[str],
+    retry_failed: Optional[str],
 ) -> None:
     """Execute a module across inventory hosts.
 
@@ -1148,6 +1425,13 @@ def run_module(
     Workflow tracking:
     - --workflow-id ID: Track execution as part of a workflow
     - --step NAME: Label for this step (defaults to module name)
+
+    Host filtering:
+    - --limit PATTERN: Filter hosts (web*,!db*,@webservers)
+    - --retry-failed FILE: Retry hosts that failed in previous results
+
+    Integration:
+    - --save-results FILE: Save results for later use
 
     Examples:
         ftl2 run -m ping -i hosts.yml
@@ -1189,6 +1473,18 @@ def run_module(
         ftl2 run -m setup -i hosts.yml --workflow-id deploy-2026-02-05 --step 1-gather-facts
 
         ftl2 run -m copy -i hosts.yml --workflow-id deploy-2026-02-05 --step 2-deploy
+
+        ftl2 run -m ping -i hosts.yml --limit web01,web02
+
+        ftl2 run -m ping -i hosts.yml --limit "web*"
+
+        ftl2 run -m ping -i hosts.yml --limit "!db*"
+
+        ftl2 run -m setup -i hosts.yml --limit @webservers
+
+        ftl2 run -m ping -i hosts.yml --save-results /tmp/ping-results.json
+
+        ftl2 run -m setup -i hosts.yml --retry-failed /tmp/ping-results.json
     """
     # Configure logging
     # Determine log level from options
@@ -1322,7 +1618,69 @@ def run_module(
             # Load inventory
             logger.debug("Loading inventory", file=inventory)
             inv = load_inventory(inventory)
-            logger.info("Inventory loaded", hosts=len(inv.get_all_hosts()))
+            original_host_count = len(inv.get_all_hosts())
+            logger.info("Inventory loaded", hosts=original_host_count)
+
+            # Handle --retry-failed: load failed hosts from previous results
+            retry_failed_hosts: set[str] | None = None
+            if retry_failed:
+                try:
+                    with open(retry_failed) as f:
+                        previous_results = json.load(f)
+                    retry_failed_hosts = set()
+                    for host_name, result in previous_results.get("results", {}).items():
+                        if not result.get("success", True):
+                            retry_failed_hosts.add(host_name)
+                    if not retry_failed_hosts:
+                        click.echo("No failed hosts found in previous results. Nothing to retry.")
+                        return ExecutionResults(), 0.0
+                    if output_format != "json":
+                        click.echo(f"Retrying {len(retry_failed_hosts)} failed host(s) from previous run")
+                    logger.info("Retry-failed mode", hosts=len(retry_failed_hosts))
+                except (json.JSONDecodeError, KeyError) as e:
+                    raise click.ClickException(f"Failed to parse results file: {e}")
+
+            # Handle --limit: filter hosts by pattern
+            if limit or retry_failed_hosts:
+                all_hosts = inv.get_all_hosts()
+                group_hosts = get_group_hosts_mapping(inv)
+
+                # Apply limit pattern if specified
+                if limit:
+                    filtered = filter_hosts(all_hosts, limit, group_hosts)
+                else:
+                    filtered = all_hosts
+
+                # Further filter by retry-failed hosts if specified
+                if retry_failed_hosts:
+                    filtered = {
+                        name: host for name, host in filtered.items()
+                        if name in retry_failed_hosts
+                    }
+
+                if not filtered:
+                    if limit and retry_failed_hosts:
+                        click.echo(f"No hosts match both limit '{limit}' and retry-failed criteria")
+                    elif limit:
+                        click.echo(f"No hosts match limit pattern: {limit}")
+                    else:
+                        click.echo("No hosts to retry")
+                    return ExecutionResults(), 0.0
+
+                # Update inventory to only include filtered hosts
+                for group in inv.list_groups():
+                    group.hosts = {
+                        name: host for name, host in group.hosts.items()
+                        if name in filtered
+                    }
+                inv._invalidate_cache()
+
+                if output_format != "json" and limit:
+                    click.echo(format_filter_summary(original_host_count, len(filtered), limit))
+
+                logger.info("Host filtering applied",
+                           original=original_host_count,
+                           filtered=len(filtered))
 
             # Handle resume mode - filter out already-succeeded hosts
             previous_state = None
@@ -1456,6 +1814,14 @@ def run_module(
         if output_format != "json":
             click.echo(f"Workflow step '{step_name}' added to workflow '{workflow_id}'")
 
+    # Save results if --save-results specified (not for dry-run)
+    if save_results and not dry_run and results.results:
+        results_output = format_results_json(results, module, duration)
+        with open(save_results, "w") as f:
+            f.write(results_output)
+        if output_format != "json":
+            click.echo(f"Results saved to {save_results}")
+
     # Display results based on format and mode
     if dry_run:
         # Dry-run mode - show preview
@@ -1469,7 +1835,7 @@ def run_module(
         if output_format == "json":
             click.echo(format_results_json(results, module, duration))
         else:
-            click.echo(format_results_text(results, verbose=verbose or debug))
+            click.echo(format_results_text(results, verbose=(verbose > 0)))
 
         # Exit with error if any host failed
         if not results.is_success():

@@ -1842,6 +1842,327 @@ class TestWorkflowTracking:
         assert "--step" in result.output
 
 
+class TestHostFiltering:
+    """Test host filtering functionality."""
+
+    def test_parse_limit_pattern_exact(self):
+        """Test parsing exact hostnames."""
+        from ftl2.host_filter import parse_limit_pattern
+
+        inc_exact, inc_patterns, exc_patterns, inc_groups = parse_limit_pattern("web01,web02")
+        assert inc_exact == {"web01", "web02"}
+        assert len(inc_patterns) == 0
+        assert len(exc_patterns) == 0
+
+    def test_parse_limit_pattern_glob(self):
+        """Test parsing glob patterns."""
+        from ftl2.host_filter import parse_limit_pattern
+
+        inc_exact, inc_patterns, exc_patterns, inc_groups = parse_limit_pattern("web*")
+        assert len(inc_exact) == 0
+        assert inc_patterns == {"web*"}
+
+    def test_parse_limit_pattern_exclusion(self):
+        """Test parsing exclusion patterns."""
+        from ftl2.host_filter import parse_limit_pattern
+
+        inc_exact, inc_patterns, exc_patterns, inc_groups = parse_limit_pattern("!db*")
+        assert len(inc_exact) == 0
+        assert len(inc_patterns) == 0
+        assert exc_patterns == {"db*"}
+
+    def test_parse_limit_pattern_group(self):
+        """Test parsing group patterns."""
+        from ftl2.host_filter import parse_limit_pattern
+
+        inc_exact, inc_patterns, exc_patterns, inc_groups = parse_limit_pattern("@webservers")
+        assert len(inc_exact) == 0
+        assert inc_groups == {"webservers"}
+
+    def test_parse_limit_pattern_mixed(self):
+        """Test parsing mixed patterns."""
+        from ftl2.host_filter import parse_limit_pattern
+
+        inc_exact, inc_patterns, exc_patterns, inc_groups = parse_limit_pattern("web01,web*,!db*,@servers")
+        assert inc_exact == {"web01"}
+        assert inc_patterns == {"web*"}
+        assert exc_patterns == {"db*"}
+        assert inc_groups == {"servers"}
+
+    def test_match_host_exact(self):
+        """Test matching by exact hostname."""
+        from ftl2.host_filter import match_host
+
+        assert match_host("web01", {"web01"}, set(), set())
+        assert not match_host("web02", {"web01"}, set(), set())
+
+    def test_match_host_pattern(self):
+        """Test matching by glob pattern."""
+        from ftl2.host_filter import match_host
+
+        assert match_host("web01", set(), {"web*"}, set())
+        assert match_host("web99", set(), {"web*"}, set())
+        assert not match_host("db01", set(), {"web*"}, set())
+
+    def test_match_host_exclusion(self):
+        """Test exclusion patterns."""
+        from ftl2.host_filter import match_host
+
+        # Exclusion takes precedence
+        assert not match_host("db01", set(), set(), {"db*"})
+        assert match_host("web01", set(), set(), {"db*"})
+
+        # Exclusion beats inclusion
+        assert not match_host("db01", {"db01"}, set(), {"db*"})
+
+    def test_filter_hosts_exact(self):
+        """Test filtering hosts by exact names."""
+        from ftl2.host_filter import filter_hosts
+
+        hosts = {"web01": "h1", "web02": "h2", "db01": "h3"}
+        filtered = filter_hosts(hosts, "web01,web02")
+        assert set(filtered.keys()) == {"web01", "web02"}
+
+    def test_filter_hosts_pattern(self):
+        """Test filtering hosts by pattern."""
+        from ftl2.host_filter import filter_hosts
+
+        hosts = {"web01": "h1", "web02": "h2", "db01": "h3", "db02": "h4"}
+        filtered = filter_hosts(hosts, "web*")
+        assert set(filtered.keys()) == {"web01", "web02"}
+
+    def test_filter_hosts_exclusion(self):
+        """Test filtering hosts with exclusion."""
+        from ftl2.host_filter import filter_hosts
+
+        hosts = {"web01": "h1", "web02": "h2", "db01": "h3", "db02": "h4"}
+        filtered = filter_hosts(hosts, "!db*")
+        assert set(filtered.keys()) == {"web01", "web02"}
+
+    def test_filter_hosts_combined(self):
+        """Test filtering hosts with combined patterns."""
+        from ftl2.host_filter import filter_hosts
+
+        hosts = {"web01": "h1", "web02": "h2", "web03": "h3", "db01": "h4"}
+        filtered = filter_hosts(hosts, "web*,!web03")
+        assert set(filtered.keys()) == {"web01", "web02"}
+
+    def test_filter_hosts_by_group(self):
+        """Test filtering hosts by group name."""
+        from ftl2.host_filter import filter_hosts
+
+        hosts = {"web01": "h1", "web02": "h2", "db01": "h3"}
+        group_hosts = {"webservers": {"web01", "web02"}, "databases": {"db01"}}
+        filtered = filter_hosts(hosts, "@webservers", group_hosts)
+        assert set(filtered.keys()) == {"web01", "web02"}
+
+    def test_filter_hosts_empty_pattern(self):
+        """Test that empty pattern returns all hosts."""
+        from ftl2.host_filter import filter_hosts
+
+        hosts = {"web01": "h1", "web02": "h2"}
+        filtered = filter_hosts(hosts, "")
+        assert filtered == hosts
+
+    def test_format_filter_summary(self):
+        """Test filter summary formatting."""
+        from ftl2.host_filter import format_filter_summary
+
+        summary = format_filter_summary(10, 5, "web*")
+        assert "web*" in summary
+        assert "5/10" in summary
+        assert "5 excluded" in summary
+
+    def test_run_help_shows_limit_option(self):
+        """Test that run help shows limit option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["run", "--help"])
+
+        assert result.exit_code == 0
+        assert "--limit" in result.output
+        assert "web*" in result.output or "pattern" in result.output.lower()
+
+
+class TestSaveResults:
+    """Test save-results functionality."""
+
+    def test_run_help_shows_save_results(self):
+        """Test that run help shows save-results option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["run", "--help"])
+
+        assert result.exit_code == 0
+        assert "--save-results" in result.output
+
+    def test_run_help_shows_retry_failed(self):
+        """Test that run help shows retry-failed option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["run", "--help"])
+
+        assert result.exit_code == 0
+        assert "--retry-failed" in result.output
+
+
+class TestConfigProfiles:
+    """Test configuration profiles functionality."""
+
+    def test_profile_serialization(self):
+        """Test ConfigProfile serialization."""
+        from ftl2.config_profiles import ConfigProfile
+
+        profile = ConfigProfile(
+            name="test-profile",
+            module="copy",
+            args={"src": "app.tgz", "dest": "/opt/"},
+            description="Deploy application",
+            parallel=5,
+            timeout=300,
+            retry=3,
+        )
+
+        data = profile.to_dict()
+        assert data["name"] == "test-profile"
+        assert data["module"] == "copy"
+        assert data["args"]["src"] == "app.tgz"
+        assert data["parallel"] == 5
+
+        restored = ConfigProfile.from_dict(data)
+        assert restored.name == profile.name
+        assert restored.args == profile.args
+
+    def test_profile_template_variables(self):
+        """Test template variable extraction."""
+        from ftl2.config_profiles import ConfigProfile
+
+        profile = ConfigProfile(
+            name="template-test",
+            module="copy",
+            args={"src": "{{app_path}}", "dest": "{{dest_dir}}"},
+        )
+
+        vars = profile.get_template_variables()
+        assert set(vars) == {"app_path", "dest_dir"}
+
+    def test_profile_apply_vars(self):
+        """Test template variable substitution."""
+        from ftl2.config_profiles import ConfigProfile
+
+        profile = ConfigProfile(
+            name="template-test",
+            module="copy",
+            args={"src": "{{app_path}}/app.tgz", "dest": "{{dest_dir}}"},
+        )
+
+        result = profile.apply_args_with_vars({
+            "app_path": "/local/builds",
+            "dest_dir": "/opt/app",
+        })
+
+        assert result["src"] == "/local/builds/app.tgz"
+        assert result["dest"] == "/opt/app"
+
+    def test_profile_save_and_load(self):
+        """Test saving and loading profiles."""
+        import tempfile
+        from pathlib import Path
+        from ftl2.config_profiles import ConfigProfile, save_profile, load_profile
+
+        profile = ConfigProfile(
+            name="test-save",
+            module="ping",
+            description="Test connectivity",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_dir = Path(tmpdir)
+            path = save_profile(profile, profile_dir)
+            assert path.exists()
+
+            loaded = load_profile("test-save", profile_dir)
+            assert loaded is not None
+            assert loaded.name == "test-save"
+            assert loaded.module == "ping"
+
+    def test_profile_list(self):
+        """Test listing profiles."""
+        import tempfile
+        from pathlib import Path
+        from ftl2.config_profiles import ConfigProfile, save_profile, list_profiles
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_dir = Path(tmpdir)
+
+            # Empty directory
+            assert list_profiles(profile_dir) == []
+
+            # Add some profiles
+            save_profile(ConfigProfile(name="prof1", module="ping"), profile_dir)
+            save_profile(ConfigProfile(name="prof2", module="setup"), profile_dir)
+
+            profiles = list_profiles(profile_dir)
+            assert len(profiles) == 2
+            assert "prof1" in profiles
+            assert "prof2" in profiles
+
+    def test_profile_delete(self):
+        """Test deleting a profile."""
+        import tempfile
+        from pathlib import Path
+        from ftl2.config_profiles import ConfigProfile, save_profile, load_profile, delete_profile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_dir = Path(tmpdir)
+            save_profile(ConfigProfile(name="to-delete", module="ping"), profile_dir)
+
+            assert load_profile("to-delete", profile_dir) is not None
+            assert delete_profile("to-delete", profile_dir) is True
+            assert load_profile("to-delete", profile_dir) is None
+            assert delete_profile("to-delete", profile_dir) is False
+
+    def test_profile_format_text(self):
+        """Test profile text formatting."""
+        from ftl2.config_profiles import ConfigProfile
+
+        profile = ConfigProfile(
+            name="formatted",
+            module="copy",
+            description="Deploy files",
+            args={"src": "app.tgz", "dest": "/opt/"},
+            parallel=10,
+            timeout=600,
+        )
+
+        text = profile.format_text()
+        assert "formatted" in text
+        assert "copy" in text
+        assert "Deploy files" in text
+        assert "Parallel: 10" in text
+        assert "Timeout: 600s" in text
+
+    def test_cli_config_list_empty(self):
+        """Test config list with no profiles."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["config", "list"])
+        assert result.exit_code == 0
+
+    def test_cli_config_show_not_found(self):
+        """Test config show with nonexistent profile."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["config", "show", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
+
+    def test_cli_config_help(self):
+        """Test config command help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["config", "--help"])
+        assert result.exit_code == 0
+        assert "save" in result.output
+        assert "list" in result.output
+        assert "show" in result.output
+        assert "delete" in result.output
+
+
 class TestIdempotencyParsing:
     """Test idempotency parsing from module docstrings."""
 
