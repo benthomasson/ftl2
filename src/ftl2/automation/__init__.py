@@ -50,6 +50,7 @@ async def automation(
     modules: list[str] | None = None,
     inventory: str | None = None,
     secrets: list[str] | None = None,
+    secret_bindings: dict[str, dict[str, str]] | None = None,
     check_mode: bool = False,
     verbose: bool = False,
     quiet: bool = False,
@@ -73,6 +74,10 @@ async def automation(
                   execution.
         secrets: List of environment variable names to load as secrets.
                 Access via ftl.secrets["NAME"]. Values are never logged.
+        secret_bindings: Automatic secret injection for modules. Maps module
+                patterns to {param: env_var} bindings. Secrets are injected
+                automatically so scripts never see actual values:
+                {"community.general.slack": {"token": "SLACK_TOKEN"}}
         check_mode: Enable dry-run mode. Modules will report what they
                    would change without making actual changes.
         verbose: Enable verbose output showing each module execution,
@@ -156,6 +161,16 @@ async def automation(
         except AutomationError as e:
             print(f"Failed: {e}")
 
+        # Secret bindings - inject secrets without script access
+        async with automation(
+            secret_bindings={
+                "community.general.slack": {"token": "SLACK_TOKEN"},
+                "amazon.aws.*": {"aws_access_key_id": "AWS_KEY"},
+            }
+        ) as ftl:
+            # Token injected automatically - script never sees it
+            await ftl.community.general.slack(channel="#deploy", msg="Done!")
+
     Note:
         Module execution is 250x faster than subprocess-based Ansible
         because FTL modules run in-process as Python functions.
@@ -164,6 +179,7 @@ async def automation(
         modules=modules,
         inventory=inventory,
         secrets=secrets,
+        secret_bindings=secret_bindings,
         check_mode=check_mode,
         verbose=verbose,
         quiet=quiet,

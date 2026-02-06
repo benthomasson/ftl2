@@ -707,6 +707,106 @@ class TestOutputModes:
         assert events[1]["check_mode"] is True
 
 
+class TestSecretBindings:
+    """Tests for secret bindings (automatic secret injection)."""
+
+    def test_secret_bindings_defaults_empty(self):
+        """Test that secret_bindings defaults to empty dict."""
+        context = AutomationContext()
+        assert context._secret_bindings == {}
+
+    def test_secret_bindings_loads_env_vars(self, monkeypatch):
+        """Test that secret_bindings loads referenced env vars."""
+        monkeypatch.setenv("MY_TOKEN", "secret123")
+
+        context = AutomationContext(
+            secret_bindings={"some.module": {"token": "MY_TOKEN"}}
+        )
+
+        assert "MY_TOKEN" in context._bound_secrets
+        assert context._bound_secrets["MY_TOKEN"] == "secret123"
+
+    def test_secret_bindings_missing_env_var(self, monkeypatch):
+        """Test that missing env vars are not loaded."""
+        # Don't set MISSING_VAR
+
+        context = AutomationContext(
+            secret_bindings={"some.module": {"token": "MISSING_VAR"}}
+        )
+
+        assert "MISSING_VAR" not in context._bound_secrets
+
+    def test_get_secret_bindings_exact_match(self, monkeypatch):
+        """Test getting bindings for exact module match."""
+        monkeypatch.setenv("SLACK_TOKEN", "xoxb-123")
+
+        context = AutomationContext(
+            secret_bindings={"community.general.slack": {"token": "SLACK_TOKEN"}}
+        )
+
+        injections = context._get_secret_bindings_for_module("community.general.slack")
+        assert injections == {"token": "xoxb-123"}
+
+    def test_get_secret_bindings_glob_match(self, monkeypatch):
+        """Test getting bindings with glob pattern."""
+        monkeypatch.setenv("AWS_KEY", "AKIAIOSFODNN7EXAMPLE")
+
+        context = AutomationContext(
+            secret_bindings={"amazon.aws.*": {"aws_access_key_id": "AWS_KEY"}}
+        )
+
+        # Should match ec2_instance
+        injections = context._get_secret_bindings_for_module("amazon.aws.ec2_instance")
+        assert injections == {"aws_access_key_id": "AKIAIOSFODNN7EXAMPLE"}
+
+        # Should match s3_bucket
+        injections = context._get_secret_bindings_for_module("amazon.aws.s3_bucket")
+        assert injections == {"aws_access_key_id": "AKIAIOSFODNN7EXAMPLE"}
+
+    def test_get_secret_bindings_no_match(self, monkeypatch):
+        """Test that non-matching modules get no injections."""
+        monkeypatch.setenv("SLACK_TOKEN", "xoxb-123")
+
+        context = AutomationContext(
+            secret_bindings={"community.general.slack": {"token": "SLACK_TOKEN"}}
+        )
+
+        injections = context._get_secret_bindings_for_module("file")
+        assert injections == {}
+
+    def test_get_secret_bindings_multiple_patterns(self, monkeypatch):
+        """Test multiple patterns can apply."""
+        monkeypatch.setenv("AWS_KEY", "key123")
+        monkeypatch.setenv("AWS_SECRET", "secret456")
+
+        context = AutomationContext(
+            secret_bindings={
+                "amazon.aws.*": {"aws_access_key_id": "AWS_KEY"},
+                "amazon.aws.ec2_instance": {"aws_secret_access_key": "AWS_SECRET"},
+            }
+        )
+
+        injections = context._get_secret_bindings_for_module("amazon.aws.ec2_instance")
+        assert injections == {
+            "aws_access_key_id": "key123",
+            "aws_secret_access_key": "secret456",
+        }
+
+    def test_secret_bindings_via_automation(self, monkeypatch):
+        """Test secret_bindings parameter in automation() function."""
+        monkeypatch.setenv("TEST_SECRET", "value123")
+
+        import asyncio
+
+        async def check():
+            async with automation(
+                secret_bindings={"test.module": {"param": "TEST_SECRET"}}
+            ) as ftl:
+                assert "TEST_SECRET" in ftl._bound_secrets
+
+        asyncio.get_event_loop().run_until_complete(check())
+
+
 class TestSecretsProxy:
     """Tests for SecretsProxy class directly."""
 

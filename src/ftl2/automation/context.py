@@ -239,6 +239,7 @@ class AutomationContext:
         modules: list[str] | None = None,
         inventory: str | Path | Inventory | dict[str, Any] | None = None,
         secrets: list[str] | None = None,
+        secret_bindings: dict[str, dict[str, str]] | None = None,
         check_mode: bool = False,
         verbose: bool = False,
         quiet: bool = False,
@@ -257,6 +258,15 @@ class AutomationContext:
             secrets: List of environment variable names to load as secrets.
                 Secrets are accessed via ftl.secrets["NAME"] and are never
                 logged or exposed in string representations.
+            secret_bindings: Automatic secret injection for modules. Maps module
+                patterns to parameter bindings. Secrets are injected automatically
+                so scripts never see the actual values. Format:
+                {"module.pattern.*": {"param_name": "ENV_VAR_NAME"}}
+                Example:
+                    secret_bindings={
+                        "community.general.slack": {"token": "SLACK_TOKEN"},
+                        "amazon.aws.*": {"aws_access_key_id": "AWS_KEY"},
+                    }
             check_mode: Enable dry-run mode (modules report what would change)
             verbose: Enable verbose output for debugging
             quiet: Suppress all output (overrides verbose)
@@ -269,6 +279,8 @@ class AutomationContext:
         self._enabled_modules = modules
         self._inventory = self._load_inventory(inventory)
         self._secrets_proxy = SecretsProxy(secrets or [])
+        self._secret_bindings = secret_bindings or {}
+        self._load_bound_secrets()
         self.check_mode = check_mode
         self.verbose = verbose and not quiet
         self.quiet = quiet
@@ -279,6 +291,41 @@ class AutomationContext:
         self._hosts_proxy: HostsProxy | None = None
         self._ssh_connections: dict[str, SSHHost] = {}
         self._start_time: float | None = None
+
+    def _load_bound_secrets(self) -> None:
+        """Load all secrets referenced in secret_bindings from environment."""
+        env_vars_needed: set[str] = set()
+        for bindings in self._secret_bindings.values():
+            env_vars_needed.update(bindings.values())
+
+        # Load these secrets (they won't be in self._secrets_proxy yet)
+        self._bound_secrets: dict[str, str] = {}
+        for env_var in env_vars_needed:
+            value = os.environ.get(env_var)
+            if value is not None:
+                self._bound_secrets[env_var] = value
+
+    def _get_secret_bindings_for_module(self, module_name: str) -> dict[str, str]:
+        """Get secret bindings that apply to a module.
+
+        Args:
+            module_name: Full module name (e.g., "community.general.slack")
+
+        Returns:
+            Dict of {param_name: secret_value} to inject
+        """
+        import fnmatch
+
+        injections: dict[str, str] = {}
+
+        for pattern, bindings in self._secret_bindings.items():
+            # Check if pattern matches module name
+            if fnmatch.fnmatch(module_name, pattern) or pattern == module_name:
+                for param_name, env_var in bindings.items():
+                    if env_var in self._bound_secrets:
+                        injections[param_name] = self._bound_secrets[env_var]
+
+        return injections
 
     @property
     def output_mode(self) -> OutputMode:
@@ -474,6 +521,11 @@ class AutomationContext:
 
         start_time = time.time()
 
+        # Inject bound secrets (script never sees these values)
+        secret_injections = self._get_secret_bindings_for_module(module_name)
+        if secret_injections:
+            params = {**secret_injections, **params}  # params can override if explicitly set
+
         # Emit start event
         self._emit_event({
             "event": "module_start",
@@ -607,6 +659,11 @@ class AutomationContext:
         from ftl2.ftl_modules import execute
 
         start_time = time.time()
+
+        # Inject bound secrets (script never sees these values)
+        secret_injections = self._get_secret_bindings_for_module(module_name)
+        if secret_injections:
+            params = {**secret_injections, **params}
 
         # Emit start event
         self._emit_event({
