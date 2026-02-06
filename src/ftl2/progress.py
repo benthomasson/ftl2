@@ -2,14 +2,31 @@
 
 Provides callback-based progress tracking for module execution,
 supporting both text and JSON output formats.
+
+Also includes EventProgressDisplay for displaying real-time module
+events (progress, log, data) with Rich progress bars.
 """
 
 import json
 import sys
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Generator, Protocol
+
+from rich.console import Console
+from rich.live import Live
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+    TimeElapsedColumn,
+)
+from rich.table import Table
+from rich.text import Text
 
 
 @dataclass
@@ -336,3 +353,279 @@ def create_progress_reporter(
         return JsonProgressReporter(output)
     else:
         return TextProgressReporter(output)
+
+
+class EventProgressDisplay:
+    """Display module events as Rich progress bars.
+
+    This class handles real-time module events (progress, log, data) and
+    displays them using Rich progress bars. It's designed to be used as
+    an event callback for streaming executor functions.
+
+    Example:
+        display = EventProgressDisplay()
+        with display:
+            result = await execute_local_streaming(
+                module_path,
+                params,
+                event_callback=display.handle_event,
+            )
+
+    For multi-host execution:
+        display = EventProgressDisplay()
+        with display:
+            async def run_host(host):
+                callback = display.make_callback(host.name)
+                return await execute_remote_streaming(
+                    host, bundle_path, params, event_callback=callback
+                )
+            results = await asyncio.gather(*[run_host(h) for h in hosts])
+    """
+
+    def __init__(
+        self,
+        console: Console | None = None,
+        show_log_events: bool = True,
+        show_data_events: bool = False,
+    ) -> None:
+        """Initialize event progress display.
+
+        Args:
+            console: Rich Console to use (creates new one if None)
+            show_log_events: Whether to display log events
+            show_data_events: Whether to display data events
+        """
+        self.console = console or Console(stderr=True)
+        self.show_log_events = show_log_events
+        self.show_data_events = show_data_events
+
+        self.progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=self.console,
+            transient=True,
+        )
+
+        # Map of task_id -> Rich task ID
+        self._tasks: dict[str, int] = {}
+        # Map of host -> task_id prefix for multi-host tracking
+        self._host_prefixes: dict[str, str] = {}
+        # Log messages to display
+        self._log_messages: list[tuple[str, str, str]] = []  # (level, host, message)
+        # Live display context
+        self._live: Live | None = None
+
+    def __enter__(self) -> "EventProgressDisplay":
+        """Start the progress display."""
+        self.progress.start()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Stop the progress display."""
+        self.progress.stop()
+
+        # Print any accumulated log messages
+        for level, host, message in self._log_messages:
+            style = self._level_style(level)
+            prefix = f"[{host}] " if host else ""
+            self.console.print(f"{prefix}{message}", style=style)
+
+    def _level_style(self, level: str) -> str:
+        """Get Rich style for log level."""
+        styles = {
+            "debug": "dim",
+            "info": "blue",
+            "warning": "yellow",
+            "error": "red bold",
+        }
+        return styles.get(level, "")
+
+    def _get_task_key(self, event: dict[str, Any], host: str = "") -> str:
+        """Generate a unique task key from event."""
+        task_id = event.get("task_id") or "default"
+        if host:
+            return f"{host}:{task_id}"
+        return task_id
+
+    def handle_event(self, event: dict[str, Any], host: str = "") -> None:
+        """Handle an incoming module event.
+
+        This is the main callback to pass to streaming executor functions.
+
+        Args:
+            event: Event dictionary from module
+            host: Optional host name for multi-host tracking
+        """
+        event_type = event.get("event")
+
+        if event_type == "progress":
+            self._handle_progress(event, host)
+        elif event_type == "log" and self.show_log_events:
+            self._handle_log(event, host)
+        elif event_type == "data" and self.show_data_events:
+            self._handle_data(event, host)
+
+    def _handle_progress(self, event: dict[str, Any], host: str) -> None:
+        """Handle a progress event."""
+        task_key = self._get_task_key(event, host)
+        percent = event.get("percent", 0)
+        message = event.get("message", "Working...")
+        current = event.get("current")
+        total = event.get("total")
+
+        # Add host prefix to description if multi-host
+        description = f"[{host}] {message}" if host else message
+
+        if task_key not in self._tasks:
+            # Create new task
+            task_total = total if total else 100
+            task_id = self.progress.add_task(
+                description,
+                total=task_total,
+                completed=current if current else percent,
+            )
+            self._tasks[task_key] = task_id
+        else:
+            # Update existing task
+            task_id = self._tasks[task_key]
+            completed = current if current else percent
+            self.progress.update(
+                task_id,
+                description=description,
+                completed=completed,
+            )
+
+            # Update total if provided
+            if total:
+                self.progress.update(task_id, total=total)
+
+    def _handle_log(self, event: dict[str, Any], host: str) -> None:
+        """Handle a log event."""
+        level = event.get("level", "info")
+        message = event.get("message", "")
+
+        # Store for display after progress completes
+        self._log_messages.append((level, host, message))
+
+        # Also print immediately if it's a warning or error
+        if level in ("warning", "error"):
+            style = self._level_style(level)
+            prefix = f"[{host}] " if host else ""
+            self.console.print(f"{prefix}{message}", style=style)
+
+    def _handle_data(self, event: dict[str, Any], host: str) -> None:
+        """Handle a data event."""
+        stream = event.get("stream", "stdout")
+        data = event.get("data", "")
+
+        # Print data immediately
+        prefix = f"[{host}] " if host else ""
+        style = "dim" if stream == "stderr" else ""
+        self.console.print(f"{prefix}{data}", style=style, end="")
+
+    def make_callback(self, host: str) -> Callable[[dict[str, Any]], None]:
+        """Create a callback bound to a specific host.
+
+        Useful for multi-host execution where each host needs its own callback.
+
+        Args:
+            host: Host name to bind to callback
+
+        Returns:
+            Callback function that includes host in event handling
+        """
+        def callback(event: dict[str, Any]) -> None:
+            self.handle_event(event, host=host)
+        return callback
+
+    def clear_tasks(self) -> None:
+        """Clear all tracked tasks."""
+        for task_id in self._tasks.values():
+            self.progress.remove_task(task_id)
+        self._tasks.clear()
+
+    @property
+    def task_count(self) -> int:
+        """Number of active tasks."""
+        return len(self._tasks)
+
+
+class SimpleEventDisplay:
+    """Simple text-based event display without Rich.
+
+    Provides a minimal event display that works without Rich,
+    useful for non-interactive environments or when Rich is not available.
+
+    Example:
+        display = SimpleEventDisplay()
+        result = await execute_local_streaming(
+            module_path,
+            params,
+            event_callback=display.handle_event,
+        )
+    """
+
+    def __init__(
+        self,
+        output: Any = None,
+        show_log_events: bool = True,
+        show_data_events: bool = False,
+    ) -> None:
+        """Initialize simple event display.
+
+        Args:
+            output: Output stream (defaults to sys.stderr)
+            show_log_events: Whether to display log events
+            show_data_events: Whether to display data events
+        """
+        self.output = output or sys.stderr
+        self.show_log_events = show_log_events
+        self.show_data_events = show_data_events
+        self._last_percent: dict[str, int] = {}
+
+    def handle_event(self, event: dict[str, Any], host: str = "") -> None:
+        """Handle an incoming module event."""
+        event_type = event.get("event")
+
+        if event_type == "progress":
+            self._handle_progress(event, host)
+        elif event_type == "log" and self.show_log_events:
+            self._handle_log(event, host)
+        elif event_type == "data" and self.show_data_events:
+            self._handle_data(event, host)
+
+    def _handle_progress(self, event: dict[str, Any], host: str) -> None:
+        """Handle a progress event."""
+        task_id = event.get("task_id") or "default"
+        key = f"{host}:{task_id}" if host else task_id
+        percent = event.get("percent", 0)
+        message = event.get("message", "")
+
+        # Only print on significant progress (every 10%)
+        last = self._last_percent.get(key, -10)
+        if percent >= last + 10 or percent == 100:
+            self._last_percent[key] = percent
+            prefix = f"[{host}] " if host else ""
+            print(f"{prefix}{message}: {percent}%", file=self.output, flush=True)
+
+    def _handle_log(self, event: dict[str, Any], host: str) -> None:
+        """Handle a log event."""
+        level = event.get("level", "info").upper()
+        message = event.get("message", "")
+        prefix = f"[{host}] " if host else ""
+        print(f"{prefix}[{level}] {message}", file=self.output, flush=True)
+
+    def _handle_data(self, event: dict[str, Any], host: str) -> None:
+        """Handle a data event."""
+        data = event.get("data", "")
+        prefix = f"[{host}] " if host else ""
+        print(f"{prefix}{data}", file=self.output, end="", flush=True)
+
+    def make_callback(self, host: str) -> Callable[[dict[str, Any]], None]:
+        """Create a callback bound to a specific host."""
+        def callback(event: dict[str, Any]) -> None:
+            self.handle_event(event, host=host)
+        return callback
