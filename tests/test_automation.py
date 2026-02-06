@@ -222,3 +222,167 @@ class TestTopLevelImport:
         """Test that AutomationContext can be imported from ftl2."""
         from ftl2 import AutomationContext
         assert AutomationContext is not None
+
+
+class TestInventoryIntegration:
+    """Tests for Phase 2: Inventory Integration."""
+
+    @pytest.mark.asyncio
+    async def test_default_localhost_inventory(self):
+        """Test that default inventory includes localhost."""
+        async with automation() as ftl:
+            assert len(ftl.hosts) >= 1
+            assert "localhost" in ftl.hosts
+
+    @pytest.mark.asyncio
+    async def test_hosts_all_property(self):
+        """Test ftl.hosts.all returns all hosts."""
+        async with automation() as ftl:
+            all_hosts = ftl.hosts.all
+            assert len(all_hosts) >= 1
+
+    @pytest.mark.asyncio
+    async def test_hosts_groups_property(self):
+        """Test ftl.hosts.groups returns group names."""
+        async with automation() as ftl:
+            groups = ftl.hosts.groups
+            assert isinstance(groups, list)
+
+    @pytest.mark.asyncio
+    async def test_hosts_keys(self):
+        """Test ftl.hosts.keys() returns host names."""
+        async with automation() as ftl:
+            keys = ftl.hosts.keys()
+            assert "localhost" in keys
+
+    @pytest.mark.asyncio
+    async def test_hosts_contains(self):
+        """Test 'in' operator for hosts."""
+        async with automation() as ftl:
+            assert "localhost" in ftl.hosts
+
+    @pytest.mark.asyncio
+    async def test_hosts_getitem_host(self):
+        """Test getting specific host by name."""
+        async with automation() as ftl:
+            hosts = ftl.hosts["localhost"]
+            assert len(hosts) == 1
+            assert hosts[0].name == "localhost"
+
+    @pytest.mark.asyncio
+    async def test_hosts_getitem_unknown_raises(self):
+        """Test that unknown host/group raises KeyError."""
+        async with automation() as ftl:
+            with pytest.raises(KeyError):
+                _ = ftl.hosts["nonexistent"]
+
+    @pytest.mark.asyncio
+    async def test_inventory_from_dict(self):
+        """Test loading inventory from dict."""
+        inv_dict = {
+            "webservers": {
+                "hosts": {
+                    "web01": {"ansible_host": "192.168.1.10"},
+                    "web02": {"ansible_host": "192.168.1.11"},
+                }
+            },
+            "databases": {
+                "hosts": {
+                    "db01": {"ansible_host": "192.168.1.20"},
+                }
+            },
+        }
+
+        context = AutomationContext(inventory=inv_dict)
+
+        assert "webservers" in context.hosts
+        assert "databases" in context.hosts
+        assert len(context.hosts["webservers"]) == 2
+        assert len(context.hosts["databases"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_inventory_from_file(self):
+        """Test loading inventory from YAML file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inv_file = Path(tmpdir) / "inventory.yml"
+            inv_file.write_text("""
+webservers:
+  hosts:
+    web01:
+      ansible_host: 192.168.1.10
+      ansible_port: 22
+    web02:
+      ansible_host: 192.168.1.11
+""")
+
+            context = AutomationContext(inventory=str(inv_file))
+
+            assert "webservers" in context.hosts
+            assert len(context.hosts["webservers"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_inventory_missing_file_falls_back_to_localhost(self):
+        """Test that missing inventory file falls back to localhost."""
+        context = AutomationContext(inventory="/nonexistent/path.yml")
+        assert "localhost" in context.hosts
+
+    @pytest.mark.asyncio
+    async def test_run_on_localhost(self):
+        """Test run_on with localhost."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "test.txt"
+
+            async with automation() as ftl:
+                results = await ftl.run_on("localhost", "file", path=str(test_file), state="touch")
+
+            assert len(results) == 1
+            assert results[0].success is True
+            assert test_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_run_on_with_host_list(self):
+        """Test run_on with list of hosts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "test.txt"
+
+            async with automation() as ftl:
+                # Get localhost as a HostConfig list
+                hosts = ftl.hosts["localhost"]
+                results = await ftl.run_on(hosts, "file", path=str(test_file), state="touch")
+
+            assert len(results) == 1
+            assert results[0].success is True
+
+    @pytest.mark.asyncio
+    async def test_run_on_results_tracked(self):
+        """Test that run_on results are tracked in ftl.results."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            async with automation() as ftl:
+                await ftl.run_on("localhost", "command", cmd="echo hello")
+
+                # Results should include run_on executions
+                assert len(ftl.results) >= 1
+                assert ftl.results[-1].module == "command"
+
+
+class TestHostsProxy:
+    """Tests for HostsProxy class."""
+
+    def test_hosts_proxy_len(self):
+        """Test len() on HostsProxy."""
+        from ftl2.automation.context import HostsProxy
+        from ftl2.inventory import load_localhost
+
+        inv = load_localhost()
+        proxy = HostsProxy(inv)
+        assert len(proxy) == 1
+
+    def test_hosts_proxy_iter(self):
+        """Test iterating over HostsProxy."""
+        from ftl2.automation.context import HostsProxy
+        from ftl2.inventory import load_localhost
+
+        inv = load_localhost()
+        proxy = HostsProxy(inv)
+        host_names = list(proxy)
+        assert "localhost" in host_names

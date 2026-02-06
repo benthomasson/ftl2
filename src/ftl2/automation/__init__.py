@@ -40,6 +40,7 @@ __all__ = [
 @asynccontextmanager
 async def automation(
     modules: list[str] | None = None,
+    inventory: str | None = None,
     check_mode: bool = False,
     verbose: bool = False,
 ) -> AsyncGenerator[AutomationContext, None]:
@@ -55,6 +56,9 @@ async def automation(
         modules: List of module names to enable. If None, all modules
                 are available. Use this to restrict which modules can
                 be called (e.g., for safety or documentation).
+        inventory: Path to inventory file, or None for localhost only.
+                  Enables ftl.hosts access and ftl.run_on() for remote
+                  execution.
         check_mode: Enable dry-run mode. Modules will report what they
                    would change without making actual changes.
         verbose: Enable verbose output showing each module execution.
@@ -63,10 +67,19 @@ async def automation(
         AutomationContext with ftl.module_name() access to all modules
 
     Example:
-        # Basic usage
+        # Basic usage (localhost)
         async with automation() as ftl:
             await ftl.file(path="/tmp/test", state="touch")
             await ftl.command(cmd="echo hello")
+
+        # With inventory for remote execution
+        async with automation(inventory="hosts.yml") as ftl:
+            # Local execution
+            await ftl.file(path="/tmp/test", state="touch")
+
+            # Remote execution on hosts/groups
+            await ftl.run_on("webservers", "file", path="/var/www", state="directory")
+            await ftl.run_on(ftl.hosts["db01"], "command", cmd="pg_dump mydb")
 
         # Restricted modules
         async with automation(modules=["file", "copy"]) as ftl:
@@ -89,6 +102,7 @@ async def automation(
     """
     context = AutomationContext(
         modules=modules,
+        inventory=inventory,
         check_mode=check_mode,
         verbose=verbose,
     )

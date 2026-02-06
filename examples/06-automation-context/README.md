@@ -20,6 +20,7 @@ async with automation() as ftl:
 | Example | Phase | Description |
 |---------|-------|-------------|
 | `example_phase1_basic.py` | 1 | Core context manager with ftl.module_name() syntax |
+| `example_phase2_inventory.py` | 2 | Inventory integration with ftl.hosts and run_on() |
 
 ## Quick Start
 
@@ -75,9 +76,51 @@ async with automation() as ftl:
 4. **Type-Safe**: Full IDE autocomplete and type checking support
 5. **Pythonic**: Uses standard async context managers
 
+## Phase 2: Inventory Integration
+
+Load inventory and execute on remote hosts:
+
+```python
+# From YAML file
+async with automation(inventory="hosts.yml") as ftl:
+    # Access hosts
+    print(ftl.hosts.groups)        # ['webservers', 'databases']
+    print(ftl.hosts["webservers"]) # [HostConfig(...), HostConfig(...)]
+
+    # Run on specific host/group
+    results = await ftl.run_on("webservers", "file", path="/var/www", state="directory")
+
+    # Run on host list
+    results = await ftl.run_on(ftl.hosts["db01"], "command", cmd="pg_dump mydb")
+```
+
+**From dictionary:**
+```python
+inventory = {
+    "webservers": {
+        "hosts": {
+            "web01": {"ansible_host": "192.168.1.10"},
+            "web02": {"ansible_host": "192.168.1.11"},
+        }
+    }
+}
+async with automation(inventory=inventory) as ftl:
+    await ftl.run_on("webservers", "service", name="nginx", state="restarted")
+```
+
+**Host access:**
+```python
+ftl.hosts["web01"]       # Get specific host
+ftl.hosts["webservers"]  # Get all hosts in group
+ftl.hosts.all            # Get all hosts
+ftl.hosts.groups         # Get group names
+ftl.hosts.keys()         # Get all host names
+len(ftl.hosts)           # Number of hosts
+"web01" in ftl.hosts     # Check if host exists
+```
+
 ## Coming Soon
 
-- Phase 2: Inventory integration (`ftl.hosts`, `ftl.run_on()`)
 - Phase 3: Secrets management (`ftl.secrets`)
 - Phase 4: Check mode (dry run)
 - Phase 5: Progress and output integration
