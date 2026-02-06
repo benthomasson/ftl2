@@ -90,6 +90,71 @@ class TestExecutionResult:
         assert result.success is True
         assert result.output == {}
 
+    def test_events_field_default(self):
+        """Test that events field defaults to empty list."""
+        result = ExecutionResult(success=True)
+        assert result.events == []
+
+    def test_from_module_output_with_events(self):
+        """Test parsing events from stderr."""
+        stdout = '{"changed": true}'
+        stderr = '''{"event": "progress", "percent": 0, "message": "Starting"}
+{"event": "progress", "percent": 50, "message": "Halfway"}
+{"event": "progress", "percent": 100, "message": "Done"}'''
+
+        result = ExecutionResult.from_module_output(stdout, stderr, 0)
+
+        assert result.success is True
+        assert result.changed is True
+        assert len(result.events) == 3
+        assert result.events[0]["event"] == "progress"
+        assert result.events[0]["percent"] == 0
+        assert result.events[1]["percent"] == 50
+        assert result.events[2]["percent"] == 100
+        assert result.stderr == ""  # Events removed from stderr
+
+    def test_from_module_output_mixed_stderr(self):
+        """Test parsing mixed stderr (events + regular output)."""
+        stdout = '{"changed": false}'
+        stderr = '''{"event": "log", "level": "info", "message": "Starting task"}
+Warning: something happened
+{"event": "progress", "percent": 100}
+Another warning line'''
+
+        result = ExecutionResult.from_module_output(stdout, stderr, 0)
+
+        assert result.success is True
+        assert len(result.events) == 2
+        assert result.events[0]["event"] == "log"
+        assert result.events[1]["event"] == "progress"
+        assert "Warning: something happened" in result.stderr
+        assert "Another warning line" in result.stderr
+        assert "progress" not in result.stderr
+
+    def test_from_module_output_no_events(self):
+        """Test stderr without events is preserved."""
+        stdout = '{"changed": true}'
+        stderr = "Some warning\nAnother line"
+
+        result = ExecutionResult.from_module_output(stdout, stderr, 0)
+
+        assert result.success is True
+        assert result.events == []
+        assert result.stderr == "Some warning\nAnother line"
+
+    def test_failure_preserves_events(self):
+        """Test that events are preserved even on failure."""
+        stdout = '{"failed": true, "msg": "error"}'
+        stderr = '''{"event": "progress", "percent": 50}
+Error details here'''
+
+        result = ExecutionResult.from_module_output(stdout, stderr, 1)
+
+        assert result.success is False
+        assert len(result.events) == 1
+        assert result.events[0]["percent"] == 50
+        assert "Error details here" in result.stderr
+
 
 class TestGetModuleUtilsPythonpath:
     """Tests for get_module_utils_pythonpath function."""
@@ -199,6 +264,38 @@ time.sleep(10)
 
             assert result.success is False
             assert "timed out" in result.error.lower()
+
+    def test_execute_module_with_events(self):
+        """Test executing a module that emits events."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "event_module.py"
+            module.write_text('''
+import sys
+import json
+
+if __name__ == "__main__":
+    params = json.load(sys.stdin)
+    args = params.get("ANSIBLE_MODULE_ARGS", {})
+
+    # Emit progress events to stderr
+    print(json.dumps({"event": "progress", "percent": 0, "message": "Starting"}), file=sys.stderr)
+    print(json.dumps({"event": "progress", "percent": 50, "message": "Working"}), file=sys.stderr)
+    print(json.dumps({"event": "progress", "percent": 100, "message": "Done"}), file=sys.stderr)
+
+    # Final result to stdout
+    result = {"changed": True, "msg": "completed with events"}
+    print(json.dumps(result))
+''')
+
+            result = execute_local(module, {})
+
+            assert result.success is True
+            assert result.output["msg"] == "completed with events"
+            assert len(result.events) == 3
+            assert result.events[0]["percent"] == 0
+            assert result.events[1]["percent"] == 50
+            assert result.events[2]["percent"] == 100
+            assert result.events[2]["message"] == "Done"
 
 
 class TestExecuteBundleLocal:

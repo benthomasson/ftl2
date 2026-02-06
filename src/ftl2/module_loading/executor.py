@@ -20,6 +20,7 @@ from ftl2.module_loading.fqcn import (
     find_ansible_builtin_path,
 )
 from ftl2.module_loading.bundle import Bundle, BundleCache
+from ftl2.events import parse_events
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,8 @@ class ExecutionResult:
         error: Error message if failed
         return_code: Process return code
         stdout: Raw stdout from execution
-        stderr: Raw stderr from execution
+        stderr: Raw stderr from execution (with events removed)
+        events: List of parsed events emitted during execution
     """
 
     success: bool
@@ -45,10 +47,18 @@ class ExecutionResult:
     return_code: int = 0
     stdout: str = ""
     stderr: str = ""
+    events: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_module_output(cls, stdout: str, stderr: str, return_code: int) -> "ExecutionResult":
-        """Create result from module execution output."""
+        """Create result from module execution output.
+
+        Parses JSON-line events from stderr, separating them from regular
+        stderr output. Events are stored in the `events` field.
+        """
+        # Parse events from stderr
+        events, remaining_stderr = parse_events(stderr)
+
         try:
             output = json.loads(stdout) if stdout.strip() else {}
         except json.JSONDecodeError as e:
@@ -57,7 +67,8 @@ class ExecutionResult:
                 error=f"Invalid JSON output: {e}",
                 return_code=return_code,
                 stdout=stdout,
-                stderr=stderr,
+                stderr=remaining_stderr,
+                events=events,
             )
 
         # Check for failure indicators
@@ -67,10 +78,11 @@ class ExecutionResult:
                 success=False,
                 changed=output.get("changed", False),
                 output=output,
-                error=output.get("msg", stderr or "Unknown error"),
+                error=output.get("msg", remaining_stderr or "Unknown error"),
                 return_code=return_code,
                 stdout=stdout,
-                stderr=stderr,
+                stderr=remaining_stderr,
+                events=events,
             )
 
         return cls(
@@ -79,7 +91,8 @@ class ExecutionResult:
             output=output,
             return_code=return_code,
             stdout=stdout,
-            stderr=stderr,
+            stderr=remaining_stderr,
+            events=events,
         )
 
 
