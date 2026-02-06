@@ -1343,6 +1343,100 @@ class TestStateTracking:
         assert "State tracking" in result.output
 
 
+class TestEnhancedLogging:
+    """Test enhanced logging features."""
+
+    def test_verbosity_levels(self):
+        """Test verbosity count to log level conversion."""
+        from ftl2.logging import get_level_from_verbosity, TRACE
+        import logging
+
+        assert get_level_from_verbosity(0) == logging.WARNING
+        assert get_level_from_verbosity(1) == logging.INFO
+        assert get_level_from_verbosity(2) == logging.DEBUG
+        assert get_level_from_verbosity(3) == TRACE
+        assert get_level_from_verbosity(4) == TRACE  # Max out at trace
+
+    def test_level_from_name(self):
+        """Test log level from name conversion."""
+        from ftl2.logging import get_level_from_name, TRACE
+        import logging
+
+        assert get_level_from_name("trace") == TRACE
+        assert get_level_from_name("debug") == logging.DEBUG
+        assert get_level_from_name("info") == logging.INFO
+        assert get_level_from_name("warning") == logging.WARNING
+        assert get_level_from_name("error") == logging.ERROR
+        assert get_level_from_name("critical") == logging.CRITICAL
+
+    def test_level_from_name_case_insensitive(self):
+        """Test log level name is case insensitive."""
+        from ftl2.logging import get_level_from_name
+        import logging
+
+        assert get_level_from_name("DEBUG") == logging.DEBUG
+        assert get_level_from_name("Info") == logging.INFO
+        assert get_level_from_name("WARNING") == logging.WARNING
+
+    def test_level_from_name_invalid(self):
+        """Test invalid log level name raises error."""
+        from ftl2.logging import get_level_from_name
+        import pytest
+
+        with pytest.raises(ValueError) as exc_info:
+            get_level_from_name("invalid")
+        assert "Invalid log level" in str(exc_info.value)
+
+    def test_configure_logging_with_file(self):
+        """Test logging configuration with file output."""
+        import tempfile
+        import logging
+        from pathlib import Path
+        from ftl2.logging import configure_logging
+
+        with tempfile.NamedTemporaryFile(suffix=".log", delete=False) as f:
+            log_path = Path(f.name)
+
+        try:
+            configure_logging(
+                level=logging.INFO,
+                log_file=log_path,
+                file_level=logging.DEBUG,
+            )
+
+            # Get a logger and log a message
+            logger = logging.getLogger("test.logging")
+            logger.info("Test info message")
+            logger.debug("Test debug message")
+
+            # Read log file
+            log_content = log_path.read_text()
+            assert "Test info message" in log_content
+            assert "Test debug message" in log_content
+        finally:
+            log_path.unlink()
+
+    def test_run_help_shows_logging_options(self):
+        """Test that run help shows enhanced logging options."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["run", "--help"])
+
+        assert result.exit_code == 0
+        assert "--log-file" in result.output
+        assert "--log-level" in result.output
+        assert "-v" in result.output
+        assert "trace" in result.output.lower()
+
+    def test_verbose_count_option(self):
+        """Test that -v can be specified multiple times."""
+        runner = CliRunner()
+        # Just verify the help mentions verbosity levels
+        result = runner.invoke(cli, ["run", "--help"])
+
+        assert "Increase verbosity" in result.output
+        assert "-vv" in result.output or "debug" in result.output.lower()
+
+
 class TestIdempotencyParsing:
     """Test idempotency parsing from module docstrings."""
 

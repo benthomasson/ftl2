@@ -5,43 +5,129 @@ This module provides enhanced logging capabilities including:
 - Performance timing
 - Log scoping with context managers
 - Standardized log formats
+- File logging with filtering
+- Verbosity levels support
 """
 
 import logging
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Generator
 
 # Standard log format
 DEFAULT_FORMAT = "%(levelname)s [%(name)s] %(message)s"
 DEBUG_FORMAT = "%(asctime)s %(levelname)s [%(name)s:%(funcName)s:%(lineno)d] %(message)s"
+TRACE_FORMAT = "%(asctime)s.%(msecs)03d %(levelname)s [%(name)s:%(funcName)s:%(lineno)d] %(message)s"
 PERFORMANCE_FORMAT = "%(levelname)s [%(name)s] %(message)s (%(duration).3fs)"
+
+# Custom TRACE level (more detailed than DEBUG)
+TRACE = 5
+logging.addLevelName(TRACE, "TRACE")
+
+# Verbosity level mapping
+VERBOSITY_LEVELS = {
+    0: logging.WARNING,   # Default: warnings and errors only
+    1: logging.INFO,      # -v: Info level
+    2: logging.DEBUG,     # -vv: Debug level
+    3: TRACE,             # -vvv: Trace level (includes SSH commands)
+}
+
+
+def get_level_from_verbosity(verbosity: int) -> int:
+    """Convert verbosity count to logging level.
+
+    Args:
+        verbosity: Number of -v flags (0-3+)
+
+    Returns:
+        Logging level constant
+    """
+    return VERBOSITY_LEVELS.get(min(verbosity, 3), TRACE)
+
+
+def get_level_from_name(level_name: str) -> int:
+    """Convert level name to logging level.
+
+    Args:
+        level_name: Level name (trace, debug, info, warning, error, critical)
+
+    Returns:
+        Logging level constant
+
+    Raises:
+        ValueError: If level name is invalid
+    """
+    level_map = {
+        "trace": TRACE,
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "error": logging.ERROR,
+        "critical": logging.CRITICAL,
+    }
+    level_lower = level_name.lower()
+    if level_lower not in level_map:
+        valid = ", ".join(level_map.keys())
+        raise ValueError(f"Invalid log level: {level_name}. Valid levels: {valid}")
+    return level_map[level_lower]
 
 
 def configure_logging(
     level: int = logging.WARNING,
     format_string: str | None = None,
     debug: bool = False,
+    log_file: str | Path | None = None,
+    file_level: int | None = None,
 ) -> None:
     """Configure logging for FTL2.
 
     Args:
-        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        level: Logging level for console (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         format_string: Custom format string (uses default if None)
         debug: If True, use debug format with timestamps and line numbers
+        log_file: Optional path to write logs to file
+        file_level: Optional separate level for file logging (defaults to level)
 
     Example:
         >>> configure_logging(level=logging.INFO)
         >>> configure_logging(debug=True)
+        >>> configure_logging(level=logging.INFO, log_file="/tmp/ftl2.log")
+        >>> configure_logging(level=logging.WARNING, log_file="/tmp/ftl2.log", file_level=logging.DEBUG)
     """
+    # Determine format based on level
     if format_string is None:
-        format_string = DEBUG_FORMAT if debug else DEFAULT_FORMAT
+        if level <= TRACE:
+            format_string = TRACE_FORMAT
+        elif debug or level <= logging.DEBUG:
+            format_string = DEBUG_FORMAT
+        else:
+            format_string = DEFAULT_FORMAT
 
-    logging.basicConfig(
-        level=level,
-        format=format_string,
-        force=True,  # Reconfigure if already configured
-    )
+    # Get root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(min(level, file_level or level))
+
+    # Remove existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_handler.setFormatter(logging.Formatter(format_string))
+    root_logger.addHandler(console_handler)
+
+    # File handler if specified
+    if log_file:
+        log_path = Path(log_file) if isinstance(log_file, str) else log_file
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setLevel(file_level or level)
+        # Always use detailed format for file logging
+        file_handler.setFormatter(logging.Formatter(DEBUG_FORMAT))
+        root_logger.addHandler(file_handler)
 
 
 @contextmanager

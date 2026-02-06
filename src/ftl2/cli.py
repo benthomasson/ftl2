@@ -15,7 +15,13 @@ import click
 from ftl2 import __version__
 from ftl2.executor import ModuleExecutor, ExecutionResults
 from ftl2.inventory import load_inventory, Inventory
-from ftl2.logging import configure_logging, get_logger
+from ftl2.logging import (
+    configure_logging,
+    get_logger,
+    get_level_from_verbosity,
+    get_level_from_name,
+    TRACE,
+)
 from ftl2.module_docs import discover_modules, extract_module_doc, format_module_list, format_module_list_json
 from ftl2.vars import (
     collect_host_variables,
@@ -780,8 +786,12 @@ def validate_execution_requirements(inventory, module_name: str, module_dirs: li
               help="Save execution state to file for resume capability")
 @click.option("--resume", type=click.Path(exists=True), default=None,
               help="Resume from previous state file, skipping succeeded hosts")
-@click.option("--debug", is_flag=True, help="Show debug logging")
-@click.option("--verbose", "-v", is_flag=True, help="Show verbose logging")
+@click.option("--log-file", type=click.Path(), default=None,
+              help="Write logs to file (in addition to console)")
+@click.option("--log-level", type=click.Choice(["trace", "debug", "info", "warning", "error"]),
+              default=None, help="Set log level explicitly (overrides -v)")
+@click.option("-v", "--verbose", count=True,
+              help="Increase verbosity: -v=info, -vv=debug, -vvv=trace")
 def run_module(
     module: str,
     module_dir: tuple[str, ...],
@@ -799,8 +809,9 @@ def run_module(
     circuit_breaker: float,
     state_file: Optional[str],
     resume: Optional[str],
-    debug: bool,
-    verbose: bool,
+    log_file: Optional[str],
+    log_level: Optional[str],
+    verbose: int,
 ) -> None:
     """Execute a module across inventory hosts.
 
@@ -822,6 +833,13 @@ def run_module(
     - --state-file FILE: Save results for later resume
     - --resume FILE: Resume from previous run, skip succeeded hosts
 
+    Logging options:
+    - -v: Info level (show progress)
+    - -vv: Debug level (show details)
+    - -vvv: Trace level (show SSH commands, full details)
+    - --log-file FILE: Also write logs to file
+    - --log-level LEVEL: Set level explicitly (trace, debug, info, warning, error)
+
     Examples:
         ftl2 run -m ping -i hosts.yml
 
@@ -829,7 +847,13 @@ def run_module(
 
         ftl2 run -m file -i inventory.yml -a "path=/tmp/test state=touch"
 
-        ftl2 run -m shell -i hosts.yml -a "cmd='uptime'" --verbose
+        ftl2 run -m shell -i hosts.yml -a "cmd='uptime'" -v
+
+        ftl2 run -m ping -i hosts.yml -vv
+
+        ftl2 run -m ping -i hosts.yml -vvv --log-file /tmp/ftl2.log
+
+        ftl2 run -m setup -i hosts.yml --log-file /tmp/debug.log --log-level debug
 
         ftl2 run -m file -i hosts.yml -a "path=/tmp/test state=absent" --dry-run
 
@@ -846,15 +870,26 @@ def run_module(
         ftl2 run -m copy -i hosts.yml -a "src=app.tgz dest=/opt/" --resume /tmp/deploy.json
     """
     # Configure logging
-    # For JSON output, suppress logging to avoid polluting the output
-    if output_format == "json":
-        configure_logging(level=logging.CRITICAL)  # Only critical errors
-    elif debug:
-        configure_logging(level=logging.DEBUG, debug=True)
-    elif verbose:
-        configure_logging(level=logging.INFO)
+    # Determine log level from options
+    if log_level:
+        level = get_level_from_name(log_level)
     else:
-        configure_logging(level=logging.WARNING)
+        level = get_level_from_verbosity(verbose)
+
+    # For JSON output, suppress console logging to avoid polluting the output
+    # But still allow file logging if specified
+    if output_format == "json":
+        console_level = logging.CRITICAL
+    else:
+        console_level = level
+
+    # Configure logging with file support
+    configure_logging(
+        level=console_level,
+        log_file=log_file,
+        file_level=level if log_file else None,
+        debug=(level <= logging.DEBUG),
+    )
 
     # Validate parallel connections limit
     if parallel < 1:
