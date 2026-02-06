@@ -150,8 +150,11 @@ def execute_local(
     logger.debug(f"PYTHONPATH: {env.get('PYTHONPATH', '')}")
 
     try:
+        # Use -I (isolated mode) to prevent Python from adding the module's
+        # directory to sys.path, which would cause name shadowing issues
+        # (e.g., ansible/modules/tempfile.py shadows stdlib tempfile)
         result = subprocess.run(
-            [sys.executable, str(module_path)],
+            [sys.executable, "-I", str(module_path)],
             input=stdin_data,
             capture_output=True,
             text=True,
