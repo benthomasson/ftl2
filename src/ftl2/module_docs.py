@@ -174,6 +174,7 @@ def parse_module_docstring(docstring: str) -> dict[str, Any]:
         "long_description": "",
         "arguments": [],
         "returns": [],
+        "idempotent": None,  # Will be True, False, or None if not specified
     }
 
     # First line is typically "Module name - Short description"
@@ -210,6 +211,13 @@ def parse_module_docstring(docstring: str) -> dict[str, Any]:
         elif stripped.startswith("Examples:"):
             current_section = "examples"
             current_text = []
+            continue
+
+        # Check for Idempotent: Yes/No (can appear at any point)
+        idempotent_match = re.match(r"Idempotent:\s*(Yes|No|True|False)", stripped, re.IGNORECASE)
+        if idempotent_match:
+            value = idempotent_match.group(1).lower()
+            result["idempotent"] = value in ("yes", "true")
             continue
 
         # Process content based on section
@@ -318,15 +326,16 @@ def extract_module_doc(module_path: Path) -> ModuleDoc:
     # Generate examples based on module type
     examples = generate_examples(name, arguments)
 
-    # Determine idempotency based on module name
-    idempotent_modules = {"ping", "setup", "file", "copy"}
-    non_idempotent_modules = {"shell", "command", "script"}
-    if name in idempotent_modules:
-        idempotent = True
-    elif name in non_idempotent_modules:
-        idempotent = False
-    else:
-        idempotent = None
+    # Determine idempotency - prefer parsed value from docstring
+    idempotent = parsed.get("idempotent")
+    if idempotent is None:
+        # Fall back to hardcoded lists for modules without declaration
+        idempotent_modules = {"ping", "setup", "file", "copy"}
+        non_idempotent_modules = {"shell", "command", "script"}
+        if name in idempotent_modules:
+            idempotent = True
+        elif name in non_idempotent_modules:
+            idempotent = False
 
     return ModuleDoc(
         name=name,

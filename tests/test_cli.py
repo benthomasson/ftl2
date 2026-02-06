@@ -1341,3 +1341,133 @@ class TestStateTracking:
         assert "--state-file" in result.output
         assert "--resume" in result.output
         assert "State tracking" in result.output
+
+
+class TestIdempotencyParsing:
+    """Test idempotency parsing from module docstrings."""
+
+    def test_parse_idempotent_yes(self):
+        """Test parsing Idempotent: Yes from docstring."""
+        from ftl2.module_docs import parse_module_docstring
+
+        docstring = """
+Module - Test module.
+
+Description of the module.
+
+Arguments:
+  arg1 (str, optional): An argument
+
+Returns:
+  result (str): The result
+
+Idempotent: Yes
+"""
+        parsed = parse_module_docstring(docstring)
+        assert parsed["idempotent"] is True
+
+    def test_parse_idempotent_no(self):
+        """Test parsing Idempotent: No from docstring."""
+        from ftl2.module_docs import parse_module_docstring
+
+        docstring = """
+Module - Test module.
+
+Idempotent: No
+"""
+        parsed = parse_module_docstring(docstring)
+        assert parsed["idempotent"] is False
+
+    def test_parse_idempotent_true_false(self):
+        """Test parsing Idempotent: True/False from docstring."""
+        from ftl2.module_docs import parse_module_docstring
+
+        docstring_true = "Module - Test.\n\nIdempotent: True"
+        docstring_false = "Module - Test.\n\nIdempotent: False"
+
+        assert parse_module_docstring(docstring_true)["idempotent"] is True
+        assert parse_module_docstring(docstring_false)["idempotent"] is False
+
+    def test_parse_idempotent_missing(self):
+        """Test that missing idempotency returns None."""
+        from ftl2.module_docs import parse_module_docstring
+
+        docstring = """
+Module - Test module.
+
+Arguments:
+  arg1 (str, optional): An argument
+"""
+        parsed = parse_module_docstring(docstring)
+        assert parsed["idempotent"] is None
+
+    def test_extract_module_doc_uses_docstring_idempotency(self):
+        """Test that extract_module_doc uses parsed idempotency from docstring."""
+        import tempfile
+        from pathlib import Path
+        from ftl2.module_docs import extract_module_doc
+
+        module_content = '''#!/usr/bin/env python3
+"""
+Custom module - A custom test module.
+
+Does something custom.
+
+Arguments:
+  value (str, required): A value
+
+Returns:
+  result (str): The result
+
+Idempotent: Yes
+"""
+
+def main():
+    pass
+'''
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(module_content)
+            f.flush()
+            module_path = Path(f.name)
+
+        try:
+            doc = extract_module_doc(module_path)
+            assert doc.idempotent is True
+        finally:
+            module_path.unlink()
+
+    def test_extract_module_doc_fallback_to_hardcoded(self):
+        """Test that extract_module_doc falls back to hardcoded list when not in docstring."""
+        import tempfile
+        from pathlib import Path
+        from ftl2.module_docs import extract_module_doc
+
+        # Create a module named 'ping' without Idempotent declaration
+        # Should fall back to hardcoded list (ping is idempotent)
+        module_content = '''#!/usr/bin/env python3
+"""
+Ping - Test connectivity.
+
+Tests network connectivity.
+"""
+
+def main():
+    pass
+'''
+        with tempfile.NamedTemporaryFile(
+            mode="w", prefix="ping", suffix=".py", delete=False
+        ) as f:
+            f.write(module_content)
+            f.flush()
+            module_path = Path(f.name)
+
+        try:
+            # Rename to match 'ping' for hardcoded fallback test
+            ping_path = module_path.parent / "ping.py"
+            module_path.rename(ping_path)
+            doc = extract_module_doc(ping_path)
+            # Should fall back to hardcoded: ping is idempotent
+            assert doc.idempotent is True
+        finally:
+            if ping_path.exists():
+                ping_path.unlink()

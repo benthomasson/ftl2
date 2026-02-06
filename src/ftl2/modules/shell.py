@@ -12,6 +12,8 @@ Returns:
   stdout (str): Standard output from the command
   stderr (str): Standard error from the command
   rc (int): Return code from the command
+
+Idempotent: No
 """
 
 import json

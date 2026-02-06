@@ -15,6 +15,8 @@ Returns:
   changed (bool): Whether the file was copied/changed
   dest (str): Destination path
   src (str): Source path
+
+Idempotent: Yes
 """
 
 import base64

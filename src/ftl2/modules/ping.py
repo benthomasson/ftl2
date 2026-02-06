@@ -11,6 +11,8 @@ Arguments:
 Returns:
   changed (bool): Always False (ping doesn't modify anything)
   ping (str): The response data (echoes back the input data)
+
+Idempotent: Yes
 """
 
 import json

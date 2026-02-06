@@ -10,6 +10,8 @@ Arguments:
 Returns:
   changed (bool): Always False (setup doesn't modify anything)
   ansible_facts (dict): Dictionary of gathered system facts
+
+Idempotent: Yes
 """
 
 import json

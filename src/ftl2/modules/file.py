@@ -17,6 +17,8 @@ Returns:
   changed (bool): Whether any changes were made
   path (str): The path that was operated on
   state (str): The final state
+
+Idempotent: Yes
 """
 
 import json
