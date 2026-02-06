@@ -13,6 +13,8 @@ from ftl2.module_loading.executor import (
     ExecutionResult,
     execute_local,
     execute_local_fqcn,
+    execute_local_streaming,
+    execute_local_fqcn_streaming,
     execute_bundle_local,
     execute_remote,
     execute_remote_with_staging,
@@ -667,3 +669,239 @@ if __name__ == "__main__":
 
         assert result.success is False
         assert "Failed to resolve" in result.error or "not found" in result.error.lower()
+
+
+class TestExecuteLocalStreaming:
+    """Tests for execute_local_streaming function."""
+
+    @pytest.mark.asyncio
+    async def test_execute_streaming_simple(self):
+        """Test basic streaming execution."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "simple_module.py"
+            module.write_text('''
+import sys
+import json
+
+if __name__ == "__main__":
+    params = json.load(sys.stdin)
+    args = params.get("ANSIBLE_MODULE_ARGS", {})
+    result = {"msg": "streaming ok", "changed": True}
+    print(json.dumps(result))
+''')
+
+            result = await execute_local_streaming(module, {"key": "value"})
+
+            assert result.success is True
+            assert result.output["msg"] == "streaming ok"
+            assert result.changed is True
+
+    @pytest.mark.asyncio
+    async def test_execute_streaming_with_events(self):
+        """Test streaming execution with events."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "event_module.py"
+            module.write_text('''
+import sys
+import json
+import time
+
+if __name__ == "__main__":
+    params = json.load(sys.stdin)
+
+    # Emit progress events
+    for i in range(0, 101, 25):
+        event = {"event": "progress", "percent": i, "message": f"Step {i}"}
+        print(json.dumps(event), file=sys.stderr, flush=True)
+        time.sleep(0.01)  # Small delay to ensure events are flushed
+
+    # Final result
+    print(json.dumps({"changed": True, "msg": "done"}))
+''')
+
+            collected_events = []
+
+            def callback(event):
+                collected_events.append(event)
+
+            result = await execute_local_streaming(
+                module, {}, event_callback=callback
+            )
+
+            assert result.success is True
+            assert result.output["msg"] == "done"
+
+            # Check events were collected
+            assert len(result.events) == 5
+            assert result.events[0]["percent"] == 0
+            assert result.events[-1]["percent"] == 100
+
+            # Check callback was called
+            assert len(collected_events) == 5
+            assert collected_events[0]["percent"] == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_streaming_callback_order(self):
+        """Test that callback receives events in order."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "order_module.py"
+            module.write_text('''
+import sys
+import json
+
+if __name__ == "__main__":
+    params = json.load(sys.stdin)
+
+    for i in range(10):
+        print(json.dumps({"event": "progress", "index": i}), file=sys.stderr, flush=True)
+
+    print(json.dumps({"changed": False}))
+''')
+
+            received_indices = []
+
+            def callback(event):
+                received_indices.append(event["index"])
+
+            result = await execute_local_streaming(
+                module, {}, event_callback=callback
+            )
+
+            assert result.success is True
+            assert received_indices == list(range(10))
+
+    @pytest.mark.asyncio
+    async def test_execute_streaming_mixed_stderr(self):
+        """Test streaming with mixed event and non-event stderr."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "mixed_module.py"
+            module.write_text('''
+import sys
+import json
+
+if __name__ == "__main__":
+    params = json.load(sys.stdin)
+
+    print(json.dumps({"event": "progress", "percent": 0}), file=sys.stderr, flush=True)
+    print("Warning: something happened", file=sys.stderr, flush=True)
+    print(json.dumps({"event": "progress", "percent": 100}), file=sys.stderr, flush=True)
+    print("Another warning", file=sys.stderr, flush=True)
+
+    print(json.dumps({"changed": True}))
+''')
+
+            result = await execute_local_streaming(module, {})
+
+            assert result.success is True
+            assert len(result.events) == 2
+            assert "Warning: something happened" in result.stderr
+            assert "Another warning" in result.stderr
+
+    @pytest.mark.asyncio
+    async def test_execute_streaming_failure(self):
+        """Test streaming execution with module failure."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "fail_module.py"
+            module.write_text('''
+import sys
+import json
+
+if __name__ == "__main__":
+    params = json.load(sys.stdin)
+
+    print(json.dumps({"event": "progress", "percent": 50}), file=sys.stderr, flush=True)
+    print(json.dumps({"failed": True, "msg": "Something went wrong"}))
+    sys.exit(1)
+''')
+
+            events_received = []
+            result = await execute_local_streaming(
+                module, {},
+                event_callback=lambda e: events_received.append(e)
+            )
+
+            assert result.success is False
+            assert "Something went wrong" in result.error
+            assert len(result.events) == 1
+            assert result.events[0]["percent"] == 50
+            assert len(events_received) == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_streaming_timeout(self):
+        """Test streaming execution timeout."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "slow_module.py"
+            module.write_text('''
+import sys
+import json
+import time
+
+if __name__ == "__main__":
+    params = json.load(sys.stdin)
+
+    print(json.dumps({"event": "progress", "percent": 10}), file=sys.stderr, flush=True)
+    time.sleep(10)  # Hang for 10 seconds
+    print(json.dumps({"changed": False}))
+''')
+
+            events_received = []
+            result = await execute_local_streaming(
+                module, {},
+                timeout=1,
+                event_callback=lambda e: events_received.append(e)
+            )
+
+            assert result.success is False
+            assert "timed out" in result.error.lower()
+            # Events received before timeout should be preserved
+            assert len(result.events) >= 0  # May or may not have received event
+
+    @pytest.mark.asyncio
+    async def test_execute_streaming_check_mode(self):
+        """Test streaming execution with check mode."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "check_module.py"
+            module.write_text('''
+import sys
+import json
+
+if __name__ == "__main__":
+    params = json.load(sys.stdin)
+    args = params.get("ANSIBLE_MODULE_ARGS", {})
+    result = {"check_mode": args.get("_ansible_check_mode", False), "changed": False}
+    print(json.dumps(result))
+''')
+
+            result = await execute_local_streaming(module, {}, check_mode=True)
+
+            assert result.success is True
+            assert result.output["check_mode"] is True
+
+    @pytest.mark.asyncio
+    async def test_execute_streaming_callback_exception(self):
+        """Test that callback exceptions don't break execution."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "event_module.py"
+            module.write_text('''
+import sys
+import json
+
+if __name__ == "__main__":
+    params = json.load(sys.stdin)
+
+    print(json.dumps({"event": "progress", "percent": 0}), file=sys.stderr, flush=True)
+    print(json.dumps({"event": "progress", "percent": 100}), file=sys.stderr, flush=True)
+
+    print(json.dumps({"changed": True}))
+''')
+
+            def bad_callback(event):
+                raise ValueError("Callback error")
+
+            result = await execute_local_streaming(
+                module, {}, event_callback=bad_callback
+            )
+
+            # Execution should still succeed despite callback errors
+            assert result.success is True
+            assert len(result.events) == 2

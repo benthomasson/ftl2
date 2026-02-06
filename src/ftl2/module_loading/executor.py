@@ -2,9 +2,11 @@
 
 Provides local and remote execution of Ansible modules:
 - Local: Direct execution, no bundling needed
+- Local streaming: Async execution with real-time event callbacks
 - Remote: Execute pre-staged bundles via SSH
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -12,7 +14,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from ftl2.module_loading.fqcn import (
     resolve_fqcn,
@@ -20,7 +22,7 @@ from ftl2.module_loading.fqcn import (
     find_ansible_builtin_path,
 )
 from ftl2.module_loading.bundle import Bundle, BundleCache
-from ftl2.events import parse_events
+from ftl2.events import parse_events, parse_event
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +195,205 @@ def execute_local(
             error=f"Execution failed: {e}",
             return_code=-1,
         )
+
+
+async def execute_local_streaming(
+    module_path: Path,
+    params: dict[str, Any],
+    timeout: int = 300,
+    check_mode: bool = False,
+    event_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> ExecutionResult:
+    """Execute a module locally with real-time event streaming.
+
+    Unlike execute_local(), this async function streams stderr line by line
+    and invokes the event_callback for each event as it's emitted. This
+    enables real-time progress reporting for long-running operations.
+
+    Args:
+        module_path: Path to the module file
+        params: Module parameters (ANSIBLE_MODULE_ARGS)
+        timeout: Execution timeout in seconds
+        check_mode: Whether to run in check mode
+        event_callback: Called for each event as it's emitted (optional)
+
+    Returns:
+        ExecutionResult with output, status, and collected events
+
+    Example:
+        async def on_event(event):
+            if event["event"] == "progress":
+                print(f"Progress: {event['percent']}%")
+
+        result = await execute_local_streaming(
+            Path("module.py"),
+            {"src": "/large/file"},
+            event_callback=on_event,
+        )
+    """
+    # Build module args
+    module_args = dict(params)
+    if check_mode:
+        module_args["_ansible_check_mode"] = True
+
+    stdin_data = json.dumps({"ANSIBLE_MODULE_ARGS": module_args}).encode()
+
+    # Set up environment with PYTHONPATH for module_utils
+    env = os.environ.copy()
+    extra_pythonpath = get_module_utils_pythonpath()
+    if extra_pythonpath:
+        existing = env.get("PYTHONPATH", "")
+        if existing:
+            env["PYTHONPATH"] = f"{extra_pythonpath}{os.pathsep}{existing}"
+        else:
+            env["PYTHONPATH"] = extra_pythonpath
+
+    logger.debug(f"Executing local module (streaming): {module_path}")
+
+    try:
+        # Create async subprocess
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-I", str(module_path),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+
+        # Send params to stdin and close
+        process.stdin.write(stdin_data)
+        await process.stdin.drain()
+        process.stdin.close()
+        await process.stdin.wait_closed()
+
+        # Stream stderr for events
+        events: list[dict[str, Any]] = []
+        other_stderr_lines: list[str] = []
+
+        async def read_stderr():
+            """Read stderr line by line, parsing events."""
+            async for line_bytes in process.stderr:
+                line = line_bytes.decode().rstrip('\n\r')
+                event = parse_event(line)
+                if event is not None:
+                    events.append(event)
+                    if event_callback:
+                        try:
+                            event_callback(event)
+                        except Exception as e:
+                            logger.warning(f"Event callback error: {e}")
+                else:
+                    other_stderr_lines.append(line)
+
+        # Read stdout and stderr concurrently with timeout
+        async def read_stdout():
+            """Read all stdout."""
+            return await process.stdout.read()
+
+        try:
+            stdout_bytes, _ = await asyncio.wait_for(
+                asyncio.gather(read_stdout(), read_stderr()),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            return ExecutionResult(
+                success=False,
+                error=f"Module execution timed out after {timeout}s",
+                return_code=-1,
+                events=events,  # Return any events collected before timeout
+            )
+
+        await process.wait()
+
+        # Parse result from stdout
+        stdout_str = stdout_bytes.decode() if stdout_bytes else ""
+        stderr_str = "\n".join(other_stderr_lines)
+
+        try:
+            output = json.loads(stdout_str) if stdout_str.strip() else {}
+        except json.JSONDecodeError as e:
+            return ExecutionResult(
+                success=False,
+                error=f"Invalid JSON output: {e}",
+                return_code=process.returncode or 0,
+                stdout=stdout_str,
+                stderr=stderr_str,
+                events=events,
+            )
+
+        # Check for failure indicators
+        failed = output.get("failed", False)
+        return_code = process.returncode or 0
+
+        if failed or return_code != 0:
+            return ExecutionResult(
+                success=False,
+                changed=output.get("changed", False),
+                output=output,
+                error=output.get("msg", stderr_str or "Unknown error"),
+                return_code=return_code,
+                stdout=stdout_str,
+                stderr=stderr_str,
+                events=events,
+            )
+
+        return ExecutionResult(
+            success=True,
+            changed=output.get("changed", False),
+            output=output,
+            return_code=return_code,
+            stdout=stdout_str,
+            stderr=stderr_str,
+            events=events,
+        )
+
+    except Exception as e:
+        return ExecutionResult(
+            success=False,
+            error=f"Execution failed: {e}",
+            return_code=-1,
+        )
+
+
+async def execute_local_fqcn_streaming(
+    fqcn: str,
+    params: dict[str, Any],
+    timeout: int = 300,
+    check_mode: bool = False,
+    playbook_dir: Path | None = None,
+    extra_paths: list[Path] | None = None,
+    event_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> ExecutionResult:
+    """Execute a module locally by FQCN with real-time event streaming.
+
+    Convenience function that resolves the FQCN and executes with streaming.
+
+    Args:
+        fqcn: Fully qualified collection name
+        params: Module parameters
+        timeout: Execution timeout in seconds
+        check_mode: Whether to run in check mode
+        playbook_dir: Optional playbook directory for collection search
+        extra_paths: Optional additional collection paths
+        event_callback: Called for each event as it's emitted
+
+    Returns:
+        ExecutionResult with output and status
+    """
+    try:
+        module_path = resolve_fqcn(fqcn, playbook_dir, extra_paths)
+    except Exception as e:
+        return ExecutionResult(
+            success=False,
+            error=f"Failed to resolve module: {e}",
+            return_code=-1,
+        )
+
+    return await execute_local_streaming(
+        module_path, params, timeout, check_mode, event_callback
+    )
 
 
 def execute_local_fqcn(
