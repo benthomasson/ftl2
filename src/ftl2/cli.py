@@ -71,6 +71,17 @@ from ftl2.config_profiles import (
     list_profiles,
     delete_profile,
 )
+from ftl2.backup import (
+    BackupManager,
+    list_backups,
+    restore_backup,
+    prune_backups,
+    delete_backup,
+    format_backup_list_text,
+    format_backup_list_json,
+    determine_operation,
+)
+from ftl2.module_docs import BackupMetadata
 from ftl2.runners import ExecutionContext
 from ftl2.types import ExecutionConfig, GateConfig, ModuleResult
 
@@ -1060,6 +1071,174 @@ def workflow_delete(workflow_id: str, yes: bool) -> None:
         raise click.ClickException(f"Failed to delete workflow: {workflow_id}")
 
 
+# Backup subcommand group
+@cli.group()
+def backup() -> None:
+    """Backup management commands.
+
+    List, restore, and manage file backups.
+    """
+    pass
+
+
+@backup.command("list")
+@click.argument("path", required=False)
+@click.option("--backup-dir", type=click.Path(), help="Central backup directory to search")
+@click.option("--format", "-f", "output_format", type=click.Choice(["text", "json"]),
+              default="text", help="Output format")
+def backup_list(path: Optional[str], backup_dir: Optional[str], output_format: str) -> None:
+    """List backups for a path or all backups.
+
+    Examples:
+        ftl2 backup list
+
+        ftl2 backup list /etc/app.conf
+
+        ftl2 backup list --backup-dir ~/.ftl2/backups
+
+        ftl2 backup list --format json
+    """
+    backup_dir_path = Path(backup_dir) if backup_dir else None
+    backups = list_backups(path, backup_dir_path)
+
+    if output_format == "json":
+        click.echo(json.dumps(format_backup_list_json(backups), indent=2))
+    else:
+        click.echo(format_backup_list_text(backups))
+
+
+@backup.command("restore")
+@click.argument("backup_path")
+@click.option("--force", is_flag=True, help="Overwrite existing file")
+@click.option("--dry-run", is_flag=True, help="Show what would be restored")
+def backup_restore(backup_path: str, force: bool, dry_run: bool) -> None:
+    """Restore a file from backup.
+
+    Examples:
+        ftl2 backup restore /etc/app.conf.ftl2-backup-20260205-113500
+
+        ftl2 backup restore /etc/app.conf.ftl2-backup-20260205-113500 --force
+
+        ftl2 backup restore /etc/app.conf.ftl2-backup-20260205-113500 --dry-run
+    """
+    from ftl2.backup import get_original_path
+
+    if dry_run:
+        original = get_original_path(backup_path)
+        original_exists = Path(original).exists()
+        click.echo(f"Would restore: {backup_path}")
+        click.echo(f"         To: {original}")
+        if original_exists:
+            click.echo(f"Note: Target exists (use --force to overwrite)")
+        return
+
+    result = restore_backup(backup_path, force=force)
+
+    if result.success:
+        click.echo(f"Restored: {result.backup} -> {result.original}")
+    else:
+        raise click.ClickException(f"Restore failed: {result.error}")
+
+
+@backup.command("delete")
+@click.argument("backup_path")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def backup_delete(backup_path: str, yes: bool) -> None:
+    """Delete a backup file.
+
+    Examples:
+        ftl2 backup delete /etc/app.conf.ftl2-backup-20260205-113500
+
+        ftl2 backup delete /etc/app.conf.ftl2-backup-20260205-113500 -y
+    """
+    if not Path(backup_path).exists():
+        raise click.ClickException(f"Backup not found: {backup_path}")
+
+    if not yes:
+        click.confirm(f"Delete backup: {backup_path}?", abort=True)
+
+    if delete_backup(backup_path):
+        click.echo(f"Deleted: {backup_path}")
+    else:
+        raise click.ClickException(f"Failed to delete: {backup_path}")
+
+
+@backup.command("prune")
+@click.option("--path", "-p", help="Only prune backups for this path")
+@click.option("--keep", "-k", type=int, help="Keep N most recent backups per file")
+@click.option("--older-than", type=int, help="Delete backups older than N days")
+@click.option("--backup-dir", type=click.Path(), help="Central backup directory")
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def backup_prune(
+    path: Optional[str],
+    keep: Optional[int],
+    older_than: Optional[int],
+    backup_dir: Optional[str],
+    dry_run: bool,
+    yes: bool,
+) -> None:
+    """Prune old backups.
+
+    Examples:
+        ftl2 backup prune --keep 3
+
+        ftl2 backup prune --older-than 7
+
+        ftl2 backup prune --path /etc/app.conf --keep 2
+
+        ftl2 backup prune --older-than 30 --dry-run
+    """
+    if keep is None and older_than is None:
+        raise click.ClickException("Specify --keep or --older-than")
+
+    backup_dir_path = Path(backup_dir) if backup_dir else None
+
+    if dry_run:
+        # Show what would be deleted
+        backups = list_backups(path, backup_dir_path)
+        from datetime import datetime, timedelta
+
+        cutoff = None
+        if older_than:
+            cutoff = datetime.now() - timedelta(days=older_than)
+
+        # Group by original
+        by_original: dict[str, list] = {}
+        for b in backups:
+            if b.original not in by_original:
+                by_original[b.original] = []
+            by_original[b.original].append(b)
+
+        to_delete = []
+        for orig, orig_backups in by_original.items():
+            orig_backups.sort(key=lambda b: b.timestamp, reverse=True)
+            for i, b in enumerate(orig_backups):
+                if keep is not None and i >= keep:
+                    to_delete.append(b)
+                elif cutoff is not None and b.timestamp < cutoff:
+                    to_delete.append(b)
+
+        if not to_delete:
+            click.echo("No backups would be deleted.")
+            return
+
+        click.echo(f"Would delete {len(to_delete)} backup(s):")
+        for b in to_delete:
+            click.echo(f"  - {b.backup}")
+        return
+
+    if not yes:
+        click.confirm("Prune backups?", abort=True)
+
+    deleted = prune_backups(path, keep, older_than, backup_dir_path)
+
+    if deleted:
+        click.echo(f"Deleted {len(deleted)} backup(s)")
+    else:
+        click.echo("No backups deleted")
+
+
 # Config subcommand group
 @cli.group()
 def config() -> None:
@@ -1362,6 +1541,10 @@ def config_run(
               help="Save execution results to file for later use")
 @click.option("--retry-failed", type=click.Path(exists=True), default=None,
               help="Retry only hosts that failed in a previous results file")
+@click.option("--no-backup", is_flag=True,
+              help="Skip automatic backups before destructive operations")
+@click.option("--backup-dir", type=click.Path(), default=None,
+              help="Central directory for backups (default: adjacent to original)")
 def run_module(
     module: str,
     module_dir: tuple[str, ...],
@@ -1389,6 +1572,8 @@ def run_module(
     limit: Optional[str],
     save_results: Optional[str],
     retry_failed: Optional[str],
+    no_backup: bool,
+    backup_dir: Optional[str],
 ) -> None:
     """Execute a module across inventory hosts.
 
@@ -1432,6 +1617,10 @@ def run_module(
 
     Integration:
     - --save-results FILE: Save results for later use
+
+    Backup options:
+    - --no-backup: Skip automatic backups before destructive changes
+    - --backup-dir DIR: Store backups in central directory
 
     Examples:
         ftl2 run -m ping -i hosts.yml
@@ -1485,6 +1674,10 @@ def run_module(
         ftl2 run -m ping -i hosts.yml --save-results /tmp/ping-results.json
 
         ftl2 run -m setup -i hosts.yml --retry-failed /tmp/ping-results.json
+
+        ftl2 run -m file -i hosts.yml -a "path=/etc/app.conf state=absent" --no-backup
+
+        ftl2 run -m copy -i hosts.yml -a "src=app.conf dest=/etc/" --backup-dir /var/ftl2/backups
     """
     # Configure logging
     # Determine log level from options
@@ -1718,6 +1911,75 @@ def run_module(
             logger.debug("Validating execution requirements")
             validate_execution_requirements(inv, module, module_dirs)
             logger.debug("Validation passed")
+
+            # Check module backup capability
+            backup_manager = None
+            backup_metadata = None
+            module_path = None
+            for mod_dir in module_dirs:
+                candidate = mod_dir / f"{module}.py"
+                if candidate.exists():
+                    module_path = candidate
+                    break
+
+            if module_path and not no_backup and not dry_run:
+                from ftl2.module_docs import extract_module_doc
+                module_doc = extract_module_doc(module_path)
+                backup_metadata = module_doc.backup
+
+                if backup_metadata.capable:
+                    # Determine operation type from args
+                    operation = determine_operation(module, parsed_args)
+
+                    if backup_manager is None:
+                        backup_dir_path = Path(backup_dir) if backup_dir else None
+                        backup_manager = BackupManager(
+                            backup_dir=backup_dir_path,
+                            enabled=True,
+                        )
+
+                    if backup_manager.should_backup(
+                        backup_metadata.capable,
+                        backup_metadata.triggers,
+                        operation,
+                    ):
+                        # Discover paths that need backup
+                        backup_paths = backup_manager.discover_backup_paths(
+                            parsed_args,
+                            backup_metadata.paths,
+                            operation,
+                        )
+
+                        # Create backups for existing paths
+                        if backup_paths:
+                            existing_paths = [p for p in backup_paths if p.exists]
+                            if existing_paths:
+                                if output_format != "json":
+                                    click.echo("\nBacking up files before execution:")
+                                    for bp in existing_paths:
+                                        click.echo(f"  {bp.path}")
+
+                                backup_results = backup_manager.create_backups(backup_paths)
+                                successful_backups = [b for b in backup_results if b.success]
+                                failed_backups = [b for b in backup_results if not b.success]
+
+                                if failed_backups:
+                                    for fb in failed_backups:
+                                        logger.error(f"Backup failed for {fb.original}: {fb.error}")
+                                    raise click.ClickException(
+                                        f"Backup failed for {len(failed_backups)} file(s). "
+                                        f"Use --no-backup to skip backups."
+                                    )
+
+                                if output_format != "json" and successful_backups:
+                                    for sb in successful_backups:
+                                        click.echo(f"  -> {sb.backup}")
+                                    click.echo("")
+
+                                logger.info(
+                                    f"Created {len(successful_backups)} backup(s)",
+                                    backups=[b.backup for b in successful_backups]
+                                )
 
             # Create execution configuration
             exec_config = ExecutionConfig(

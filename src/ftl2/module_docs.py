@@ -69,6 +69,51 @@ class ModuleReturn:
 
 
 @dataclass
+class BackupMetadata:
+    """Backup capability metadata for a module.
+
+    Attributes:
+        capable: Whether the module supports automatic backups
+        paths: List of argument names that contain paths to back up
+        triggers: List of operations that trigger backup (modify, delete)
+    """
+
+    capable: bool = False
+    paths: list[str] = field(default_factory=list)
+    triggers: list[str] = field(default_factory=lambda: ["modify", "delete"])
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "capable": self.capable,
+            "paths": self.paths,
+            "triggers": self.triggers,
+        }
+
+    @classmethod
+    def from_parsed(
+        cls,
+        capable: bool | None,
+        paths_str: str | None,
+        triggers_str: str | None,
+    ) -> "BackupMetadata":
+        """Create from parsed docstring values."""
+        paths = []
+        if paths_str:
+            paths = [p.strip() for p in paths_str.split(",") if p.strip()]
+
+        triggers = ["modify", "delete"]  # defaults
+        if triggers_str:
+            triggers = [t.strip().lower() for t in triggers_str.split(",") if t.strip()]
+
+        return cls(
+            capable=capable if capable is not None else False,
+            paths=paths,
+            triggers=triggers,
+        )
+
+
+@dataclass
 class ModuleDoc:
     """Documentation for a module.
 
@@ -81,6 +126,7 @@ class ModuleDoc:
         returns: List of return values
         examples: Usage examples
         idempotent: Whether the module is idempotent
+        backup: Backup capability metadata
     """
 
     name: str
@@ -91,6 +137,7 @@ class ModuleDoc:
     returns: list[ModuleReturn] = field(default_factory=list)
     examples: list[str] = field(default_factory=list)
     idempotent: bool | None = None
+    backup: BackupMetadata = field(default_factory=BackupMetadata)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -109,6 +156,8 @@ class ModuleDoc:
             result["examples"] = self.examples
         if self.idempotent is not None:
             result["idempotent"] = self.idempotent
+        if self.backup.capable:
+            result["backup"] = self.backup.to_dict()
         return result
 
     def format_text(self) -> str:
@@ -150,6 +199,14 @@ class ModuleDoc:
             lines.append("")
             lines.append(f"Idempotent: {'Yes' if self.idempotent else 'No'}")
 
+        if self.backup.capable:
+            lines.append("")
+            lines.append(f"Backup-Capable: Yes")
+            if self.backup.paths:
+                lines.append(f"Backup-Paths: {', '.join(self.backup.paths)}")
+            if self.backup.triggers:
+                lines.append(f"Backup-Trigger: {', '.join(self.backup.triggers)}")
+
         lines.append("")
         lines.append(f"Path: {self.path}")
 
@@ -175,6 +232,9 @@ def parse_module_docstring(docstring: str) -> dict[str, Any]:
         "arguments": [],
         "returns": [],
         "idempotent": None,  # Will be True, False, or None if not specified
+        "backup_capable": None,
+        "backup_paths": None,
+        "backup_trigger": None,
     }
 
     # First line is typically "Module name - Short description"
@@ -218,6 +278,25 @@ def parse_module_docstring(docstring: str) -> dict[str, Any]:
         if idempotent_match:
             value = idempotent_match.group(1).lower()
             result["idempotent"] = value in ("yes", "true")
+            continue
+
+        # Check for Backup-Capable: Yes/No
+        backup_capable_match = re.match(r"Backup-Capable:\s*(Yes|No|True|False)", stripped, re.IGNORECASE)
+        if backup_capable_match:
+            value = backup_capable_match.group(1).lower()
+            result["backup_capable"] = value in ("yes", "true")
+            continue
+
+        # Check for Backup-Paths: path,dest
+        backup_paths_match = re.match(r"Backup-Paths:\s*(.+)", stripped, re.IGNORECASE)
+        if backup_paths_match:
+            result["backup_paths"] = backup_paths_match.group(1).strip()
+            continue
+
+        # Check for Backup-Trigger: modify,delete
+        backup_trigger_match = re.match(r"Backup-Trigger:\s*(.+)", stripped, re.IGNORECASE)
+        if backup_trigger_match:
+            result["backup_trigger"] = backup_trigger_match.group(1).strip()
             continue
 
         # Process content based on section
@@ -337,6 +416,13 @@ def extract_module_doc(module_path: Path) -> ModuleDoc:
         elif name in non_idempotent_modules:
             idempotent = False
 
+    # Build backup metadata
+    backup = BackupMetadata.from_parsed(
+        capable=parsed.get("backup_capable"),
+        paths_str=parsed.get("backup_paths"),
+        triggers_str=parsed.get("backup_trigger"),
+    )
+
     return ModuleDoc(
         name=name,
         path=module_path,
@@ -346,6 +432,7 @@ def extract_module_doc(module_path: Path) -> ModuleDoc:
         returns=returns,
         examples=examples,
         idempotent=idempotent,
+        backup=backup,
     )
 
 

@@ -2003,6 +2003,240 @@ class TestSaveResults:
         assert "--retry-failed" in result.output
 
 
+class TestBackupFunctionality:
+    """Test automatic backup functionality."""
+
+    def test_backup_metadata_parsing(self):
+        """Test parsing backup metadata from docstring."""
+        from ftl2.module_docs import parse_module_docstring
+
+        docstring = """
+Module - Test module.
+
+Arguments:
+  path (str, required): Target path
+
+Idempotent: Yes
+Backup-Capable: Yes
+Backup-Paths: path
+Backup-Trigger: delete
+"""
+        parsed = parse_module_docstring(docstring)
+        assert parsed["backup_capable"] is True
+        assert parsed["backup_paths"] == "path"
+        assert parsed["backup_trigger"] == "delete"
+
+    def test_backup_metadata_not_capable(self):
+        """Test parsing backup metadata when not capable."""
+        from ftl2.module_docs import parse_module_docstring
+
+        docstring = """
+Module - Test module.
+
+Backup-Capable: No
+"""
+        parsed = parse_module_docstring(docstring)
+        assert parsed["backup_capable"] is False
+
+    def test_backup_metadata_class(self):
+        """Test BackupMetadata class."""
+        from ftl2.module_docs import BackupMetadata
+
+        meta = BackupMetadata.from_parsed(
+            capable=True,
+            paths_str="path,dest",
+            triggers_str="modify,delete",
+        )
+        assert meta.capable is True
+        assert meta.paths == ["path", "dest"]
+        assert meta.triggers == ["modify", "delete"]
+
+    def test_backup_metadata_defaults(self):
+        """Test BackupMetadata defaults."""
+        from ftl2.module_docs import BackupMetadata
+
+        meta = BackupMetadata.from_parsed(
+            capable=True,
+            paths_str="path",
+            triggers_str=None,
+        )
+        assert meta.triggers == ["modify", "delete"]
+
+    def test_backup_path_dataclass(self):
+        """Test BackupPath dataclass."""
+        from ftl2.backup import BackupPath
+
+        bp = BackupPath(
+            path="/etc/app.conf",
+            operation="delete",
+            exists=True,
+            size=1024,
+        )
+        data = bp.to_dict()
+        assert data["path"] == "/etc/app.conf"
+        assert data["operation"] == "delete"
+        assert data["exists"] is True
+
+    def test_backup_result_dataclass(self):
+        """Test BackupResult dataclass."""
+        from ftl2.backup import BackupResult
+
+        result = BackupResult(
+            original="/etc/app.conf",
+            backup="/etc/app.conf.ftl2-backup-20260205-113500",
+            size=1024,
+            success=True,
+        )
+        data = result.to_dict()
+        assert data["original"] == "/etc/app.conf"
+        assert data["success"] is True
+        assert "timestamp" in data
+
+    def test_generate_backup_path(self):
+        """Test backup path generation."""
+        from ftl2.backup import generate_backup_path
+
+        path = generate_backup_path("/etc/app.conf")
+        assert path.startswith("/etc/app.conf.ftl2-backup-")
+        assert len(path) > len("/etc/app.conf.ftl2-backup-")
+
+    def test_generate_backup_path_with_dir(self):
+        """Test backup path generation with central directory."""
+        import tempfile
+        from pathlib import Path
+        from ftl2.backup import generate_backup_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backup_dir = Path(tmpdir)
+            path = generate_backup_path("/etc/app.conf", backup_dir)
+            assert path.startswith(str(backup_dir))
+            assert "etc" in path
+            assert "app.conf" in path
+
+    def test_parse_backup_timestamp(self):
+        """Test parsing timestamp from backup filename."""
+        from ftl2.backup import parse_backup_timestamp
+
+        ts = parse_backup_timestamp("/etc/app.conf.ftl2-backup-20260205-113500")
+        assert ts is not None
+        assert ts.year == 2026
+        assert ts.month == 2
+        assert ts.day == 5
+
+    def test_get_original_path(self):
+        """Test getting original path from backup filename."""
+        from ftl2.backup import get_original_path
+
+        orig = get_original_path("/etc/app.conf.ftl2-backup-20260205-113500")
+        assert orig == "/etc/app.conf"
+
+    def test_backup_manager_should_backup(self):
+        """Test BackupManager.should_backup logic."""
+        from ftl2.backup import BackupManager
+
+        manager = BackupManager(enabled=True)
+
+        # Should backup when capable and operation matches
+        assert manager.should_backup(True, ["delete"], "delete")
+        assert manager.should_backup(True, ["modify", "delete"], "modify")
+
+        # Should not backup when operation doesn't match
+        assert not manager.should_backup(True, ["delete"], "modify")
+
+        # Should not backup when not capable
+        assert not manager.should_backup(False, ["delete"], "delete")
+
+    def test_backup_manager_disabled(self):
+        """Test BackupManager when disabled."""
+        from ftl2.backup import BackupManager
+
+        manager = BackupManager(enabled=False)
+        assert not manager.should_backup(True, ["delete"], "delete")
+
+    def test_backup_create_and_restore(self):
+        """Test creating and restoring a backup."""
+        import tempfile
+        from pathlib import Path
+        from ftl2.backup import BackupManager, restore_backup
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a test file
+            test_file = Path(tmpdir) / "test.txt"
+            test_file.write_text("original content")
+
+            # Create backup
+            manager = BackupManager(enabled=True)
+            result = manager.create_backup(str(test_file))
+
+            assert result.success
+            assert Path(result.backup).exists()
+            assert Path(result.backup).read_text() == "original content"
+
+            # Modify original
+            test_file.write_text("modified content")
+            assert test_file.read_text() == "modified content"
+
+            # Restore from backup
+            restore_result = restore_backup(result.backup, force=True)
+            assert restore_result.success
+            assert test_file.read_text() == "original content"
+
+    def test_list_backups(self):
+        """Test listing backups."""
+        import tempfile
+        from pathlib import Path
+        from ftl2.backup import BackupManager, list_backups
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "test.txt"
+            test_file.write_text("content")
+
+            manager = BackupManager(enabled=True)
+            manager.create_backup(str(test_file))
+
+            backups = list_backups(str(test_file))
+            assert len(backups) == 1
+            assert backups[0].original == str(test_file)
+
+    def test_determine_operation(self):
+        """Test operation type determination."""
+        from ftl2.backup import determine_operation
+
+        # File module
+        assert determine_operation("file", {"state": "absent"}) == "delete"
+        assert determine_operation("file", {"state": "touch"}) == "modify"
+
+        # Copy module
+        assert determine_operation("copy", {"src": "a", "dest": "b"}) == "modify"
+
+    def test_run_help_shows_backup_options(self):
+        """Test that run help shows backup options."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["run", "--help"])
+
+        assert result.exit_code == 0
+        assert "--no-backup" in result.output
+        assert "--backup-dir" in result.output
+
+    def test_backup_command_help(self):
+        """Test backup command help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["backup", "--help"])
+
+        assert result.exit_code == 0
+        assert "list" in result.output
+        assert "restore" in result.output
+        assert "delete" in result.output
+        assert "prune" in result.output
+
+    def test_backup_list_empty(self):
+        """Test backup list with no backups."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["backup", "list"])
+        assert result.exit_code == 0
+        assert "No backups found" in result.output
+
+
 class TestConfigProfiles:
     """Test configuration profiles functionality."""
 

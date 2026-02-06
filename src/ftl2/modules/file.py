@@ -19,6 +19,9 @@ Returns:
   state (str): The final state
 
 Idempotent: Yes
+Backup-Capable: Yes
+Backup-Paths: path
+Backup-Trigger: delete
 """
 
 import json

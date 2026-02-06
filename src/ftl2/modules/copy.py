@@ -17,6 +17,9 @@ Returns:
   src (str): Source path
 
 Idempotent: Yes
+Backup-Capable: Yes
+Backup-Paths: dest
+Backup-Trigger: modify
 """
 
 import base64
