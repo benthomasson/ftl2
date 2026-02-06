@@ -49,12 +49,21 @@ examples/
 │   ├── inventory.yml
 │   ├── setup.sh
 │   └── run_examples.sh
-└── 03-multi-host/               # Multiple hosts with groups
+├── 03-multi-host/               # Multiple hosts with groups
+│   ├── README.md
+│   ├── docker-compose.yml
+│   ├── inventory.yml
+│   ├── setup.sh
+│   └── run_examples.sh
+├── 04-ftl-modules/              # FTL modules (fast in-process execution)
+│   ├── README.md
+│   ├── docker-compose.yml
+│   └── example_*.py
+└── 05-event-streaming/          # Real-time progress and event streaming
     ├── README.md
     ├── docker-compose.yml
-    ├── inventory.yml
-    ├── setup.sh
-    └── run_examples.sh
+    ├── example_streaming.py
+    └── example_remote_streaming.py
 ```
 
 ## Example Progression
@@ -129,6 +138,54 @@ cd 03-multi-host
 **Difficulty:** ⭐⭐⭐ Advanced
 **Duration:** 15 minutes
 **Prerequisites:** FTL2 installed, Docker running
+
+---
+
+### 4. FTL Modules
+
+**Directory:** `04-ftl-modules/`
+
+**What it teaches:**
+- FTL modules (in-process Python, 250x faster)
+- Direct function calls vs subprocess execution
+- Remote execution with async SSH
+- Bundle building and caching
+
+**Run it:**
+```bash
+cd 04-ftl-modules
+uv run python example_local.py
+docker-compose up -d && uv run python example_remote.py
+docker-compose down
+```
+
+**Difficulty:** ⭐⭐ Intermediate
+**Duration:** 10 minutes
+**Prerequisites:** FTL2 installed, Docker for remote examples
+
+---
+
+### 5. Event Streaming
+
+**Directory:** `05-event-streaming/`
+
+**What it teaches:**
+- Real-time progress events from modules
+- Rich progress bar displays
+- Multi-host progress tracking
+- Event callbacks and result events
+
+**Run it:**
+```bash
+cd 05-event-streaming
+uv run python example_streaming.py
+docker-compose up -d && uv run python example_remote_streaming.py
+docker-compose down
+```
+
+**Difficulty:** ⭐⭐ Intermediate
+**Duration:** 10 minutes
+**Prerequisites:** FTL2 installed, Docker for remote examples
 
 ---
 
