@@ -23,8 +23,7 @@ from ftl2.module_loading.fqcn import (
 )
 from ftl2.module_loading.bundle import Bundle, BundleCache
 from ftl2.module_loading.requirements import (
-    check_module_requirements,
-    format_missing_requirements_error,
+    check_and_install_requirements,
 )
 from ftl2.events import parse_events, parse_event
 
@@ -370,6 +369,7 @@ async def execute_local_fqcn_streaming(
     extra_paths: list[Path] | None = None,
     event_callback: Callable[[dict[str, Any]], None] | None = None,
     check_requirements: bool = True,
+    auto_install_deps: bool = False,
 ) -> ExecutionResult:
     """Execute a module locally by FQCN with real-time event streaming.
 
@@ -384,6 +384,7 @@ async def execute_local_fqcn_streaming(
         extra_paths: Optional additional collection paths
         event_callback: Called for each event as it's emitted
         check_requirements: Check Python package requirements before execution
+        auto_install_deps: Automatically install missing packages using uv
 
     Returns:
         ExecutionResult with output and status
@@ -397,11 +398,12 @@ async def execute_local_fqcn_streaming(
             return_code=-1,
         )
 
-    # Check for missing Python package requirements
+    # Check for missing Python package requirements (and optionally install)
     if check_requirements:
-        missing = check_module_requirements(module_path)
-        if missing:
-            error_msg = format_missing_requirements_error(fqcn, missing)
+        success, error_msg = check_and_install_requirements(
+            module_path, fqcn, auto_install=auto_install_deps
+        )
+        if not success:
             return ExecutionResult(
                 success=False,
                 error=error_msg,
@@ -421,6 +423,7 @@ def execute_local_fqcn(
     playbook_dir: Path | None = None,
     extra_paths: list[Path] | None = None,
     check_requirements: bool = True,
+    auto_install_deps: bool = False,
 ) -> ExecutionResult:
     """Execute a module locally by FQCN.
 
@@ -434,6 +437,7 @@ def execute_local_fqcn(
         playbook_dir: Optional playbook directory for collection search
         extra_paths: Optional additional collection paths
         check_requirements: Check Python package requirements before execution
+        auto_install_deps: Automatically install missing packages using uv
 
     Returns:
         ExecutionResult with output and status
@@ -447,11 +451,12 @@ def execute_local_fqcn(
             return_code=-1,
         )
 
-    # Check for missing Python package requirements
+    # Check for missing Python package requirements (and optionally install)
     if check_requirements:
-        missing = check_module_requirements(module_path)
-        if missing:
-            error_msg = format_missing_requirements_error(fqcn, missing)
+        success, error_msg = check_and_install_requirements(
+            module_path, fqcn, auto_install=auto_install_deps
+        )
+        if not success:
             return ExecutionResult(
                 success=False,
                 error=error_msg,

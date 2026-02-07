@@ -1,7 +1,9 @@
 """Tests for module requirements checker."""
 
+import shutil
 import tempfile
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -13,8 +15,11 @@ from ftl2.module_loading.requirements import (
     is_package_installed,
     check_module_requirements,
     format_missing_requirements_error,
+    install_missing_requirements,
+    check_and_install_requirements,
     ModuleRequirements,
     MissingRequirement,
+    InstallResult,
 )
 
 
@@ -376,3 +381,185 @@ def main():
             error = format_missing_requirements_error("test.cloud_module", missing)
             assert "pip install" in error
             assert "nonexistent_cloud_sdk" in error
+
+
+class TestInstallMissingRequirements:
+    """Tests for install_missing_requirements function."""
+
+    def test_empty_list_returns_success(self):
+        """Test that empty list returns success."""
+        result = install_missing_requirements([])
+        assert result.success is True
+        assert result.installed == []
+        assert result.failed == []
+
+    def test_uv_not_available(self):
+        """Test error when uv is not installed."""
+        missing = [
+            MissingRequirement("fake_pkg", "fake_pkg", "fake_pkg"),
+        ]
+
+        with patch("shutil.which", return_value=None):
+            result = install_missing_requirements(missing)
+
+        assert result.success is False
+        assert "uv is not installed" in result.error
+        assert result.failed == ["fake_pkg"]
+
+    def test_successful_install(self):
+        """Test successful package installation."""
+        missing = [
+            MissingRequirement("test_pkg >= 1.0", "test_pkg", "test_pkg"),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Successfully installed test_pkg"
+        mock_result.stderr = ""
+
+        with patch("shutil.which", return_value="/usr/bin/uv"):
+            with patch("subprocess.run", return_value=mock_result) as mock_run:
+                result = install_missing_requirements(missing)
+
+        assert result.success is True
+        assert result.installed == ["test_pkg"]
+        assert result.failed == []
+
+        # Verify uv pip install was called correctly
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        assert call_args[0][0] == ["/usr/bin/uv", "pip", "install", "test_pkg"]
+
+    def test_failed_install(self):
+        """Test failed package installation."""
+        missing = [
+            MissingRequirement("bad_pkg", "bad_pkg", "bad_pkg"),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "Could not find package"
+
+        with patch("shutil.which", return_value="/usr/bin/uv"):
+            with patch("subprocess.run", return_value=mock_result):
+                result = install_missing_requirements(missing)
+
+        assert result.success is False
+        assert "Could not find package" in result.error
+        assert result.failed == ["bad_pkg"]
+
+    def test_multiple_packages(self):
+        """Test installing multiple packages."""
+        missing = [
+            MissingRequirement("pkg1", "pkg1", "pkg1"),
+            MissingRequirement("pkg2 >= 2.0", "pkg2", "pkg2"),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+
+        with patch("shutil.which", return_value="/usr/bin/uv"):
+            with patch("subprocess.run", return_value=mock_result) as mock_run:
+                result = install_missing_requirements(missing)
+
+        assert result.success is True
+        assert result.installed == ["pkg1", "pkg2"]
+
+        # Verify both packages passed to uv
+        call_args = mock_run.call_args
+        assert "pkg1" in call_args[0][0]
+        assert "pkg2" in call_args[0][0]
+
+
+class TestCheckAndInstallRequirements:
+    """Tests for check_and_install_requirements function."""
+
+    def test_no_requirements_returns_success(self):
+        """Test module with no requirements."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "test_module.py"
+            module.write_text('''
+DOCUMENTATION = """
+---
+module: test_module
+short_description: No deps
+"""
+''')
+            success, error = check_and_install_requirements(
+                module, "test.module", auto_install=False
+            )
+            assert success is True
+            assert error == ""
+
+    def test_missing_without_auto_install(self):
+        """Test missing requirements without auto-install."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "test_module.py"
+            module.write_text('''
+DOCUMENTATION = """
+---
+module: test_module
+requirements:
+  - nonexistent_fake_package_xyz123
+"""
+''')
+            success, error = check_and_install_requirements(
+                module, "test.module", auto_install=False
+            )
+            assert success is False
+            assert "pip install" in error
+            assert "nonexistent_fake_package_xyz123" in error
+
+    def test_auto_install_called_when_enabled(self):
+        """Test that auto-install is attempted when enabled."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "test_module.py"
+            module.write_text('''
+DOCUMENTATION = """
+---
+module: test_module
+requirements:
+  - nonexistent_fake_package_xyz123
+"""
+''')
+            # Mock the install function to return success
+            mock_install_result = InstallResult(
+                success=True,
+                installed=["nonexistent_fake_package_xyz123"],
+                failed=[],
+                error="",
+            )
+
+            with patch(
+                "ftl2.module_loading.requirements.install_missing_requirements",
+                return_value=mock_install_result,
+            ) as mock_install:
+                # Still fails because package isn't really installed
+                success, error = check_and_install_requirements(
+                    module, "test.module", auto_install=True
+                )
+
+            # Verify install was called
+            mock_install.assert_called_once()
+
+    def test_all_satisfied_returns_success(self):
+        """Test that satisfied requirements return success."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "test_module.py"
+            module.write_text('''
+DOCUMENTATION = """
+---
+module: test_module
+requirements:
+  - json
+  - os
+"""
+''')
+            success, error = check_and_install_requirements(
+                module, "test.module", auto_install=True
+            )
+            assert success is True
+            assert error == ""

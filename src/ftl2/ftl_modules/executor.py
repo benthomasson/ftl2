@@ -158,6 +158,7 @@ async def execute(
     params: dict[str, Any],
     host: RemoteHost | LocalHost | None = None,
     check_mode: bool = False,
+    auto_install_deps: bool = False,
 ) -> ExecuteResult:
     """Execute a module with automatic path selection.
 
@@ -173,6 +174,7 @@ async def execute(
         params: Module parameters
         host: Target host (None or LocalHost for localhost)
         check_mode: Whether to run in check mode
+        auto_install_deps: Automatically install missing Python dependencies using uv
 
     Returns:
         ExecuteResult with success status, output, and metadata
@@ -206,7 +208,9 @@ async def execute(
         elif is_local and ftl_module is None:
             # Fallback: Ansible module, local execution
             logger.debug(f"Falling back to Ansible module '{module_name}' locally")
-            output = await _execute_ansible_module_local(module_name, params, check_mode)
+            output = await _execute_ansible_module_local(
+                module_name, params, check_mode, auto_install_deps
+            )
             return ExecuteResult.from_module_output(
                 output, module_name, host_name, used_ftl=False
             )
@@ -336,11 +340,18 @@ async def _execute_ansible_module_local(
     module_name: str,
     params: dict[str, Any],
     check_mode: bool = False,
+    auto_install_deps: bool = False,
 ) -> dict[str, Any]:
     """Execute an Ansible module locally via module_loading.
 
     Falls back to the module_loading executor for modules without
     FTL implementations.
+
+    Args:
+        module_name: Module short name or FQCN
+        params: Module parameters
+        check_mode: Whether to run in check mode
+        auto_install_deps: Automatically install missing packages using uv
     """
     try:
         from ftl2.module_loading.executor import execute_local_fqcn
@@ -352,7 +363,9 @@ async def _execute_ansible_module_local(
         else:
             fqcn = module_name
 
-        result = execute_local_fqcn(fqcn, params, check_mode=check_mode)
+        result = execute_local_fqcn(
+            fqcn, params, check_mode=check_mode, auto_install_deps=auto_install_deps
+        )
 
         if result.success:
             return result.output

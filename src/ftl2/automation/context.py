@@ -247,6 +247,7 @@ class AutomationContext:
         fail_fast: bool = False,
         print_summary: bool = True,
         print_errors: bool = True,
+        auto_install_deps: bool = False,
     ):
         """Initialize the automation context.
 
@@ -281,6 +282,9 @@ class AutomationContext:
                 Shows counts of changed/ok/failed tasks per host.
             print_errors: Print error summary on context exit. Default is True.
                 Set to False if you want to handle errors manually.
+            auto_install_deps: Automatically install missing Python dependencies
+                using uv when an Ansible module requires packages that aren't
+                installed. Default is False (report error with install instructions).
         """
         self._enabled_modules = modules
         self._inventory = self._load_inventory(inventory)
@@ -294,6 +298,7 @@ class AutomationContext:
         self.fail_fast = fail_fast
         self._print_summary = print_summary
         self._print_errors = print_errors
+        self.auto_install_deps = auto_install_deps
         self._proxy = ModuleProxy(self)
         self._results: list[ExecuteResult] = []
         self._hosts_proxy: HostsProxy | None = None
@@ -612,8 +617,12 @@ class AutomationContext:
             "check_mode": self.check_mode,
         })
 
-        # Execute and track result (check_mode passed to executor)
-        result = await execute(module_name, params, check_mode=self.check_mode)
+        # Execute and track result (check_mode and auto_install_deps passed to executor)
+        result = await execute(
+            module_name, params,
+            check_mode=self.check_mode,
+            auto_install_deps=self.auto_install_deps,
+        )
         self._results.append(result)
 
         duration = time.time() - start_time
@@ -753,12 +762,21 @@ class AutomationContext:
 
         if host.is_local:
             # Local execution
-            result = await execute(module_name, params, check_mode=self.check_mode)
+            result = await execute(
+                module_name, params,
+                check_mode=self.check_mode,
+                auto_install_deps=self.auto_install_deps,
+            )
             result.host = host.name
         else:
             # Remote execution via SSH
             ssh_host = await self._get_ssh_connection(host)
-            result = await execute(module_name, params, host=ssh_host, check_mode=self.check_mode)
+            result = await execute(
+                module_name, params,
+                host=ssh_host,
+                check_mode=self.check_mode,
+                auto_install_deps=self.auto_install_deps,
+            )
             result.host = host.name
 
         duration = time.time() - start_time

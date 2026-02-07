@@ -65,6 +65,7 @@ async def automation(
     fail_fast: bool = False,
     print_summary: bool = True,
     print_errors: bool = True,
+    auto_install_deps: bool = False,
 ) -> AsyncGenerator[AutomationContext, None]:
     """Create an automation context for running FTL modules.
 
@@ -103,6 +104,9 @@ async def automation(
                       Shows counts of changed/ok/failed tasks per host.
         print_errors: Print error summary on context exit. Default is True.
                      Set to False to handle errors manually via ftl.errors.
+        auto_install_deps: Automatically install missing Python dependencies
+                          using uv when an Ansible module requires packages
+                          that aren't installed. Default is False.
 
     Yields:
         AutomationContext with ftl.module_name() access to all modules
@@ -200,6 +204,7 @@ async def automation(
         fail_fast=fail_fast,
         print_summary=print_summary,
         print_errors=print_errors,
+        auto_install_deps=auto_install_deps,
     )
 
     try:
