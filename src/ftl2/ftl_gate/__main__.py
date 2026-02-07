@@ -278,11 +278,16 @@ async def execute_module(
             logger.info("Loading module from ftl_gate bundle")
             try:
                 import importlib.resources
-                module_bytes = (
-                    importlib.resources.files(ftl_gate)
-                    .joinpath(module_name)
-                    .read_bytes()
-                )
+                gate_files = importlib.resources.files(ftl_gate)
+                # Try exact name first, then with .py extension
+                for candidate in (module_name, f"{module_name}.py"):
+                    try:
+                        module_bytes = gate_files.joinpath(candidate).read_bytes()
+                        break
+                    except FileNotFoundError:
+                        continue
+                else:
+                    raise FileNotFoundError(module_name)
                 with open(module_file, "wb") as f:
                     f.write(module_bytes)
             except FileNotFoundError:
