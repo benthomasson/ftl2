@@ -268,18 +268,16 @@ class GateBuilder:
             # Try simple name lookup first
             module_path = find_module(config.module_dirs, module)
 
-            if module_path is None and "." in module:
-                # Try FQCN resolution
+            if module_path is None:
+                # Try FQCN resolution (explicit or ansible.builtin fallback)
                 try:
                     from .module_loading.fqcn import resolve_fqcn
 
-                    module_path = resolve_fqcn(module)
-                    logger.debug(f"Resolved FQCN {module} to {module_path}")
+                    fqcn = module if "." in module else f"ansible.builtin.{module}"
+                    module_path = resolve_fqcn(fqcn)
+                    logger.debug(f"Resolved {module} via FQCN {fqcn} to {module_path}")
                 except Exception as e:
                     raise ModuleNotFound(f"Cannot find {module}: {e}") from e
-
-            if module_path is None:
-                raise ModuleNotFound(f"Cannot find {module} in {config.module_dirs}")
 
             # Copy module to gate
             target_path = module_dir / module_path.name
