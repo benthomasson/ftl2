@@ -723,11 +723,13 @@ class TestHostScopedProxy:
 
             async with automation() as ftl:
                 # Use host-scoped syntax for localhost
-                result = await ftl.localhost.file(path=str(test_file), state="touch")
+                results = await ftl.localhost.file(path=str(test_file), state="touch")
 
-                # Should return dict (module output), not list
-                assert isinstance(result, dict)
-                assert result.get("changed") is True
+                # Should return list[ExecuteResult] for consistency
+                assert isinstance(results, list)
+                assert len(results) == 1
+                assert results[0].success is True
+                assert results[0].host == "localhost"
                 assert test_file.exists()
 
     @pytest.mark.asyncio
@@ -779,29 +781,34 @@ class TestHostScopedProxy:
         """Test ftl.local works even with empty inventory."""
         async with automation(inventory={"servers": {"hosts": {}}}) as ftl:
             # ftl.local should work without localhost in inventory
-            result = await ftl.local.command(cmd="echo hello")
+            results = await ftl.local.command(cmd="echo hello")
 
-            assert isinstance(result, dict)
-            assert "stdout" in result
+            # Returns list[ExecuteResult] for consistency with other targets
+            assert isinstance(results, list)
+            assert len(results) == 1
+            assert results[0].success is True
+            assert "stdout" in results[0].output
 
     @pytest.mark.asyncio
     async def test_localhost_works_without_inventory(self):
         """Test ftl.localhost works even with empty inventory."""
         async with automation(inventory={"servers": {"hosts": {}}}) as ftl:
             # ftl.localhost should work without localhost in inventory
-            result = await ftl.localhost.command(cmd="echo hello")
+            results = await ftl.localhost.command(cmd="echo hello")
 
-            assert isinstance(result, dict)
-            assert "stdout" in result
+            assert isinstance(results, list)
+            assert len(results) == 1
+            assert results[0].success is True
 
     @pytest.mark.asyncio
     async def test_local_fqcn_module(self):
         """Test ftl.local with FQCN module."""
         async with automation(inventory={"servers": {"hosts": {}}}) as ftl:
             # FQCN module via local
-            result = await ftl.local.ansible.builtin.command(cmd="echo fqcn")
+            results = await ftl.local.ansible.builtin.command(cmd="echo fqcn")
 
-            assert isinstance(result, dict)
+            assert isinstance(results, list)
+            assert len(results) == 1
 
 
 class TestSecretsManagement:

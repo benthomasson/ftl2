@@ -89,20 +89,20 @@ class HostScopedModuleProxy:
         new_path = f"{self._path}.{name}"
         return HostScopedModuleProxy(self._context, self._target, new_path)
 
-    async def __call__(self, **kwargs: Any) -> Any:
+    async def __call__(self, **kwargs: Any) -> list:
         """Execute the module on the target host/group.
 
         Args:
             **kwargs: Module parameters
 
         Returns:
-            For localhost: dict (module output)
-            For single host: list[ExecuteResult]
-            For group: list[ExecuteResult]
+            list[ExecuteResult] for all targets (consistent return type)
         """
         # Special case: local/localhost executes directly without inventory
         if self._target in ("local", "localhost"):
-            return await self._context.execute(self._path, kwargs)
+            await self._context.execute(self._path, kwargs)
+            # Get the result that was just appended to _results
+            return [self._context._results[-1]]
 
         return await self._context.run_on(self._target, self._path, **kwargs)
 
