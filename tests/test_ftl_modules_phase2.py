@@ -222,6 +222,28 @@ class TestFtlCopy:
             ftl_copy(src="/nonexistent/source.txt", dest="/tmp/dest.txt")
         assert "not found" in str(exc_info.value)
 
+    def test_copy_relative_path_resolves_from_cwd(self):
+        """Test that relative src paths are resolved from CWD (Issue 17)."""
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create source file in tmpdir
+            src_file = Path(tmpdir) / "source.txt"
+            src_file.write_text("relative path test")
+            dest_file = Path(tmpdir) / "dest.txt"
+
+            # Change to tmpdir and use relative path
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+                # Use just the filename (relative path)
+                result = ftl_copy(src="source.txt", dest=str(dest_file))
+
+                assert result["changed"] is True
+                assert dest_file.read_text() == "relative path test"
+            finally:
+                os.chdir(original_cwd)
+
 
 class TestFtlTemplate:
     """Tests for ftl_template module."""
@@ -275,6 +297,32 @@ class TestFtlTemplate:
         with pytest.raises(FTLModuleError) as exc_info:
             ftl_template(src="/nonexistent/template.j2", dest="/tmp/out.txt")
         assert "not found" in str(exc_info.value)
+
+    def test_template_relative_path_resolves_from_cwd(self):
+        """Test that relative src paths are resolved from CWD (Issue 17)."""
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create template in tmpdir
+            src_file = Path(tmpdir) / "template.j2"
+            src_file.write_text("Hello, {{ name }}!")
+            dest_file = Path(tmpdir) / "output.txt"
+
+            # Change to tmpdir and use relative path
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+                # Use just the filename (relative path)
+                result = ftl_template(
+                    src="template.j2",
+                    dest=str(dest_file),
+                    variables={"name": "World"},
+                )
+
+                assert result["changed"] is True
+                assert dest_file.read_text() == "Hello, World!"
+            finally:
+                os.chdir(original_cwd)
 
 
 class TestFtlCommand:

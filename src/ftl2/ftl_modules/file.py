@@ -164,7 +164,7 @@ def ftl_copy(
     Preserves file metadata (timestamps, etc).
 
     Args:
-        src: Source file path
+        src: Source file path (absolute or relative to CWD)
         dest: Destination file path
         mode: Optional file mode for destination (e.g., "0644")
         force: Overwrite if destination exists (default True)
@@ -180,7 +180,11 @@ def ftl_copy(
     Events:
         progress: Emitted during copy with percent, current, total bytes
     """
+    # Resolve relative paths from current working directory
+    # This matches Ansible's behavior where src is relative to playbook dir
     src_path = Path(src)
+    if not src_path.is_absolute():
+        src_path = Path.cwd() / src_path
     dest_path = Path(dest)
     backup_path = None
 
@@ -300,7 +304,7 @@ def ftl_template(
     """Render a Jinja2 template.
 
     Args:
-        src: Source template file path
+        src: Source template file path (absolute or relative to CWD)
         dest: Destination file path
         variables: Template variables (dict)
         mode: Optional file mode for destination
@@ -311,7 +315,10 @@ def ftl_template(
     Raises:
         FTLModuleError: If rendering or writing fails
     """
+    # Resolve relative paths from current working directory
     src_path = Path(src)
+    if not src_path.is_absolute():
+        src_path = Path.cwd() / src_path
     dest_path = Path(dest)
     variables = variables or {}
 
