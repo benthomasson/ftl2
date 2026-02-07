@@ -253,6 +253,10 @@ class GateBuilder:
     def _install_modules(self, config: GateBuildConfig, module_dir: Path) -> None:
         """Install modules into gate.
 
+        Supports both simple module names (looked up in module_dirs) and
+        FQCNs like "community.general.slack" (resolved via Ansible
+        collection paths).
+
         Args:
             config: Gate build configuration
             module_dir: Directory to install modules into
@@ -261,13 +265,25 @@ class GateBuilder:
             ModuleNotFound: If module cannot be found
         """
         for module in config.modules:
+            # Try simple name lookup first
             module_path = find_module(config.module_dirs, module)
+
+            if module_path is None and "." in module:
+                # Try FQCN resolution
+                try:
+                    from .module_loading.fqcn import resolve_fqcn
+
+                    module_path = resolve_fqcn(module)
+                    logger.debug(f"Resolved FQCN {module} to {module_path}")
+                except Exception as e:
+                    raise ModuleNotFound(f"Cannot find {module}: {e}") from e
+
             if module_path is None:
                 raise ModuleNotFound(f"Cannot find {module} in {config.module_dirs}")
 
             # Copy module to gate
             target_path = module_dir / module_path.name
-            module_content = read_module(config.module_dirs, module)
+            module_content = module_path.read_bytes()
             target_path.write_bytes(module_content)
 
             logger.debug(f"Installed module {module} to {target_path}")

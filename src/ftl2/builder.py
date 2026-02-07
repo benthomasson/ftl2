@@ -24,6 +24,7 @@ Examples:
 
 import logging
 import sys
+from pathlib import Path
 
 import click
 
@@ -63,9 +64,16 @@ def main(
                 line for line in f.read().splitlines() if line and not line.startswith("#")
             )
 
+    # Default to built-in modules directory if no -M specified
+    module_dirs = list(module_dir)
+    if not module_dirs:
+        builtin_modules = Path(__file__).parent / "modules"
+        if builtin_modules.is_dir():
+            module_dirs.append(str(builtin_modules))
+
     config = GateBuildConfig(
         modules=list(module),
-        module_dirs=list(module_dir),
+        module_dirs=module_dirs,
         dependencies=dependencies,
         interpreter=interpreter,
     )
