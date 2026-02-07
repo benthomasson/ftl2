@@ -143,16 +143,27 @@ class GateProtocol:
             ProtocolError: If message format is invalid
         """
         try:
-            # Read 8-byte hex length prefix
-            length_bytes = await reader.read(8)
-            if not length_bytes:
-                # EOF - normal termination
-                return None
+            # Read 8-byte hex length prefix, stripping newlines for
+            # manual debugging (allows entering length and JSON on
+            # separate lines when running interactively):
+            #   python __main__.py
+            #   0000000d
+            #   ["Hello", {}]
+            #   00000010
+            #   ["Shutdown", {}]
+            while True:
+                length_bytes = await reader.read(8)
+                if not length_bytes:
+                    return None
+                length_bytes = length_bytes.strip()
+                if length_bytes:
+                    break
 
-            if len(length_bytes) != 8:
-                raise ProtocolError(
-                    f"Invalid length prefix: expected 8 bytes, got {len(length_bytes)}"
-                )
+            while len(length_bytes) < 8:
+                more = await reader.read(8 - len(length_bytes))
+                if not more:
+                    return None
+                length_bytes += more.strip()
 
             # Parse hex length
             try:
@@ -161,12 +172,17 @@ class GateProtocol:
             except (ValueError, UnicodeDecodeError) as e:
                 raise ProtocolError(f"Invalid hex length: {length_bytes!r}") from e
 
-            # Read message body
-            json_bytes = await reader.read(length)
-            if len(json_bytes) != length:
-                raise ProtocolError(
-                    f"Incomplete message: expected {length} bytes, got {len(json_bytes)}"
-                )
+            # Read message body, stripping newlines and retrying
+            # until we have the full message
+            while True:
+                json_bytes = await reader.read(length)
+                if not json_bytes:
+                    return None
+                while len(json_bytes) < length:
+                    json_bytes += await reader.read(length - len(json_bytes))
+                json_bytes = json_bytes.strip()
+                if json_bytes:
+                    break
 
             # Parse JSON
             try:
