@@ -268,6 +268,15 @@ def resolve_core_module_util(module_path: str) -> Path | None:
     if module_utils_base is None:
         return None
 
+    # Special case: six.moves.* is a virtual module created at runtime by six
+    # The "moves" module doesn't exist as a file - it's generated dynamically
+    # to provide Python 2/3 compatibility. Just return the base six package.
+    if module_path.startswith("six.moves"):
+        six_init = module_utils_base / "six" / "__init__.py"
+        if six_init.exists():
+            return six_init
+        return None
+
     # Convert dotted path to file path
     parts = module_path.split(".")
 
