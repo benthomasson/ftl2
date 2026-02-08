@@ -785,7 +785,20 @@ class AutomationContext:
         """
         import asyncio as _asyncio
 
-        handlers = self._event_handlers.get(host_name, {}).get(event_type, [])
+        # Collect handlers registered for this specific host
+        handlers = list(self._event_handlers.get(host_name, {}).get(event_type, []))
+
+        # Also collect handlers registered for groups this host belongs in
+        for target, type_handlers in self._event_handlers.items():
+            if target == host_name:
+                continue
+            # Check if target is a group containing this host
+            group = self._inventory.get_group(target)
+            if group is not None:
+                host_names = {h.name for h in group.list_hosts()}
+                if host_name in host_names:
+                    handlers.extend(type_handlers.get(event_type, []))
+
         for handler in handlers:
             if _asyncio.iscoroutinefunction(handler):
                 await handler(data)
@@ -1215,7 +1228,13 @@ class AutomationContext:
         ssh_user = host.ansible_user or getuser()
         ssh_password = host.vars.get("ansible_password")
         ssh_key_file = host.vars.get("ssh_private_key_file")
-        interpreter = host.ansible_python_interpreter or sys.executable
+        # For remote hosts, default to /usr/bin/python3 (not the local
+        # interpreter which won't exist on the remote machine).
+        connection = getattr(host, "ansible_connection", "ssh")
+        if connection == "local":
+            interpreter = host.ansible_python_interpreter or sys.executable
+        else:
+            interpreter = host.ansible_python_interpreter or "/usr/bin/python3"
 
         context = ExecutionContext(
             execution_config=ExecutionConfig(

@@ -682,23 +682,17 @@ class RemoteModuleRunner(ModuleRunner):
                 temp_dir = result.stdout.strip()
                 gate_file, gate_local_path = await self._send_gate(conn, temp_dir, interpreter, context)
 
-                # Start gate process
-                gate_process, remote_gate_hash, used_subsystem = await self._open_gate(conn, gate_file, interpreter)
-
-                # Check for version mismatch on subsystem connections
-                if used_subsystem and remote_gate_hash:
-                    import hashlib
-                    local_hash = hashlib.sha256(open(gate_local_path, "rb").read()).hexdigest()[:16]
-                    if local_hash != remote_gate_hash:
-                        logger.info(
-                            f"Gate version mismatch (local={local_hash}, remote={remote_gate_hash}), "
-                            f"updating stable path for next connection"
-                        )
-                        await self._update_gate_stable_path(conn, gate_local_path)
-
-                # Register as SSH subsystem if requested
+                # Update stable path BEFORE opening gate via subsystem so
+                # the subsystem starts the new code.  Python's zipimporter
+                # reopens the .pyz by path on lazy imports, so replacing
+                # the file while a gate is running corrupts it.
                 if register_subsystem:
                     await self._register_gate_subsystem(conn, gate_local_path, interpreter)
+                else:
+                    await self._update_gate_stable_path(conn, gate_local_path)
+
+                # Start gate process (subsystem now uses the updated .pyz)
+                gate_process, remote_gate_hash, used_subsystem = await self._open_gate(conn, gate_file, interpreter)
 
                 logger.info(f"Connected to {ssh_host}:{ssh_port} successfully")
                 return Gate(conn, gate_process, temp_dir)
@@ -1084,7 +1078,6 @@ class RemoteModuleRunner(ModuleRunner):
         import os
 
         dest = self.GATE_SUBSYSTEM_PATH
-        subsystem_line = f"Subsystem {self.GATE_SUBSYSTEM_NAME} {interpreter} {dest}"
 
         try:
             # Check if we're root
@@ -1092,6 +1085,14 @@ class RemoteModuleRunner(ModuleRunner):
             if result.stdout.strip() != "0":
                 logger.debug("Not root, skipping subsystem registration")
                 return False
+
+            # sshd requires absolute paths — resolve bare "python3" on the remote host
+            if not interpreter.startswith("/"):
+                result = await conn.run(f"which {interpreter}", check=True)
+                interpreter = result.stdout.strip()
+                logger.info(f"Resolved interpreter to {interpreter}")
+
+            subsystem_line = f"Subsystem {self.GATE_SUBSYSTEM_NAME} {interpreter} {dest}"
 
             # Create directory
             await conn.run(f"mkdir -p {os.path.dirname(dest)}", check=True)
