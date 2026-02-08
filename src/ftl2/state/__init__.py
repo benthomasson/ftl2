@@ -16,10 +16,26 @@ Example:
 from ftl2.state.state import State
 from ftl2.state.file import read_state_file, write_state_file
 from ftl2.state.merge import merge_state_into_inventory
+from ftl2.state.execution import (
+    ExecutionState,
+    HostState,
+    load_state,
+    save_state,
+    create_state_from_results,
+    filter_hosts_for_resume,
+    format_state_json,
+)
 
 __all__ = [
     "State",
     "read_state_file",
     "write_state_file",
     "merge_state_into_inventory",
+    "ExecutionState",
+    "HostState",
+    "load_state",
+    "save_state",
+    "create_state_from_results",
+    "filter_hosts_for_resume",
+    "format_state_json",
 ]
