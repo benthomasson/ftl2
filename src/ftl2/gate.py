@@ -74,27 +74,38 @@ class GateBuildConfig:
     def compute_hash(self) -> str:
         """Compute SHA256 hash of gate configuration for caching.
 
-        Hash includes all configuration parameters to ensure cache
-        uniqueness across different gate configurations.
+        Hash includes configuration parameters AND gate source files
+        to ensure cache invalidation when the gate infrastructure changes.
 
         Returns:
             Hex string of SHA256 hash
-
-        Example:
-            >>> config = GateBuildConfig(modules=["ping"])
-            >>> hash1 = config.compute_hash()
-            >>> hash2 = config.compute_hash()
-            >>> hash1 == hash2
-            True
         """
-        inputs = []
-        inputs.extend(self.modules)
-        inputs.extend(str(d) for d in self.module_dirs)
-        inputs.extend(self.dependencies)
-        inputs.append(self.interpreter)
+        h = hashlib.sha256()
 
-        hash_input = "".join(str(i) for i in inputs).encode()
-        return hashlib.sha256(hash_input).hexdigest()
+        # Config inputs
+        for m in self.modules:
+            h.update(m.encode())
+        for d in self.module_dirs:
+            h.update(str(d).encode())
+        for dep in self.dependencies:
+            h.update(dep.encode())
+        h.update(self.interpreter.encode())
+
+        # Gate source files — invalidate cache when gate code changes
+        try:
+            import ftl2
+            ftl2_dir = Path(ftl2.__file__).parent
+            for source_file in [
+                ftl2_dir / "ftl_gate" / "__main__.py",
+                ftl2_dir / "message.py",
+                ftl2_dir / "ftl_modules" / "exceptions.py",
+            ]:
+                if source_file.exists():
+                    h.update(source_file.read_bytes())
+        except Exception:
+            pass  # If we can't read source files, hash config only
+
+        return h.hexdigest()
 
 
 class GateBuilder:
