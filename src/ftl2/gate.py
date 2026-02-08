@@ -8,7 +8,7 @@ executables that can be deployed via SSH.
 Key features:
 - Hash-based caching to avoid redundant builds
 - Self-contained .pyz executable creation using zipapp
-- Dependency installation with pip
+- Dependency installation with uv pip (pip fallback)
 - Module packaging for remote execution
 """
 
@@ -475,7 +475,7 @@ class GateBuilder:
             logger.warning(f"Failed to copy inotify_simple: {e}")
 
     def _install_dependencies(self, config: GateBuildConfig, gate_dir: Path, tempdir: Path) -> None:
-        """Install Python dependencies into gate using pip.
+        """Install Python dependencies into gate using uv pip (with pip fallback).
 
         Args:
             config: Gate build configuration
@@ -489,23 +489,28 @@ class GateBuilder:
         requirements_file = tempdir / "requirements.txt"
         requirements_file.write_text("\n".join(config.dependencies))
 
-        # Run pip install
-        command = [
-            config.local_interpreter,
-            "-m",
-            "pip",
-            "install",
-            "-r",
-            str(requirements_file),
-            "--target",
-            str(gate_dir),
-        ]
+        # Prefer uv pip, fall back to pip
+        if shutil.which("uv"):
+            command = [
+                "uv", "pip", "install",
+                "-r", str(requirements_file),
+                "--target", str(gate_dir),
+            ]
+            installer = "uv pip"
+        else:
+            command = [
+                config.local_interpreter,
+                "-m", "pip", "install",
+                "-r", str(requirements_file),
+                "--target", str(gate_dir),
+            ]
+            installer = "pip"
 
-        logger.debug(f"Installing dependencies: {' '.join(command)}")
+        logger.debug(f"Installing dependencies via {installer}: {' '.join(command)}")
 
         try:
             output = check_output(command, text=True)
-            logger.debug(f"Pip output: {output}")
+            logger.debug(f"{installer} output: {output}")
 
         except CalledProcessError as e:
-            raise GateError(f"Failed to install dependencies: {e.output}") from e
+            raise GateError(f"Failed to install dependencies via {installer}: {e.output}") from e
