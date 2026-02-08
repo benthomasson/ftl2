@@ -189,8 +189,9 @@ async def run(args: argparse.Namespace) -> None:
                             else:
                                 print("<< Connection closed")
                                 break
-                    except KeyboardInterrupt:
-                        print("\nStopped listening.")
+                    except (KeyboardInterrupt, asyncio.CancelledError):
+                        pass
+                    print("Stopped listening.")
                     continue
 
                 elif cmd == "shutdown":
