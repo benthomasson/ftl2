@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# FTL_MODULE
 """
 Ping module - Test connectivity and basic module execution.
 

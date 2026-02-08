@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# FTL_MODULE
 """
 Shell module - Execute shell commands.
 

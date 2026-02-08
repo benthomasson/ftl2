@@ -28,6 +28,16 @@ from .utils import ensure_directory, find_module, read_module
 logger = logging.getLogger(__name__)
 
 
+def module_path_name(fqcn: str) -> str:
+    """Extract the module name from a FQCN for use as a filename.
+
+    Examples:
+        "community.general.slack" -> "slack"
+        "ansible.builtin.service" -> "service"
+    """
+    return fqcn.rsplit(".", 1)[-1]
+
+
 @dataclass
 class GateBuildConfig:
     """Configuration for building a gate executable.
@@ -203,9 +213,9 @@ class GateBuilder:
             # Copy message protocol module
             self._copy_message_module(ftl2_dir)
 
-            # Install modules
+            # Install modules and their ansible dependencies
             if config.modules:
-                self._install_modules(config, module_dir)
+                self._install_modules(config, module_dir, gate_dir)
 
             # Install dependencies
             if config.dependencies:
@@ -250,41 +260,104 @@ class GateBuilder:
         except Exception as e:
             raise GateError(f"Failed to create gate entry point: {e}") from e
 
-    def _install_modules(self, config: GateBuildConfig, module_dir: Path) -> None:
-        """Install modules into gate.
+    def _install_modules(self, config: GateBuildConfig, module_dir: Path, gate_dir: Path) -> None:
+        """Install modules and their dependencies into gate.
 
-        Supports both simple module names (looked up in module_dirs) and
-        FQCNs like "community.general.slack" (resolved via Ansible
-        collection paths).
+        Simple modules (found in module_dirs) are copied directly.
+        Ansible modules (resolved via FQCN) have their module_utils
+        dependencies resolved and merged into the gate's top-level
+        directory so imports work without nested ZIPs.
 
         Args:
             config: Gate build configuration
-            module_dir: Directory to install modules into
+            module_dir: Directory to install modules into (ftl_gate/)
+            gate_dir: Top-level gate directory for dependencies
 
         Raises:
             ModuleNotFound: If module cannot be found
         """
+        from .module_loading.fqcn import resolve_fqcn
+        from .module_loading.dependencies import find_all_dependencies
+        from .module_loading.bundle import get_archive_path
+
+        # Collect all dependencies across all Ansible modules
+        all_deps: dict[str, Path] = {}  # archive_path -> source_path
+
         for module in config.modules:
-            # Try simple name lookup first
+            # Try simple name lookup first (FTL2 built-in modules)
             module_path = find_module(config.module_dirs, module)
 
-            if module_path is None:
-                # Try FQCN resolution (explicit or ansible.builtin fallback)
-                try:
-                    from .module_loading.fqcn import resolve_fqcn
+            if module_path is not None:
+                # Simple module - copy directly
+                target_path = module_dir / module_path.name
+                target_path.write_bytes(module_path.read_bytes())
+                logger.debug(f"Installed module {module} to {target_path}")
+                continue
 
-                    fqcn = module if "." in module else f"ansible.builtin.{module}"
-                    module_path = resolve_fqcn(fqcn)
-                    logger.debug(f"Resolved {module} via FQCN {fqcn} to {module_path}")
-                except Exception as e:
-                    raise ModuleNotFound(f"Cannot find {module}: {e}") from e
+            # FQCN resolution (explicit or ansible.builtin fallback)
+            try:
+                fqcn = module if "." in module else f"ansible.builtin.{module}"
+                module_path = resolve_fqcn(fqcn)
+                logger.debug(f"Resolved {module} via FQCN {fqcn} to {module_path}")
+            except Exception as e:
+                raise ModuleNotFound(f"Cannot find {module}: {e}") from e
 
-            # Copy module to gate
-            target_path = module_dir / module_path.name
-            module_content = module_path.read_bytes()
-            target_path.write_bytes(module_content)
-
+            # Copy module directly into gate
+            target_name = f"{module_path_name(fqcn)}.py"
+            target_path = module_dir / target_name
+            target_path.write_bytes(module_path.read_bytes())
             logger.debug(f"Installed module {module} to {target_path}")
+
+            # Resolve dependencies
+            dep_result = find_all_dependencies(module_path)
+            for dep_path in dep_result.dependencies:
+                archive_path = get_archive_path(dep_path)
+                if archive_path not in all_deps:
+                    all_deps[archive_path] = dep_path
+
+            logger.debug(
+                f"Module {module}: {len(dep_result.dependencies)} deps, "
+                f"{len(dep_result.unresolved)} unresolved"
+            )
+
+        # Install merged dependencies into the gate directory
+        if all_deps:
+            self._install_module_deps(gate_dir, all_deps)
+            logger.info(f"Installed {len(all_deps)} merged module_utils dependencies")
+
+    def _install_module_deps(self, gate_dir: Path, deps: dict[str, Path]) -> None:
+        """Install module_utils dependencies into the gate directory.
+
+        Creates the proper directory structure so imports like
+        'from ansible.module_utils.basic import AnsibleModule' work.
+
+        Args:
+            gate_dir: Top-level gate directory
+            deps: Mapping of archive_path -> source_path
+        """
+        # Track directories that need __init__.py
+        dirs_needing_init: set[Path] = set()
+
+        for archive_path, source_path in deps.items():
+            target = gate_dir / archive_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                target.write_bytes(source_path.read_bytes())
+            except (OSError, UnicodeDecodeError) as e:
+                logger.warning(f"Failed to copy dependency {source_path}: {e}")
+                continue
+
+            # Track parent dirs for __init__.py creation
+            rel = Path(archive_path)
+            for i in range(len(rel.parts) - 1):
+                dirs_needing_init.add(gate_dir / Path(*rel.parts[: i + 1]))
+
+        # Add __init__.py for package directories
+        for dir_path in dirs_needing_init:
+            init_file = dir_path / "__init__.py"
+            if not init_file.exists():
+                init_file.write_text("")
 
     def _copy_message_module(self, ftl2_dir: Path) -> None:
         """Copy message protocol module into gate.

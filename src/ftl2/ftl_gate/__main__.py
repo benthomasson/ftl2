@@ -126,6 +126,11 @@ def is_binary_module(module: bytes) -> bool:
         return True
 
 
+def is_ftl_module(module: bytes) -> bool:
+    """Detect if a module is an FTL2 module (JSON stdin/stdout, no Ansible deps)."""
+    return b"FTL_MODULE" in module
+
+
 def is_new_style_module(module: bytes) -> bool:
     """Detect if a module uses Ansible's new-style module format (AnsibleModule)."""
     return b"AnsibleModule(" in module
@@ -149,12 +154,14 @@ def detect_module_type(module_bytes: bytes) -> str:
     """Detect the type of a module from its content.
 
     Returns:
-        One of: "zip_bundle", "binary", "new_style", "want_json", "old_style"
+        One of: "zip_bundle", "binary", "ftl", "new_style", "want_json", "old_style"
     """
     if is_zip_bundle(module_bytes):
         return "zip_bundle"
     if is_binary_module(module_bytes):
         return "binary"
+    if is_ftl_module(module_bytes):
+        return "ftl"
     if is_new_style_module(module_bytes):
         return "new_style"
     if is_want_json_module(module_bytes):
@@ -319,6 +326,16 @@ async def execute_module(
                 json.dump(module_args or {}, f)
             os.chmod(module_file, stat.S_IEXEC | stat.S_IREAD)
             stdout, stderr = await check_output(f"{module_file} {args_file}")
+
+        elif is_ftl_module(module_bytes):
+            # FTL modules: raw JSON args on stdin, JSON result on stdout
+            logger.info("Detected FTL module")
+            stdin_data = json.dumps(module_args or {}).encode()
+            stdout, stderr = await check_output(
+                f"{sys.executable} {module_file}",
+                stdin=stdin_data,
+                env=env,
+            )
 
         elif is_new_style_module(module_bytes):
             logger.info("Detected new-style module (AnsibleModule)")

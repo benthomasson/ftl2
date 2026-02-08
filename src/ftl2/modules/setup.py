@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# FTL_MODULE
 """
 Setup module - Gather facts about the system.
 

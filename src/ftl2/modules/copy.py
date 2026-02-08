@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# FTL_MODULE
 """
 Copy module - Copy files to remote locations.
 
