@@ -711,7 +711,7 @@ class AutomationContext:
             auto_install_deps=self.auto_install_deps,
         )
         duration = time.time() - start_time
-        result.params = original_params
+        result.params = self._redact_params(module_name, original_params)
         result.timestamp = start_time
         result.duration = duration
         self._results.append(result)
@@ -869,7 +869,7 @@ class AutomationContext:
             result.host = host.name
 
         duration = time.time() - start_time
-        result.params = original_params
+        result.params = self._redact_params(module_name, original_params)
         result.timestamp = start_time
         result.duration = duration
 
@@ -1248,6 +1248,53 @@ class AutomationContext:
         self._modules_file.write_text("\n".join(lines) + "\n")
         if not self.quiet:
             print(f"Recorded modules saved to {self._modules_file}")
+
+    _SENSITIVE_HEADERS = frozenset({
+        "authorization",
+        "x-api-key",
+        "x-auth-token",
+        "cookie",
+        "proxy-authorization",
+    })
+
+    _HTTP_MODULES = frozenset({"uri", "ftl_uri", "get_url", "ftl_get_url"})
+
+    def _redact_params(self, module_name: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Redact sensitive values from params before storing in audit results.
+
+        For HTTP modules (uri, get_url), redacts known sensitive header keys
+        and the bearer_token parameter.
+        """
+        # Strip FQCN prefix for matching (e.g. ansible.builtin.uri -> uri)
+        short_name = module_name.rsplit(".", 1)[-1] if "." in module_name else module_name
+        if short_name not in self._HTTP_MODULES:
+            return params
+
+        # Check if there's anything to redact
+        has_headers = isinstance(params.get("headers"), dict)
+        has_bearer = "bearer_token" in params
+        has_password = "url_password" in params
+        if not has_headers and not has_bearer and not has_password:
+            return params
+
+        redacted = dict(params)
+
+        if has_headers:
+            redacted_headers = {}
+            for k, v in params["headers"].items():
+                if k.lower() in self._SENSITIVE_HEADERS:
+                    redacted_headers[k] = "***"
+                else:
+                    redacted_headers[k] = v
+            redacted["headers"] = redacted_headers
+
+        if has_bearer:
+            redacted["bearer_token"] = "***"
+
+        if has_password:
+            redacted["url_password"] = "***"
+
+        return redacted
 
     def _write_recording(self) -> None:
         """Write JSON audit trail of all actions to file.

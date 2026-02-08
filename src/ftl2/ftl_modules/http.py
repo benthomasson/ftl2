@@ -6,8 +6,10 @@ ansible.builtin.get_url but run in-process with async/await.
 """
 
 import hashlib
+import json as json_lib
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -20,22 +22,37 @@ __all__ = ["ftl_uri", "ftl_get_url"]
 async def ftl_uri(
     url: str,
     method: str = "GET",
-    body: str | bytes | None = None,
+    body: str | bytes | dict | list | None = None,
+    body_format: str = "raw",
     headers: dict[str, str] | None = None,
     timeout: int = 30,
     return_content: bool = True,
     status_code: int | list[int] | None = None,
+    url_username: str | None = None,
+    url_password: str | None = None,
+    force_basic_auth: bool = False,
+    bearer_token: str | None = None,
 ) -> dict[str, Any]:
     """Make an async HTTP request.
 
     Args:
         url: URL to request
         method: HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)
-        body: Request body (string or bytes)
+        body: Request body (string, bytes, dict, or list)
+        body_format: Body serialization format:
+            - "raw": send body as-is (default)
+            - "json": serialize body with json.dumps, set Content-Type
+            - "form": URL-encode body dict, set Content-Type
         headers: Request headers dict
         timeout: Request timeout in seconds
         return_content: Whether to include response content in result
         status_code: Expected status code(s), raises error if not matched
+        url_username: Username for HTTP Basic auth
+        url_password: Password for HTTP Basic auth
+        force_basic_auth: Send Basic auth header preemptively instead of
+            waiting for a 401 challenge (default False)
+        bearer_token: Bearer token for Authorization header. Enables
+            secret_bindings injection for API tokens.
 
     Returns:
         Result dict with:
@@ -50,14 +67,51 @@ async def ftl_uri(
         FTLModuleError: If request fails or status code doesn't match
     """
     method = method.upper()
-    headers = headers or {}
+    headers = dict(headers) if headers else {}
+
+    # Handle bearer_token auth
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+
+    # Handle basic auth
+    auth = None
+    if url_username is not None:
+        auth = httpx.BasicAuth(url_username, url_password or "")
+
+    # Handle body_format serialization
+    content: str | bytes | None = None
+    if body is not None:
+        if body_format == "json":
+            if isinstance(body, (dict, list)):
+                content = json_lib.dumps(body)
+            elif isinstance(body, str):
+                content = body
+            elif isinstance(body, bytes):
+                content = body
+            else:
+                content = json_lib.dumps(body)
+            if "content-type" not in {k.lower() for k in headers}:
+                headers["Content-Type"] = "application/json"
+        elif body_format == "form":
+            if isinstance(body, dict):
+                content = urlencode(body)
+            else:
+                content = str(body)
+            if "content-type" not in {k.lower() for k in headers}:
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+        else:
+            content = body
 
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=True,
+            auth=auth,
+        ) as client:
             response = await client.request(
                 method=method,
                 url=url,
-                content=body,
+                content=content,
                 headers=headers,
             )
 
