@@ -527,6 +527,17 @@ async def main(args: list[str]) -> int | None:
     logger.info(f"Path: {sys.path[:3]}...")
     logger.info("=" * 60)
 
+    # Compute gate file hash for version checking
+    gate_hash = ""
+    try:
+        import hashlib
+        gate_file = sys.argv[0] if sys.argv else ""
+        if gate_file and os.path.exists(gate_file):
+            gate_hash = hashlib.sha256(open(gate_file, "rb").read()).hexdigest()[:16]
+            logger.info(f"Gate hash: {gate_hash}")
+    except Exception:
+        pass
+
     # Connect to stdin/stdout
     try:
         reader, writer = await connect_stdin_stdout()
@@ -558,7 +569,9 @@ async def main(args: list[str]) -> int | None:
             # Handle message by type
             if msg_type == "Hello":
                 logger.info("Hello received")
-                await protocol.send_message(writer, "Hello", data)
+                response_data = dict(data) if isinstance(data, dict) else {}
+                response_data["gate_hash"] = gate_hash
+                await protocol.send_message(writer, "Hello", response_data)
 
             elif msg_type == "Module":
                 logger.info(f"Module execution requested: {data.get('module_name', 'unknown')}")

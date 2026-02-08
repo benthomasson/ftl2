@@ -617,6 +617,7 @@ class RemoteModuleRunner(ModuleRunner):
         interpreter: str,
         context: ExecutionContext,
         max_retries: int = 3,
+        register_subsystem: bool = False,
     ) -> Gate:
         """Establish SSH connection and create gate.
 
@@ -629,6 +630,8 @@ class RemoteModuleRunner(ModuleRunner):
             interpreter: Remote Python interpreter path
             context: Execution context with gate config
             max_retries: Maximum connection retry attempts (default: 3)
+            register_subsystem: If True, register the gate as an SSH
+                subsystem after connecting (requires root)
 
         Returns:
             Active Gate connection
@@ -677,10 +680,25 @@ class RemoteModuleRunner(ModuleRunner):
                 await conn.run("mkdir -p ~/.ftl && chmod 700 ~/.ftl", check=True)
                 result = await conn.run("echo ~/.ftl", check=True)
                 temp_dir = result.stdout.strip()
-                gate_file = await self._send_gate(conn, temp_dir, interpreter, context)
+                gate_file, gate_local_path = await self._send_gate(conn, temp_dir, interpreter, context)
 
                 # Start gate process
-                gate_process = await self._open_gate(conn, gate_file, interpreter)
+                gate_process, remote_gate_hash, used_subsystem = await self._open_gate(conn, gate_file, interpreter)
+
+                # Check for version mismatch on subsystem connections
+                if used_subsystem and remote_gate_hash:
+                    import hashlib
+                    local_hash = hashlib.sha256(open(gate_local_path, "rb").read()).hexdigest()[:16]
+                    if local_hash != remote_gate_hash:
+                        logger.info(
+                            f"Gate version mismatch (local={local_hash}, remote={remote_gate_hash}), "
+                            f"updating stable path for next connection"
+                        )
+                        await self._update_gate_stable_path(conn, gate_local_path)
+
+                # Register as SSH subsystem if requested
+                if register_subsystem:
+                    await self._register_gate_subsystem(conn, gate_local_path, interpreter)
 
                 logger.info(f"Connected to {ssh_host}:{ssh_port} successfully")
                 return Gate(conn, gate_process, temp_dir)
@@ -776,7 +794,7 @@ class RemoteModuleRunner(ModuleRunner):
         temp_dir: str,
         interpreter: str,
         context: ExecutionContext,
-    ) -> str:
+    ) -> tuple[str, str]:
         """Deploy gate executable to remote host.
 
         Args:
@@ -786,7 +804,7 @@ class RemoteModuleRunner(ModuleRunner):
             context: Execution context with gate config
 
         Returns:
-            Full path to deployed gate file
+            Tuple of (remote gate path, local gate path)
         """
         # Build gate executable
         assert self.gate_builder is not None
@@ -815,10 +833,15 @@ class RemoteModuleRunner(ModuleRunner):
                 else:
                     logger.info(f"Reusing existing gate {gate_file_name}")
 
-        return gate_file_name
+        return gate_file_name, str(gate_path)
 
-    async def _open_gate(self, conn: SSHClientConnection, gate_file: str, interpreter: str) -> "SSHClientProcess[Any]":
+    async def _open_gate(
+        self, conn: SSHClientConnection, gate_file: str, interpreter: str
+    ) -> tuple["SSHClientProcess[Any]", str, bool]:
         """Start gate process and perform handshake.
+
+        Tries SSH subsystem first (zero shell overhead), falls back to
+        exec if the subsystem isn't registered on the remote host.
 
         Args:
             conn: Active SSH connection
@@ -826,14 +849,21 @@ class RemoteModuleRunner(ModuleRunner):
             interpreter: Python interpreter path to use
 
         Returns:
-            Running gate process
+            Tuple of (gate process, remote gate hash, used subsystem)
 
         Raises:
             Exception: If gate fails to start or handshake fails
         """
-        # Create process with binary I/O, explicitly invoking Python
-        # This ensures the gate runs even if shebang isn't executed properly
-        process = await conn.create_process(f"{interpreter} {gate_file}", encoding=None)
+        # Try SSH subsystem first — no shell startup, no PATH lookup
+        used_subsystem = False
+        try:
+            process = await conn.create_process(subsystem="ftl2-gate", encoding=None)
+            used_subsystem = True
+            logger.info("Connected via SSH subsystem")
+        except (asyncssh.ChannelOpenError, asyncssh.Error):
+            # Subsystem not registered — fall back to exec
+            process = await conn.create_process(f"{interpreter} {gate_file}", encoding=None)
+            logger.info("Connected via SSH exec (subsystem not available)")
 
         # Send Hello and wait for response
         await self.protocol.send_message(process.stdin, "Hello", {})  # type: ignore[arg-type]
@@ -844,7 +874,13 @@ class RemoteModuleRunner(ModuleRunner):
             logger.error(f"Gate handshake failed: {error}")
             raise Exception(f"Gate handshake failed: {error}")
 
-        return process
+        # Extract gate hash from Hello response
+        _, hello_data = response
+        remote_gate_hash = ""
+        if isinstance(hello_data, dict):
+            remote_gate_hash = hello_data.get("gate_hash", "")
+
+        return process, remote_gate_hash, used_subsystem
 
     async def _execute_through_gate(
         self,
@@ -992,6 +1028,120 @@ class RemoteModuleRunner(ModuleRunner):
             raise ModuleExecutionError(f"FTL module error: {data.get('message', 'Unknown error')}")
         else:
             raise ModuleExecutionError(f"Unexpected response type for FTLModule: {msg_type}")
+
+    GATE_SUBSYSTEM_PATH = "/usr/local/lib/ftl2/gate.pyz"
+    GATE_SUBSYSTEM_NAME = "ftl2-gate"
+
+    async def _update_gate_stable_path(
+        self,
+        conn: SSHClientConnection,
+        gate_local_path: str,
+    ) -> None:
+        """Update the gate binary at the stable subsystem path.
+
+        Uploads the new gate so the next subsystem connection uses it.
+        No sshd reload needed — sshd forks and execs fresh each time.
+
+        Args:
+            conn: Active SSH connection
+            gate_local_path: Local path to the new gate .pyz file
+        """
+        import os
+        dest = self.GATE_SUBSYSTEM_PATH
+        try:
+            await conn.run(f"mkdir -p {os.path.dirname(dest)}", check=True)
+            async with conn.start_sftp_client() as sftp:
+                await sftp.put(gate_local_path, dest)
+            await conn.run(f"chmod 755 {dest}", check=True)
+            logger.info(f"Updated gate at {dest}")
+        except Exception as e:
+            logger.warning(f"Failed to update gate at stable path: {e}")
+
+    async def _register_gate_subsystem(
+        self,
+        conn: SSHClientConnection,
+        gate_local_path: str,
+        interpreter: str,
+    ) -> bool:
+        """Register the gate as an SSH subsystem on a remote host.
+
+        Uploads the gate to a stable path and adds a Subsystem line to
+        sshd_config. Idempotent — skips if already registered with the
+        same gate binary.
+
+        Args:
+            conn: Active SSH connection (must be root)
+            gate_local_path: Local path to the gate .pyz file
+            interpreter: Python interpreter path on remote host
+
+        Returns:
+            True if subsystem was registered (or already registered),
+            False if registration failed (not root, etc.)
+        """
+        import os
+
+        dest = self.GATE_SUBSYSTEM_PATH
+        subsystem_line = f"Subsystem {self.GATE_SUBSYSTEM_NAME} {interpreter} {dest}"
+
+        try:
+            # Check if we're root
+            result = await conn.run("id -u", check=True)
+            if result.stdout.strip() != "0":
+                logger.debug("Not root, skipping subsystem registration")
+                return False
+
+            # Create directory
+            await conn.run(f"mkdir -p {os.path.dirname(dest)}", check=True)
+
+            # Check if gate already exists at stable path with same size
+            local_size = os.path.getsize(gate_local_path)
+            result = await conn.run(f"stat -c %s {dest} 2>/dev/null || echo 0")
+            remote_size = int(result.stdout.strip())
+
+            if remote_size != local_size:
+                # Upload gate to stable path
+                async with conn.start_sftp_client() as sftp:
+                    await sftp.put(gate_local_path, dest)
+                await conn.run(f"chmod 755 {dest}", check=True)
+                logger.info(f"Uploaded gate to {dest}")
+            else:
+                logger.info(f"Gate at {dest} is up to date")
+
+            # Check if subsystem line already in sshd_config
+            result = await conn.run(
+                f"grep -q '^Subsystem {self.GATE_SUBSYSTEM_NAME}' /etc/ssh/sshd_config"
+            )
+            if result.exit_status == 0:
+                # Line exists — update it if different
+                result = await conn.run(
+                    f"grep -q '^{subsystem_line}$' /etc/ssh/sshd_config"
+                )
+                if result.exit_status == 0:
+                    logger.info("Subsystem already registered in sshd_config")
+                    return True
+                else:
+                    # Update existing line
+                    await conn.run(
+                        f"sed -i 's|^Subsystem {self.GATE_SUBSYSTEM_NAME}.*|{subsystem_line}|' /etc/ssh/sshd_config",
+                        check=True,
+                    )
+                    logger.info("Updated subsystem line in sshd_config")
+            else:
+                # Add new line
+                await conn.run(
+                    f"echo '{subsystem_line}' >> /etc/ssh/sshd_config",
+                    check=True,
+                )
+                logger.info("Added subsystem line to sshd_config")
+
+            # Reload sshd
+            await conn.run("systemctl reload sshd", check=True)
+            logger.info("Reloaded sshd")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to register gate subsystem: {e}")
+            return False
 
     async def _close_gate(self, gate: Gate) -> None:
         """Close gate connection and clean up resources.

@@ -70,6 +70,7 @@ async def automation(
     deps_file: str = ".ftl2-deps.txt",
     modules_file: str = ".ftl2-modules.txt",
     gate_modules: "list[str] | str | None" = None,
+    gate_subsystem: bool = False,
     state_file: str | None = None,
     record: str | None = None,
 ) -> AsyncGenerator[AutomationContext, None]:
@@ -124,6 +125,9 @@ async def automation(
                      Accepts a list of module names, "auto" to read from
                      modules_file (or record on first run), or None for
                      per-task module transfer (default).
+        gate_subsystem: Register the gate as an SSH subsystem on remote
+                       hosts. Requires root. Eliminates shell startup
+                       overhead on subsequent connections. Default False.
         state_file: Path to state file for persistent host/resource tracking.
                    When enabled, add_host() persists to state file immediately,
                    and hosts are loaded from state on context enter. Enables
@@ -233,6 +237,7 @@ async def automation(
         deps_file=deps_file,
         modules_file=modules_file,
         gate_modules=gate_modules,
+        gate_subsystem=gate_subsystem,
         state_file=state_file,
         record=record,
     )

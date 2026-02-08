@@ -255,6 +255,7 @@ class AutomationContext:
         deps_file: str | Path = ".ftl2-deps.txt",
         modules_file: str | Path = ".ftl2-modules.txt",
         gate_modules: list[str] | str | None = None,
+        gate_subsystem: bool = False,
         state_file: str | Path | None = None,
         record: str | Path | None = None,
     ):
@@ -342,6 +343,7 @@ class AutomationContext:
         self._modules_file = Path(modules_file)
         self._gate_modules_input = gate_modules
         self._gate_modules: list[str] | None = None  # resolved in __aenter__
+        self._gate_subsystem = gate_subsystem
         self._recorded_modules: set[str] = set()
         self._record_file = Path(record) if record else None
         self._proxy = ModuleProxy(self)
@@ -1092,7 +1094,8 @@ class AutomationContext:
         )
 
         return await self._remote_runner._connect_gate(
-            ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context
+            ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context,
+            register_subsystem=self._gate_subsystem,
         )
 
     async def _get_ssh_connection(self, host: HostConfig) -> SSHHost:
