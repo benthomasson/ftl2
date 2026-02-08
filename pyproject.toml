@@ -21,6 +21,8 @@ dependencies = [
     "httpx>=0.24.0",
     "rich>=13.0.0",
     "importlib-resources>=5.0; python_version < '3.9'",
+    "ftl-module-utils @ git+https://github.com/benthomasson/ftl_module_utils",
+    "ftl-builtin-modules @ git+https://github.com/benthomasson/ftl_builtin_modules",
 ]
 
 [project.optional-dependencies]
@@ -36,9 +38,9 @@ aws = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/benthomasson/faster-than-light2"
-Repository = "https://github.com/benthomasson/faster-than-light2.git"
-Issues = "https://github.com/benthomasson/faster-than-light2/issues"
+Homepage = "https://github.com/benthomasson/ftl2"
+Repository = "https://github.com/benthomasson/ftl2.git"
+Issues = "https://github.com/benthomasson/ftl2/issues"
 
 [project.scripts]
 ftl2 = "ftl2.cli:main"
