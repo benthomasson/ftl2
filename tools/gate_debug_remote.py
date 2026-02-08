@@ -34,6 +34,15 @@ def encode_message(msg_type: str, data: dict) -> bytes:
     return f"{length:08x}{body}".encode("utf-8")
 
 
+def _fmt_bytes(n: int) -> str:
+    """Format byte count as human-readable string."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024:
+            return f"{n:.1f}{unit}" if unit != "B" else f"{n}{unit}"
+        n /= 1024
+    return f"{n:.1f}PB"
+
+
 def format_response(msg_type: str, data: dict) -> str:
     """Format a gate response for display."""
     if msg_type == "InfoResult":
@@ -46,6 +55,28 @@ def format_response(msg_type: str, data: dict) -> str:
         lines = [f"<< {msg_type}: {len(modules)} module(s)"]
         for m in modules:
             lines.append(f"   {m['name']:30s} {m['type']}")
+        return "\n".join(lines)
+    elif msg_type == "SystemMetrics":
+        cpu = data.get("cpu", {})
+        mem = data.get("memory", {})
+        swap = data.get("swap", {})
+        disk = data.get("disk", {})
+        net = data.get("net", {})
+        lines = [
+            f"<< {msg_type} [{data.get('hostname', '?')}]:",
+            f"   CPU:    {cpu.get('percent_total', 0):.1f}% ({cpu.get('count', '?')} cores)  load: {cpu.get('load_avg', [])}",
+            f"   Memory: {mem.get('percent', 0):.1f}%  ({_fmt_bytes(mem.get('used', 0))} / {_fmt_bytes(mem.get('total', 0))})",
+            f"   Swap:   {swap.get('percent', 0):.1f}%  ({_fmt_bytes(swap.get('used', 0))} / {_fmt_bytes(swap.get('total', 0))})",
+            f"   Disk:   {disk.get('percent', 0):.1f}%  ({_fmt_bytes(disk.get('used', 0))} / {_fmt_bytes(disk.get('total', 0))})",
+            f"   Net:    ▲ {_fmt_bytes(net.get('bytes_sent_rate', 0))}/s  ▼ {_fmt_bytes(net.get('bytes_recv_rate', 0))}/s",
+        ]
+        procs = data.get("processes", [])
+        if procs:
+            lines.append(f"   Top processes:")
+            for p in procs[:10]:
+                lines.append(
+                    f"     {p['pid']:>6}  {p['name']:20s}  CPU {p['cpu_percent']:5.1f}%  RSS {_fmt_bytes(p['memory_rss']):>8s}  {p['username']}"
+                )
         return "\n".join(lines)
     else:
         return f"<< {msg_type}: {json.dumps(data)}"
@@ -137,7 +168,7 @@ async def run(args: argparse.Namespace) -> None:
 
         print(f"{format_response(*response)}")
         print()
-        print("Commands: hello, info, list, watch <path>, unwatch <path>, listen, shutdown, module <name> [args_json], raw <json>, quit")
+        print("Commands: hello, info, list, watch <path>, unwatch <path>, monitor [interval], unmonitor, listen, shutdown, module <name> [args_json], raw <json>, quit")
         print()
 
         # Interactive loop
@@ -178,6 +209,16 @@ async def run(args: argparse.Namespace) -> None:
                         print("Usage: unwatch <path>")
                         continue
                     msg = encode_message("Unwatch", {"path": path})
+
+                elif cmd == "monitor":
+                    interval = float(parts[1]) if len(parts) > 1 else 2.0
+                    msg = encode_message(
+                        "StartMonitor",
+                        {"interval": interval, "include_processes": True},
+                    )
+
+                elif cmd == "unmonitor":
+                    msg = encode_message("StopMonitor", {})
 
                 elif cmd == "listen":
                     print("Listening for events (Ctrl+C to stop)...")
@@ -239,7 +280,7 @@ async def run(args: argparse.Namespace) -> None:
 
                 else:
                     print(f"Unknown command: {cmd}")
-                    print("Commands: hello, info, list, watch <path>, unwatch <path>, listen, shutdown, module <name> [args_json], raw <json>, quit")
+                    print("Commands: hello, info, list, watch <path>, unwatch <path>, monitor [interval], unmonitor, listen, shutdown, module <name> [args_json], raw <json>, quit")
                     continue
 
                 process.stdin.write(msg)

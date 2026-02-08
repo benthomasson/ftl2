@@ -730,6 +730,75 @@ class HostScopedProxy:
         else:
             raise RuntimeError(f"Unexpected response to Watch: {resp_type}")
 
+    async def monitor(
+        self,
+        interval: float = 2.0,
+        include_processes: bool = True,
+    ) -> dict[str, Any]:
+        """Start system metrics streaming from the remote host.
+
+        Requires ``python3-psutil`` installed on the remote host.
+        Metrics are delivered through handlers registered with
+        ``on("SystemMetrics", handler)`` and received during
+        ``ftl.listen()``.
+
+        Args:
+            interval: Seconds between metric samples (default 2.0)
+            include_processes: Include top 20 processes by CPU (default True)
+
+        Returns:
+            dict with 'status' ("ok" or "error")
+
+        Example:
+            await ftl.webserver.dnf(name="python3-psutil", state="present")
+            await ftl.webserver.monitor(interval=2)
+            ftl.webserver.on("SystemMetrics", lambda m: print(m["cpu"]))
+            await ftl.listen(timeout=30)
+        """
+        host_configs = await self._get_host_configs()
+        if not host_configs:
+            raise ValueError(f"No hosts found for target: {self._target}")
+
+        host_config = host_configs[0]
+        resp_type, resp_data = await self._context._send_gate_command(
+            host_config,
+            "StartMonitor",
+            {"interval": interval, "include_processes": include_processes},
+        )
+
+        if resp_type == "MonitorResult":
+            if resp_data.get("status") == "error":
+                raise RuntimeError(
+                    f"Monitor failed: {resp_data.get('message', 'unknown error')}"
+                )
+            return resp_data
+        elif resp_type == "Error":
+            raise RuntimeError(resp_data.get("message", "Monitor failed"))
+        else:
+            raise RuntimeError(f"Unexpected response to StartMonitor: {resp_type}")
+
+    async def unmonitor(self) -> dict[str, Any]:
+        """Stop system metrics streaming from the remote host.
+
+        Returns:
+            dict with 'status' ("stopped")
+        """
+        host_configs = await self._get_host_configs()
+        if not host_configs:
+            raise ValueError(f"No hosts found for target: {self._target}")
+
+        host_config = host_configs[0]
+        resp_type, resp_data = await self._context._send_gate_command(
+            host_config, "StopMonitor", {}
+        )
+
+        if resp_type == "MonitorResult":
+            return resp_data
+        elif resp_type == "Error":
+            raise RuntimeError(resp_data.get("message", "StopMonitor failed"))
+        else:
+            raise RuntimeError(f"Unexpected response to StopMonitor: {resp_type}")
+
     def on(self, event_type: str, handler: Any) -> None:
         """Register an event handler for this host/group.
 

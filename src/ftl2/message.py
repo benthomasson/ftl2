@@ -47,10 +47,15 @@ class GateProtocol:
         "Unwatch",  # Unsubscribe from file change events
         "UnwatchResult",  # Response to Unwatch request
         "FileChanged",  # Unsolicited file change event
+        "StartMonitor",  # Start system metrics streaming
+        "StopMonitor",  # Stop system metrics streaming
+        "MonitorResult",  # Response to Start/StopMonitor
+        "SystemMetrics",  # Unsolicited system metrics event
     }
 
     EVENT_TYPES = {
         "FileChanged",
+        "SystemMetrics",
     }
 
     async def send_message(

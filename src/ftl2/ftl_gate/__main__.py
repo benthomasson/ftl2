@@ -29,6 +29,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 import traceback
 from typing import Any
 
@@ -636,6 +637,169 @@ class FileWatcher:
 
 
 # =============================================================================
+# System Monitor
+# =============================================================================
+
+
+class SystemMonitor:
+    """Streams system metrics (CPU, memory, disk, network, processes) via events.
+
+    Uses psutil (must be installed on the remote host as a system package)
+    to sample metrics at a configurable interval. Metrics are sent as
+    SystemMetrics messages on the gate's stdout channel.
+    """
+
+    def __init__(self, protocol, writer):
+        self._protocol = protocol
+        self._writer = writer
+        self._task = None
+        self._interval = 2.0
+        self._include_processes = True
+        self._psutil = None
+        self._prev_net = None
+        self._prev_time = None
+
+    def start(self, interval: float = 2.0, include_processes: bool = True) -> None:
+        """Start the monitoring loop. Lazy-imports psutil."""
+        if self._task is not None:
+            return  # Already running
+        import psutil
+
+        self._psutil = psutil
+        self._interval = interval
+        self._include_processes = include_processes
+        self._prev_net = psutil.net_io_counters()
+        self._prev_time = time.time()
+        self._task = asyncio.create_task(self._monitor_loop())
+        logger.info(f"System monitor started (interval={interval}s)")
+
+    async def _monitor_loop(self) -> None:
+        """Background task that samples metrics and emits SystemMetrics events."""
+        try:
+            while True:
+                await asyncio.sleep(self._interval)
+                metrics = self._collect_metrics()
+                try:
+                    await self._protocol.send_message(
+                        self._writer, "SystemMetrics", metrics
+                    )
+                except BrokenPipeError:
+                    return
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.error(f"SystemMonitor error: {e}")
+
+    def _collect_metrics(self) -> dict:
+        """Sample all system metrics via psutil."""
+        psutil = self._psutil
+        now = time.time()
+
+        # CPU
+        cpu_per = psutil.cpu_percent(interval=0, percpu=True)
+        cpu_total = sum(cpu_per) / len(cpu_per) if cpu_per else 0.0
+        load_avg = list(os.getloadavg())
+
+        # Memory
+        mem = psutil.virtual_memory()
+
+        # Swap
+        swap = psutil.swap_memory()
+
+        # Disk
+        disk = psutil.disk_usage("/")
+
+        # Network with rate calculation
+        net = psutil.net_io_counters()
+        elapsed = now - self._prev_time if self._prev_time else self._interval
+        if elapsed <= 0:
+            elapsed = self._interval
+        net_data = {
+            "bytes_sent": net.bytes_sent,
+            "bytes_recv": net.bytes_recv,
+            "bytes_sent_rate": int(
+                (net.bytes_sent - self._prev_net.bytes_sent) / elapsed
+            )
+            if self._prev_net
+            else 0,
+            "bytes_recv_rate": int(
+                (net.bytes_recv - self._prev_net.bytes_recv) / elapsed
+            )
+            if self._prev_net
+            else 0,
+        }
+        self._prev_net = net
+        self._prev_time = now
+
+        # Uptime
+        uptime = now - psutil.boot_time()
+
+        metrics = {
+            "timestamp": now,
+            "hostname": os.uname().nodename,
+            "cpu": {
+                "percent_per_cpu": cpu_per,
+                "percent_total": round(cpu_total, 1),
+                "count": psutil.cpu_count(),
+                "load_avg": load_avg,
+            },
+            "memory": {
+                "total": mem.total,
+                "used": mem.used,
+                "available": mem.available,
+                "percent": mem.percent,
+            },
+            "swap": {
+                "total": swap.total,
+                "used": swap.used,
+                "percent": swap.percent,
+            },
+            "disk": {
+                "total": disk.total,
+                "used": disk.used,
+                "free": disk.free,
+                "percent": disk.percent,
+            },
+            "net": net_data,
+            "uptime": int(uptime),
+        }
+
+        # Processes (optional, top 20 by CPU)
+        if self._include_processes:
+            procs = []
+            for p in psutil.process_iter(
+                ["pid", "name", "cpu_percent", "memory_info", "status", "username"]
+            ):
+                try:
+                    info = p.info
+                    procs.append(
+                        {
+                            "pid": info["pid"],
+                            "name": info["name"],
+                            "cpu_percent": info["cpu_percent"] or 0.0,
+                            "memory_rss": info["memory_info"].rss
+                            if info["memory_info"]
+                            else 0,
+                            "status": info["status"],
+                            "username": info["username"] or "",
+                        }
+                    )
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+            procs.sort(key=lambda p: p["cpu_percent"], reverse=True)
+            metrics["processes"] = procs[:20]
+
+        return metrics
+
+    def stop(self) -> None:
+        """Cancel the background task."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+            logger.info("System monitor stopped")
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
@@ -688,8 +852,9 @@ async def main(args: list[str]) -> int | None:
     # Initialize protocol
     protocol = GateProtocol()
 
-    # Initialize file watcher (events are emitted concurrently)
+    # Initialize file watcher and system monitor (events are emitted concurrently)
     watcher = FileWatcher(protocol, writer)
+    monitor = SystemMonitor(protocol, writer)
 
     # Message processing loop
     while True:
@@ -700,6 +865,7 @@ async def main(args: list[str]) -> int | None:
             if msg is None:
                 logger.info("EOF received, shutting down")
                 watcher.stop()
+                monitor.stop()
                 try:
                     await protocol.send_message(writer, "Goodbye", {})
                 except Exception:
@@ -826,9 +992,42 @@ async def main(args: list[str]) -> int | None:
                     {"path": path, "removed": found},
                 )
 
+            elif msg_type == "StartMonitor":
+                interval = data.get("interval", 2.0) if isinstance(data, dict) else 2.0
+                include_procs = data.get("include_processes", True) if isinstance(data, dict) else True
+                logger.info(f"StartMonitor requested (interval={interval}s)")
+                try:
+                    monitor.start(interval=interval, include_processes=include_procs)
+                    await protocol.send_message(
+                        writer, "MonitorResult", {"status": "ok"}
+                    )
+                except ImportError:
+                    await protocol.send_message(
+                        writer,
+                        "MonitorResult",
+                        {
+                            "status": "error",
+                            "message": "psutil not available — install python3-psutil on this host",
+                        },
+                    )
+                except Exception as e:
+                    await protocol.send_message(
+                        writer,
+                        "MonitorResult",
+                        {"status": "error", "message": str(e)},
+                    )
+
+            elif msg_type == "StopMonitor":
+                logger.info("StopMonitor requested")
+                monitor.stop()
+                await protocol.send_message(
+                    writer, "MonitorResult", {"status": "stopped"}
+                )
+
             elif msg_type == "Shutdown":
                 logger.info("Shutdown requested")
                 watcher.stop()
+                monitor.stop()
                 await protocol.send_message(writer, "Goodbye", {})
                 return None
 
