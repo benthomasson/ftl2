@@ -8,6 +8,7 @@ Supports both simple modules and FQCN (Fully Qualified Collection Name):
     await ftl.amazon.aws.ec2_instance(instance_type="t3.micro")
 """
 
+import asyncio
 from typing import Any, Callable, TYPE_CHECKING
 
 from ftl2.module_loading.excluded import get_excluded
@@ -714,21 +715,24 @@ class HostScopedProxy:
         if not host_configs:
             raise ValueError(f"No hosts found for target: {self._target}")
 
-        host_config = host_configs[0]
-        resp_type, resp_data = await self._context._send_gate_command(
-            host_config, "Watch", {"path": path}
-        )
+        async def _watch_one(host_config):
+            resp_type, resp_data = await self._context._send_gate_command(
+                host_config, "Watch", {"path": path}
+            )
+            if resp_type == "WatchResult":
+                if resp_data.get("status") == "error":
+                    raise RuntimeError(
+                        f"Watch failed for {path} on {host_config.name}: "
+                        f"{resp_data.get('message', 'unknown error')}"
+                    )
+                return resp_data
+            elif resp_type == "Error":
+                raise RuntimeError(resp_data.get("message", "Watch failed"))
+            else:
+                raise RuntimeError(f"Unexpected response to Watch: {resp_type}")
 
-        if resp_type == "WatchResult":
-            if resp_data.get("status") == "error":
-                raise RuntimeError(
-                    f"Watch failed for {path}: {resp_data.get('message', 'unknown error')}"
-                )
-            return resp_data
-        elif resp_type == "Error":
-            raise RuntimeError(resp_data.get("message", "Watch failed"))
-        else:
-            raise RuntimeError(f"Unexpected response to Watch: {resp_type}")
+        results = await asyncio.gather(*(_watch_one(h) for h in host_configs))
+        return results[0]
 
     async def monitor(
         self,
@@ -759,23 +763,26 @@ class HostScopedProxy:
         if not host_configs:
             raise ValueError(f"No hosts found for target: {self._target}")
 
-        host_config = host_configs[0]
-        resp_type, resp_data = await self._context._send_gate_command(
-            host_config,
-            "StartMonitor",
-            {"interval": interval, "include_processes": include_processes},
-        )
+        async def _monitor_one(host_config):
+            resp_type, resp_data = await self._context._send_gate_command(
+                host_config,
+                "StartMonitor",
+                {"interval": interval, "include_processes": include_processes},
+            )
+            if resp_type == "MonitorResult":
+                if resp_data.get("status") == "error":
+                    raise RuntimeError(
+                        f"Monitor failed on {host_config.name}: "
+                        f"{resp_data.get('message', 'unknown error')}"
+                    )
+                return resp_data
+            elif resp_type == "Error":
+                raise RuntimeError(resp_data.get("message", "Monitor failed"))
+            else:
+                raise RuntimeError(f"Unexpected response to StartMonitor: {resp_type}")
 
-        if resp_type == "MonitorResult":
-            if resp_data.get("status") == "error":
-                raise RuntimeError(
-                    f"Monitor failed: {resp_data.get('message', 'unknown error')}"
-                )
-            return resp_data
-        elif resp_type == "Error":
-            raise RuntimeError(resp_data.get("message", "Monitor failed"))
-        else:
-            raise RuntimeError(f"Unexpected response to StartMonitor: {resp_type}")
+        results = await asyncio.gather(*(_monitor_one(h) for h in host_configs))
+        return results[0]
 
     async def unmonitor(self) -> dict[str, Any]:
         """Stop system metrics streaming from the remote host.
@@ -787,17 +794,19 @@ class HostScopedProxy:
         if not host_configs:
             raise ValueError(f"No hosts found for target: {self._target}")
 
-        host_config = host_configs[0]
-        resp_type, resp_data = await self._context._send_gate_command(
-            host_config, "StopMonitor", {}
-        )
+        async def _unmonitor_one(host_config):
+            resp_type, resp_data = await self._context._send_gate_command(
+                host_config, "StopMonitor", {}
+            )
+            if resp_type == "MonitorResult":
+                return resp_data
+            elif resp_type == "Error":
+                raise RuntimeError(resp_data.get("message", "StopMonitor failed"))
+            else:
+                raise RuntimeError(f"Unexpected response to StopMonitor: {resp_type}")
 
-        if resp_type == "MonitorResult":
-            return resp_data
-        elif resp_type == "Error":
-            raise RuntimeError(resp_data.get("message", "StopMonitor failed"))
-        else:
-            raise RuntimeError(f"Unexpected response to StopMonitor: {resp_type}")
+        results = await asyncio.gather(*(_unmonitor_one(h) for h in host_configs))
+        return results[0]
 
     def on(self, event_type: str, handler: Any) -> None:
         """Register an event handler for this host/group.
