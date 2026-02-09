@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# dependencies = ["ftl2 @ git+https://github.com/benthomasson/ftl2", "rich"]
+# dependencies = ["ftl2 @ git+https://github.com/benthomasson/ftl2", "rich", "psutil"]
 # requires-python = ">=3.13"
 # ///
 """Distributed system monitor TUI — live metrics from remote hosts via FTL2 gates.
