@@ -28,6 +28,7 @@ Examples:
 import argparse
 import asyncio
 import sys
+from collections import deque
 
 from rich.bar import Bar
 from rich.live import Live
@@ -40,6 +41,10 @@ from rich.console import Group
 from ftl2 import automation
 
 metrics_store: dict[str, dict] = {}
+# Per-host history for sparklines: {hostname: {metric: deque([values])}}
+history_store: dict[str, dict[str, deque]] = {}
+HISTORY_LEN = 30  # ~1 minute at 2s interval
+SPARK_CHARS = "▁▂▃▄▅▆▇█"
 
 
 def _fmt_bytes(n: int) -> str:
@@ -80,6 +85,36 @@ def _cpu_bar(percent: float, width: int = 20) -> Text:
     return bar
 
 
+def _sparkline(values: deque, color: str = "dim", max_val: float | None = None) -> Text:
+    """Render a sparkline from a deque of values."""
+    if not values:
+        return Text("")
+    hi = max_val if max_val is not None else max(values)
+    if hi == 0:
+        hi = 1
+    spark = Text()
+    for v in values:
+        idx = min(int(v / hi * (len(SPARK_CHARS) - 1)), len(SPARK_CHARS) - 1)
+        spark.append(SPARK_CHARS[idx], style=color)
+    return spark
+
+
+def _record_history(hostname: str, m: dict) -> None:
+    """Record metric values into history for sparklines."""
+    if hostname not in history_store:
+        history_store[hostname] = {
+            "cpu": deque(maxlen=HISTORY_LEN),
+            "mem": deque(maxlen=HISTORY_LEN),
+            "net_send": deque(maxlen=HISTORY_LEN),
+            "net_recv": deque(maxlen=HISTORY_LEN),
+        }
+    h = history_store[hostname]
+    h["cpu"].append(m.get("cpu", {}).get("percent_total", 0))
+    h["mem"].append(m.get("memory", {}).get("percent", 0))
+    h["net_send"].append(m.get("net", {}).get("bytes_sent_rate", 0))
+    h["net_recv"].append(m.get("net", {}).get("bytes_recv_rate", 0))
+
+
 def _mem_bar(percent: float, used: int, total: int, width: int = 20) -> Text:
     """Create a colored memory usage bar with size labels."""
     filled = int(percent / 100 * width)
@@ -114,9 +149,13 @@ def render_host(hostname: str, m: dict) -> Panel:
     cores = cpu.get("count", "?")
     load_str = " ".join(f"{l:.2f}" for l in load) if load else "?"
 
+    h = history_store.get(hostname, {})
+
     cpu_line = Text()
     cpu_line.append("CPU  ", style="bold")
     cpu_line.append_text(_cpu_bar(cpu_total))
+    cpu_line.append("  ")
+    cpu_line.append_text(_sparkline(h.get("cpu", deque()), color="green", max_val=100))
     cpu_line.append(f"  {cores} cores  load: {load_str}")
     content.append(cpu_line)
 
@@ -142,6 +181,8 @@ def render_host(hostname: str, m: dict) -> Panel:
     mem_line.append_text(
         _mem_bar(mem.get("percent", 0), mem.get("used", 0), mem.get("total", 0))
     )
+    mem_line.append("  ")
+    mem_line.append_text(_sparkline(h.get("mem", deque()), color="cyan", max_val=100))
     content.append(mem_line)
 
     # Swap
@@ -165,8 +206,9 @@ def render_host(hostname: str, m: dict) -> Panel:
     net_line.append("Net  ", style="bold")
     net_line.append(
         f"▲ {_fmt_bytes(net.get('bytes_sent_rate', 0))}/s  "
-        f"▼ {_fmt_bytes(net.get('bytes_recv_rate', 0))}/s"
+        f"▼ {_fmt_bytes(net.get('bytes_recv_rate', 0))}/s  "
     )
+    net_line.append_text(_sparkline(h.get("net_recv", deque()), color="blue"))
     content.append(net_line)
 
     # Uptime
@@ -294,6 +336,11 @@ async def main() -> None:
                 include_processes=not args.no_processes,
             )
 
+            def _on_metrics(m, g=group):
+                host = m.get("hostname", g)
+                metrics_store[host] = m
+                _record_history(host, m)
+
             if args.debug:
                 event_count = [0]
 
@@ -309,16 +356,11 @@ async def main() -> None:
                         f"CPU={cpu}% Mem={mem}% procs={procs} keys={keys}",
                         file=sys.stderr,
                     )
-                    metrics_store.update({host: m})
+                    _on_metrics(m, g)
 
                 proxy.on("SystemMetrics", _debug_handler)
             else:
-                proxy.on(
-                    "SystemMetrics",
-                    lambda m, g=group: metrics_store.update(
-                        {m.get("hostname", g): m}
-                    ),
-                )
+                proxy.on("SystemMetrics", _on_metrics)
 
         if args.debug:
             # Debug mode: just print events, no TUI
