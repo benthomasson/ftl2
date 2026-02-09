@@ -739,6 +739,7 @@ class AutomationContext:
                 "check_mode": self.check_mode,
                 "duration": 0.0,
                 "replayed": True,
+                "output": replay_result.output,
             })
             if not self.quiet:
                 print(f"  ↩ {module_name}: replayed (skipped)")
@@ -783,6 +784,7 @@ class AutomationContext:
             "check_mode": self.check_mode,
             "duration": duration,
             "error": result.error,
+            "output": result.output,
         })
 
         # Log in verbose mode (not quiet)
@@ -1053,6 +1055,7 @@ class AutomationContext:
                 "check_mode": self.check_mode,
                 "duration": 0.0,
                 "replayed": True,
+                "output": replay_result.output,
             })
             if not self.quiet:
                 print(f"  ↩ {host.name}:{module_name}: replayed (skipped)")
@@ -1103,6 +1106,7 @@ class AutomationContext:
             "check_mode": self.check_mode,
             "duration": duration,
             "error": result.error,
+            "output": result.output,
         })
 
         # Log based on output mode
