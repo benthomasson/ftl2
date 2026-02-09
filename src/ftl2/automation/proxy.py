@@ -992,6 +992,32 @@ class ModuleProxy:
         """
         self._context = context
 
+    def __getitem__(self, name: str) -> HostScopedProxy:
+        """Return a HostScopedProxy for the given host or group name.
+
+        Supports names with dashes and other characters that aren't valid
+        in Python attributes::
+
+            await ftl["ftl2-scale-0"].hostname(name="ftl2-scale-0")
+
+        Args:
+            name: Host or group name (exact match, no normalization)
+
+        Returns:
+            HostScopedProxy for the target
+
+        Raises:
+            KeyError: If the name is not a known host or group
+        """
+        if name in ("local", "localhost"):
+            return HostScopedProxy(self._context, "localhost")
+
+        hosts_proxy = self._context.hosts
+        if name in hosts_proxy.groups or name in hosts_proxy.keys():
+            return HostScopedProxy(self._context, name)
+
+        raise KeyError(f"Host or group '{name}' not found in inventory")
+
     def __getattr__(self, name: str) -> Callable[..., Any] | NamespaceProxy | HostScopedProxy:
         """Return async wrapper for module, host proxy, or namespace proxy.
 
