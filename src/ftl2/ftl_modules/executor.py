@@ -34,6 +34,7 @@ class ExecuteResult:
         params: Module parameters (excluding injected secrets)
         duration: Execution duration in seconds
         timestamp: Execution start time (epoch seconds)
+        replayed: Whether this result was replayed from audit log
     """
 
     success: bool
@@ -46,6 +47,7 @@ class ExecuteResult:
     params: dict[str, Any] = field(default_factory=dict)
     duration: float = 0.0
     timestamp: float = 0.0
+    replayed: bool = False
 
     @classmethod
     def from_module_output(

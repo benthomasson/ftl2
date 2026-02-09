@@ -258,6 +258,7 @@ class AutomationContext:
         gate_subsystem: bool = False,
         state_file: str | Path | None = None,
         record: str | Path | None = None,
+        replay: str | Path | None = None,
     ):
         """Initialize the automation context.
 
@@ -317,6 +318,13 @@ class AutomationContext:
                 parameters, and results for every module execution. Secret
                 parameters (from secret_bindings) are excluded. Default is
                 None (no recording).
+            replay: Path to a previous audit recording JSON file. When provided,
+                successful actions from the recording are skipped (returning their
+                cached output) and execution resumes from the first unmatched or
+                failed action. Matching is positional — action 0 in the current
+                run corresponds to action 0 in the replay log. Use with record=
+                to write a new audit log that includes both replayed and newly
+                executed actions. Default is None (no replay).
         """
         self._enabled_modules = modules
         self._inventory = self._load_inventory(inventory)
@@ -346,6 +354,14 @@ class AutomationContext:
         self._gate_subsystem = gate_subsystem
         self._recorded_modules: set[str] = set()
         self._record_file = Path(record) if record else None
+        self._replay_actions: list[dict] | None = None
+        self._replay_index: int = 0
+        if replay is not None:
+            import json
+            replay_path = Path(replay)
+            if replay_path.exists():
+                data = json.loads(replay_path.read_text())
+                self._replay_actions = data.get("actions", [])
         self._event_handlers: dict[str, dict[str, list]] = {}  # host -> event_type -> [handlers]
         self._proxy = ModuleProxy(self)
         self._results: list[ExecuteResult] = []
@@ -709,6 +725,25 @@ class AutomationContext:
         start_time = time.time()
         original_params = params  # preserve pre-injection params for audit
 
+        # Check replay log before executing
+        replay_result = self._try_replay(module_name, "localhost", original_params)
+        if replay_result is not None:
+            replay_result.params = self._redact_params(module_name, original_params)
+            self._results.append(replay_result)
+            self._emit_event({
+                "event": "module_complete",
+                "module": module_name,
+                "host": "localhost",
+                "success": True,
+                "changed": replay_result.changed,
+                "check_mode": self.check_mode,
+                "duration": 0.0,
+                "replayed": True,
+            })
+            if not self.quiet:
+                print(f"  ↩ {module_name}: replayed (skipped)")
+            return replay_result.output
+
         # Inject bound secrets (script never sees these values)
         secret_injections = self._get_secret_bindings_for_module(module_name)
         if secret_injections:
@@ -1004,6 +1039,24 @@ class AutomationContext:
 
         start_time = time.time()
         original_params = params  # preserve pre-injection params for audit
+
+        # Check replay log before executing
+        replay_result = self._try_replay(module_name, host.name, original_params)
+        if replay_result is not None:
+            replay_result.params = self._redact_params(module_name, original_params)
+            self._emit_event({
+                "event": "module_complete",
+                "module": module_name,
+                "host": host.name,
+                "success": True,
+                "changed": replay_result.changed,
+                "check_mode": self.check_mode,
+                "duration": 0.0,
+                "replayed": True,
+            })
+            if not self.quiet:
+                print(f"  ↩ {host.name}:{module_name}: replayed (skipped)")
+            return replay_result
 
         # Record module for dependency tracking
         if self._record_deps:
@@ -1470,6 +1523,44 @@ class AutomationContext:
 
         return redacted
 
+    def _try_replay(self, module_name: str, host: str, params: dict) -> ExecuteResult | None:
+        """Check if the current action can be satisfied from the replay log.
+
+        Returns an ExecuteResult with cached output if the action matches
+        and was successful, or None if the action should execute normally.
+        """
+        if self._replay_actions is None:
+            return None
+        if self._replay_index >= len(self._replay_actions):
+            return None
+
+        action = self._replay_actions[self._replay_index]
+
+        # Must match module and host
+        if action["module"] != module_name or action["host"] != host:
+            # Mismatch — stop replaying, execute everything from here
+            self._replay_actions = None
+            return None
+
+        # Only replay successes — re-execute failures
+        if not action.get("success", False):
+            self._replay_actions = None
+            return None
+
+        # Match — return cached result
+        self._replay_index += 1
+        return ExecuteResult(
+            success=True,
+            changed=action.get("changed", False),
+            output=action.get("output", {}),
+            module=module_name,
+            host=host,
+            params=params,
+            duration=0.0,
+            timestamp=time.time(),
+            replayed=True,
+        )
+
     def _write_recording(self) -> None:
         """Write JSON audit trail of all actions to file.
 
@@ -1493,9 +1584,12 @@ class AutomationContext:
                 "changed": r.changed,
                 "duration": round(r.duration, 3),
                 "timestamp": epoch_to_iso(r.timestamp) if r.timestamp else None,
+                "output": r.output,
             }
             if not r.success:
                 action["error"] = r.error
+            if r.replayed:
+                action["replayed"] = True
             actions.append(action)
 
         now = time.time()

@@ -73,6 +73,7 @@ async def automation(
     gate_subsystem: bool = False,
     state_file: str | None = None,
     record: str | None = None,
+    replay: str | None = None,
 ) -> AsyncGenerator[AutomationContext, None]:
     """Create an automation context for running FTL modules.
 
@@ -135,6 +136,11 @@ async def automation(
         record: Path to JSON file for recording all actions as an audit
                 trail. Written on context exit with timestamps, durations,
                 parameters (excluding secrets), and results. Default is None.
+        replay: Path to a previous audit recording JSON file. When provided,
+                successful actions are skipped (returning cached output) and
+                execution resumes from the first unmatched or failed action.
+                Matching is positional. Use with record= to write a new audit
+                log including both replayed and newly executed actions.
 
     Yields:
         AutomationContext with ftl.module_name() access to all modules
@@ -240,6 +246,7 @@ async def automation(
         gate_subsystem=gate_subsystem,
         state_file=state_file,
         record=record,
+        replay=replay,
     )
 
     try:
