@@ -275,9 +275,19 @@ async def main() -> None:
         else:
             groups = list(ftl.hosts.groups)
 
+        if not groups:
+            print("No groups found in inventory. Add hosts with groups or use --groups.")
+            return
+
+        available = set(ftl.hosts.groups) | set(ftl.hosts.keys())
+        for group in groups:
+            if group not in available:
+                print(f"Error: '{group}' not found in inventory. Available groups: {ftl.hosts.groups}")
+                return
+
         # Start monitoring on each group
         for group in groups:
-            proxy = getattr(ftl, group)
+            proxy = ftl[group]
             print(f"Starting monitor on {group} (interval={args.interval}s)")
             await proxy.monitor(
                 interval=args.interval,
