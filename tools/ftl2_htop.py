@@ -314,12 +314,7 @@ async def main() -> None:
             # Debug mode: just print events, no TUI
             print("Debug mode: listening for events (Ctrl+C to stop)...",
                   file=sys.stderr)
-            try:
-                await ftl.listen()
-            except KeyboardInterrupt:
-                print(f"\nReceived {sum(1 for _ in metrics_store)} host(s), "
-                      f"last metrics: {list(metrics_store.keys())}",
-                      file=sys.stderr)
+            await ftl.listen()
             return
 
         # Run live display and event listener concurrently
@@ -332,14 +327,18 @@ async def main() -> None:
                     live.update(render_dashboard())
                     await asyncio.sleep(0.5)
 
-            try:
-                await asyncio.gather(
-                    ftl.listen(),
-                    update_display(),
-                )
-            except KeyboardInterrupt:
-                pass
+            await asyncio.gather(
+                ftl.listen(),
+                update_display(),
+            )
+
+
+def cli():
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    cli()
