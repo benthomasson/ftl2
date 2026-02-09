@@ -9,7 +9,7 @@ the source file is base64-encoded in the arguments.
 Arguments:
   src (str, required): Source file path (on controller)
   dest (str, required): Destination file path (on target)
-  content (str, optional): Base64-encoded content to write (for remote execution)
+  content (str, optional): Content to write — plain text or base64-encoded
   mode (str, optional): File permissions in octal (e.g., "0644")
 
 Returns:
@@ -72,16 +72,16 @@ def main():
         should_copy = True
 
         if content:
-            # Remote execution: decode content and write to dest
+            # Content can be plain text or base64-encoded
             try:
                 file_content = base64.b64decode(content)
-            except Exception as e:
-                result = {
-                    "failed": True,
-                    "msg": f"Failed to decode content: {e}",
-                }
-                print(json.dumps(result))
-                sys.exit(1)
+                # Verify it was actually base64 by re-encoding
+                if base64.b64encode(file_content).decode() != content:
+                    # Not valid base64 — treat as plain text
+                    file_content = content.encode("utf-8")
+            except Exception:
+                # Not valid base64 — treat as plain text
+                file_content = content.encode("utf-8")
 
             # Check if file exists and has same content
             if os.path.exists(dest):
