@@ -646,6 +646,25 @@ class AutomationContext:
         """List of all execution results from this context."""
         return self._results.copy()
 
+    def __getitem__(self, name: str) -> "HostScopedProxy":
+        """Return a HostScopedProxy for the given host or group name.
+
+        Supports names with dashes and other characters that aren't valid
+        in Python attributes::
+
+            await ftl["ftl2-scale-0"].hostname(name="ftl2-scale-0")
+
+        Args:
+            name: Host or group name
+
+        Returns:
+            HostScopedProxy for the target
+
+        Raises:
+            KeyError: If the name is not a known host or group
+        """
+        return self._proxy[name]
+
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to the module proxy.
 
