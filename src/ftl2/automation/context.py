@@ -1252,6 +1252,11 @@ class AutomationContext:
                                 "failed": True,
                                 "msg": f"Empty response from module. stderr: {stderr}",
                             }
+                        # Module crashed during import/execution — stderr has
+                        # a traceback but stdout has no failure indicator.
+                        if stderr and "Traceback" in stderr and not result_data.get("failed"):
+                            result_data["failed"] = True
+                            result_data["msg"] = f"Module crashed: {stderr.strip().splitlines()[-1]}"
                     except json.JSONDecodeError as e:
                         result_data = {
                             "failed": True,
