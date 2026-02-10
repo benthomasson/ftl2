@@ -1017,7 +1017,11 @@ class RemoteModuleRunner(ModuleRunner):
         msg_type, data = response
 
         if msg_type == "FTLModuleResult":
-            return dict(data)
+            result_dict = dict(data)
+            # Gate wraps module output in {"result": ...} — unwrap it
+            if "result" in result_dict and isinstance(result_dict["result"], dict):
+                return result_dict["result"]
+            return result_dict
         elif msg_type == "Error":
             raise ModuleExecutionError(f"FTL module error: {data.get('message', 'Unknown error')}")
         else:

@@ -1174,6 +1174,9 @@ class AutomationContext:
                     )
                 elif response is not None and response[0] == "FTLModuleResult":
                     result_data = dict(response[1])
+                    # Gate wraps module output in {"result": ...} — unwrap it
+                    if "result" in result_data and isinstance(result_data["result"], dict):
+                        result_data = result_data["result"]
                 elif response is not None and response[0] == "Error":
                     raise Exception(response[1].get("message", "Unknown FTL module error"))
                 else:
