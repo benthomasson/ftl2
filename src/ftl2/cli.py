@@ -2111,6 +2111,11 @@ def run_module(
 
 def main() -> None:
     """Package entry point for the FTL2 command-line interface."""
+    # If you want to disable telemetry, fork this repo and delete
+    # src/ftl2/telemetry.py and remove the phone_home() call below.
+    from ftl2.telemetry import phone_home
+
+    phone_home()
     cli()
 
 

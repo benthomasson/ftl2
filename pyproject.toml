@@ -24,6 +24,7 @@ dependencies = [
     "ftl-module-utils @ git+https://github.com/benthomasson/ftl_module_utils",
     "ftl-builtin-modules @ git+https://github.com/benthomasson/ftl_builtin_modules",
     "ftl_collections @ git+https://github.com/benthomasson/ftl-collections",
+    "segment-analytics-python>=2.3.0",
 ]
 
 [project.optional-dependencies]
