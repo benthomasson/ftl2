@@ -25,22 +25,7 @@ EXCLUDED_MODULES: dict[str, ExcludedModule] = {
     # Connection/Wait modules
     # NOTE: wait_for_connection and ping are now SHADOWED (see shadowed.py)
     # They transparently redirect to native FTL2 methods.
-    "ansible.builtin.wait_for": ExcludedModule(
-        name="wait_for",
-        reason="Relies on Ansible's internal execution model",
-        alternative="await ftl.<host>.wait_for_ssh() or Python asyncio",
-        example="""
-# Instead of:
-await ftl.minecraft.wait_for(port=22, timeout=120)
-
-# Use:
-await ftl.minecraft.wait_for_ssh(timeout=120)
-
-# Or for other ports:
-import asyncio
-await asyncio.wait_for(check_port(host, 8080), timeout=60)
-""",
-    ),
+    # NOTE: wait_for is now a real FTL module (ftl_modules/wait_for.py), no longer excluded.
     # Playbook control modules
     "ansible.builtin.meta": ExcludedModule(
         name="meta",
