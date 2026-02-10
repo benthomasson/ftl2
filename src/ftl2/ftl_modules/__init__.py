@@ -28,6 +28,7 @@ from ftl2.ftl_modules.file import ftl_file, ftl_copy, ftl_template
 from ftl2.ftl_modules.http import ftl_uri, ftl_get_url
 from ftl2.ftl_modules.command import ftl_command, ftl_shell
 from ftl2.ftl_modules.pip import ftl_pip
+from ftl2.ftl_modules.wait_for import ftl_wait_for
 from ftl2.ftl_modules.aws import ftl_ec2_instance
 from ftl2.ftl_modules.executor import (
     execute,
@@ -52,6 +53,7 @@ FTL_MODULES: dict[str, ModuleFunc] = {
     "command": ftl_command,
     "shell": ftl_shell,
     "pip": ftl_pip,
+    "wait_for": ftl_wait_for,
     "ec2_instance": ftl_ec2_instance,
 }
 
@@ -66,6 +68,7 @@ ANSIBLE_COMPAT: dict[str, ModuleFunc] = {
     "ansible.builtin.command": ftl_command,
     "ansible.builtin.shell": ftl_shell,
     "ansible.builtin.pip": ftl_pip,
+    "ansible.builtin.wait_for": ftl_wait_for,
     # AWS modules
     "amazon.aws.ec2_instance": ftl_ec2_instance,
 }
@@ -152,6 +155,8 @@ __all__ = [
     "ftl_shell",
     # Package modules
     "ftl_pip",
+    # Wait/polling modules
+    "ftl_wait_for",
     # AWS modules
     "ftl_ec2_instance",
 ]
