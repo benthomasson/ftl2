@@ -173,6 +173,10 @@ class GateProtocol:
             while len(length_bytes) < 8:
                 chunk = await reader.read(8 - len(length_bytes))
                 if not chunk:
+                    if length_bytes:
+                        raise ProtocolError(
+                            f"Invalid length prefix: got {len(length_bytes)} bytes, expected 8"
+                        )
                     return None
                 # Skip leading whitespace only before prefix starts
                 if not length_bytes:
@@ -196,7 +200,9 @@ class GateProtocol:
                 remaining = length - len(json_bytes)
                 chunk = await reader.read(remaining)
                 if not chunk:
-                    return None
+                    raise ProtocolError(
+                        f"Incomplete message body: got {len(json_bytes)} bytes, expected {length}"
+                    )
                 # Skip leading whitespace only before body starts
                 if not json_bytes:
                     chunk = chunk.lstrip()

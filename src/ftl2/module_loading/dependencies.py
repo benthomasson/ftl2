@@ -133,26 +133,10 @@ class ModuleUtilsFinder(ast.NodeVisitor):
                 # Add the base module
                 self.imports.append(ModuleUtilsImport(resolved))
 
-                # Add imported names as potential submodules
-                for alias in node.names:
-                    name = alias.name
-                    if name != "*":
-                        # Add as potential submodule - resolution will verify if file exists
-                        submodule_path = f"{resolved}.{name}"
-                        self.imports.append(ModuleUtilsImport(submodule_path))
-
         # Handle absolute imports
         elif module and "module_utils" in module:
             # Add the base module
             self.imports.append(ModuleUtilsImport(module))
-
-            # Add imported names as potential submodules
-            for alias in node.names:
-                name = alias.name
-                if name != "*":
-                    # Add as potential submodule - resolution will verify if file exists
-                    submodule_path = f"{module}.{name}"
-                    self.imports.append(ModuleUtilsImport(submodule_path))
 
         self.generic_visit(node)
 

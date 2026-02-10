@@ -42,34 +42,51 @@ import sys
 import json
 import tempfile
 import os
+import inspect
 
 # Add bundle to path for imports
 if sys.argv[0].endswith('.zip') or sys.argv[0].endswith('.pyz'):
     sys.path.insert(0, sys.argv[0])
 
 if __name__ == "__main__":
-    # Read params from stdin and write to temp file
-    # Ansible modules expect args as a file path in sys.argv[1]
+    # Read params from stdin
     input_data = sys.stdin.read()
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        f.write(input_data if input_data else '{"ANSIBLE_MODULE_ARGS": {}}')
-        args_file = f.name
+    try:
+        data = json.loads(input_data if input_data else '{"ANSIBLE_MODULE_ARGS": {}}')
+    except (json.JSONDecodeError, ValueError):
+        data = {"ANSIBLE_MODULE_ARGS": {}}
+
+    args = data.get("ANSIBLE_MODULE_ARGS", data)
+
+    # Import the module
+    from ftl2_module import main
 
     try:
-        # Set up sys.argv as Ansible expects
-        sys.argv = [sys.argv[0], args_file]
+        # Check if main() accepts arguments
+        sig = inspect.signature(main)
+        if sig.parameters:
+            # FTL2-style: main(args) returns result dict
+            result = main(args)
+            if result is not None:
+                print(json.dumps(result))
+        else:
+            # Ansible-style: main() reads args from file via sys.argv[1]
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                f.write(input_data if input_data else '{"ANSIBLE_MODULE_ARGS": {}}')
+                args_file = f.name
+            sys.argv = [sys.argv[0], args_file]
+            try:
+                main()
+            finally:
+                try:
+                    os.unlink(args_file)
+                except OSError:
+                    pass
 
-        # Import and run the module
-        from ftl2_module import main
-        main()
-
-    finally:
-        # Clean up temp file
-        try:
-            os.unlink(args_file)
-        except OSError:
-            pass
+    except Exception as e:
+        print(json.dumps({"failed": True, "msg": str(e)}))
+        sys.exit(1)
 '''
 
 

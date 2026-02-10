@@ -107,7 +107,7 @@ class Inventory:
         self._all_hosts = {}
 
 
-def load_inventory(inventory_file: str | Path) -> Inventory:
+def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> Inventory:
     """Load inventory from an Ansible-compatible YAML file.
 
     Parses YAML inventory and converts to strongly-typed Inventory structure
@@ -115,12 +115,15 @@ def load_inventory(inventory_file: str | Path) -> Inventory:
 
     Args:
         inventory_file: Path to YAML inventory file
+        require_hosts: If True (default), raise ValueError when no hosts are
+            loaded. Set to False for provisioning workflows where hosts are
+            added dynamically via add_host().
 
     Returns:
         Inventory object with typed groups and hosts
 
     Raises:
-        ValueError: If no hosts are loaded from the inventory file
+        ValueError: If require_hosts is True and no hosts are loaded
 
     Example:
         >>> inventory = load_inventory("hosts.yml")
@@ -203,7 +206,9 @@ def load_inventory(inventory_file: str | Path) -> Inventory:
 
             inventory.add_group(group)
 
-    # Empty inventories are valid - they can be populated with add_host()
+    if require_hosts and not inventory.get_all_hosts():
+        raise ValueError("No hosts loaded from inventory")
+
     return inventory
 
 

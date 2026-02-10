@@ -16,7 +16,7 @@ class TestGateProtocol:
         assert "Hello" in protocol.MESSAGE_TYPES
         assert "Module" in protocol.MESSAGE_TYPES
         assert "Shutdown" in protocol.MESSAGE_TYPES
-        assert len(protocol.MESSAGE_TYPES) == 9
+        assert len(protocol.MESSAGE_TYPES) == 22
 
     @pytest.mark.asyncio
     async def test_send_message_hello(self):

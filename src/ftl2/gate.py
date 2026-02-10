@@ -336,9 +336,8 @@ class GateBuilder:
                         continue
                 except Exception:
                     pass
-                # Neither Ansible nor FTL — skip it
-                logger.debug(f"Skipping {module}: not found as Ansible or FTL module ({e})")
-                continue
+                # Neither Ansible nor FTL — raise error
+                raise ModuleNotFound(f"Module '{module}' not found in module_dirs or as FQCN")
 
             # Copy module directly into gate
             target_name = f"{module_path_name(fqcn)}.py"

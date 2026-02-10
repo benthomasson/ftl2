@@ -481,7 +481,7 @@ class AutomationContext:
         if isinstance(inventory, (str, Path)):
             path = Path(inventory)
             if path.exists():
-                return load_inventory(path)
+                return load_inventory(path, require_hosts=False)
             else:
                 # File doesn't exist, return localhost
                 return load_localhost()

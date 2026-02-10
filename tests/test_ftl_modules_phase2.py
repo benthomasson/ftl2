@@ -488,6 +488,37 @@ class TestFtlUri:
 class TestFtlGetUrl:
     """Tests for ftl_get_url module."""
 
+    @staticmethod
+    def _mock_streaming_client(content: bytes):
+        """Create a mock httpx.AsyncClient that supports streaming.
+
+        Sets up the mock to work with:
+            async with client.stream("GET", url) as response:
+                async for chunk in response.aiter_bytes():
+                    ...
+        """
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {"content-length": str(len(content))}
+
+        async def aiter_bytes(chunk_size=65536):
+            yield content
+
+        mock_response.aiter_bytes = aiter_bytes
+
+        mock_stream_cm = MagicMock()
+        mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_cm.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.stream.return_value = mock_stream_cm
+
+        mock_client_cm = MagicMock()
+        mock_client_cm.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_cm.__aexit__ = AsyncMock(return_value=False)
+
+        return mock_client_cm
+
     @pytest.mark.asyncio
     async def test_download_file(self):
         """Test downloading a file."""
@@ -495,17 +526,12 @@ class TestFtlGetUrl:
             dest = Path(tmpdir) / "downloaded.txt"
 
             with patch("ftl2.ftl_modules.http.httpx.AsyncClient") as mock_client:
-                mock_response = MagicMock()
-                mock_response.content = b"file content"
-                mock_response.raise_for_status = MagicMock()
-
-                mock_client_instance = AsyncMock()
-                mock_client_instance.get.return_value = mock_response
-                mock_client.return_value.__aenter__.return_value = mock_client_instance
+                mock_client.return_value = self._mock_streaming_client(b"file content")
 
                 result = await ftl_get_url(
                     url="https://example.com/file.txt",
                     dest=str(dest),
+                    emit_events=False,
                 )
 
                 assert result["changed"] is True
@@ -524,18 +550,13 @@ class TestFtlGetUrl:
             dest = Path(tmpdir) / "verified.txt"
 
             with patch("ftl2.ftl_modules.http.httpx.AsyncClient") as mock_client:
-                mock_response = MagicMock()
-                mock_response.content = content
-                mock_response.raise_for_status = MagicMock()
-
-                mock_client_instance = AsyncMock()
-                mock_client_instance.get.return_value = mock_response
-                mock_client.return_value.__aenter__.return_value = mock_client_instance
+                mock_client.return_value = self._mock_streaming_client(content)
 
                 result = await ftl_get_url(
                     url="https://example.com/file.txt",
                     dest=str(dest),
                     checksum=expected_checksum,
+                    emit_events=False,
                 )
 
                 assert result["changed"] is True
@@ -548,19 +569,14 @@ class TestFtlGetUrl:
             dest = Path(tmpdir) / "bad.txt"
 
             with patch("ftl2.ftl_modules.http.httpx.AsyncClient") as mock_client:
-                mock_response = MagicMock()
-                mock_response.content = b"actual content"
-                mock_response.raise_for_status = MagicMock()
-
-                mock_client_instance = AsyncMock()
-                mock_client_instance.get.return_value = mock_response
-                mock_client.return_value.__aenter__.return_value = mock_client_instance
+                mock_client.return_value = self._mock_streaming_client(b"actual content")
 
                 with pytest.raises(FTLModuleError) as exc_info:
                     await ftl_get_url(
                         url="https://example.com/file.txt",
                         dest=str(dest),
                         checksum="wrongchecksum",
+                        emit_events=False,
                     )
 
                 assert "Checksum mismatch" in str(exc_info.value)

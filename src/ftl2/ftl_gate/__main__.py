@@ -58,6 +58,34 @@ class ModuleNotFoundError(Exception):
     pass
 
 
+async def execute_module_stub(
+    module_name: str,
+    module: str | None = None,
+    module_args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Stub for testing module execution without full gate setup.
+
+    Returns a minimal result dict with the expected structure
+    without requiring subprocess execution or gate infrastructure.
+
+    Args:
+        module_name: Name of the module
+        module: Optional base64-encoded module content (ignored in stub)
+        module_args: Arguments that would be passed to the module
+
+    Returns:
+        Dict with stdout, stderr, rc, and changed keys
+    """
+    if module_args is None:
+        module_args = {}
+    return {
+        "stdout": json.dumps({"module": module_name, "args": module_args}),
+        "stderr": "",
+        "rc": 0,
+        "changed": False,
+    }
+
+
 class StdinReader:
     """Fallback async reader for stdin when StreamReader fails."""
 
