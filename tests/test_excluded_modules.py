@@ -18,12 +18,12 @@ class TestExcludedModulesRegistry:
     def test_excluded_modules_has_expected_modules(self):
         """Test that common excluded modules are in the registry."""
         # Note: wait_for_connection and ping are now SHADOWED, not excluded
+        # Note: wait_for was removed from excluded — FTL2 now has a native implementation
         expected = [
             "debug",
             "fail",
             "pause",
             "set_fact",
-            "wait_for",
             "meta",
             "include_tasks",
             "import_tasks",
@@ -35,7 +35,6 @@ class TestExcludedModulesRegistry:
         """Test that FQCN versions are also excluded."""
         # Note: wait_for_connection is now SHADOWED, not excluded
         assert "ansible.builtin.debug" in EXCLUDED_MODULES
-        assert "ansible.builtin.wait_for" in EXCLUDED_MODULES
         assert "ansible.builtin.set_fact" in EXCLUDED_MODULES
 
     def test_short_names_added(self):
@@ -52,9 +51,9 @@ class TestExcludedModulesRegistry:
     def test_is_excluded_returns_true_for_excluded(self):
         """Test is_excluded() returns True for excluded modules."""
         # Note: wait_for_connection is now SHADOWED, not excluded
+        # Note: wait_for was removed from excluded — FTL2 now has a native implementation
         assert is_excluded("debug") is True
         assert is_excluded("ansible.builtin.debug") is True
-        assert is_excluded("wait_for") is True
 
     def test_is_excluded_returns_false_for_valid(self):
         """Test is_excluded() returns False for valid modules."""

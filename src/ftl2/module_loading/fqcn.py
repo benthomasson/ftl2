@@ -95,9 +95,17 @@ def parse_fqcn(fqcn: str) -> ParsedFQCN:
         # Provide helpful error message
         parts = fqcn.split(".")
         if len(parts) != 3:
+            hint = ""
+            # If 2 parts and the first contains a dash, it's likely a hostname
+            # that wasn't registered in inventory (e.g., "hello-ai3.shell")
+            if len(parts) == 2 and "-" in parts[0]:
+                hint = (
+                    f". It looks like '{parts[0]}' may be a hostname — "
+                    f"if so, register it with add_host before targeting it"
+                )
             raise InvalidFQCNError(
                 fqcn,
-                f"expected 3 parts (namespace.collection.module), got {len(parts)}",
+                f"expected 3 parts (namespace.collection.module), got {len(parts)}{hint}",
             )
         raise InvalidFQCNError(fqcn, "invalid characters in one or more parts")
 
