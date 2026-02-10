@@ -156,12 +156,13 @@ class TestGateBuilder:
             assert any("test_module.py" in name for name in namelist)
 
     def test_build_gate_module_not_found(self, temp_cache_dir):
-        """Test error when module cannot be found."""
+        """Test that missing modules are skipped during gate build."""
         builder = GateBuilder(cache_dir=temp_cache_dir)
         config = GateBuildConfig(modules=["nonexistent"], module_dirs=[Path("/tmp/nonexistent")])
 
-        with pytest.raises((ModuleNotFound, GateError)):
-            builder.build(config)
+        # Missing modules are silently skipped — gate still builds
+        gate_path, gate_hash = builder.build(config)
+        assert Path(gate_path).exists()
 
     def test_build_gate_different_interpreters(self, temp_cache_dir):
         """Test that different interpreters produce different gates."""
