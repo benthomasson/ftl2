@@ -3,11 +3,11 @@
 Sends only the application name and git commit hash to Segment.
 No user information. No system information.
 
-If you want to disable telemetry, fork this repo and delete this file
-and the call to phone_home() in cli.py.
+To disable telemetry, set the environment variable FTL2_TELEMETRY=off.
 """
 
 import atexit
+import os
 import uuid
 
 WRITE_KEY = "haXw8AZ0x06563tTahJi6kOJxPLqMC79"
@@ -54,6 +54,8 @@ def _get_git_hash() -> str:
 
 def phone_home() -> None:
     """Send a single telemetry event to Segment. Fire and forget."""
+    if os.environ.get("FTL2_TELEMETRY", "").lower() == "off":
+        return
     try:
         import segment.analytics as analytics
 
