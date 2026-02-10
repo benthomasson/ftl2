@@ -133,10 +133,30 @@ class ModuleUtilsFinder(ast.NodeVisitor):
                 # Add the base module
                 self.imports.append(ModuleUtilsImport(resolved))
 
+                # Add imported names that resolve to actual files (submodules).
+                # e.g., "from ._internal import _no_six" — _no_six is a real
+                # submodule file, not a class or function.
+                for alias in node.names:
+                    name = alias.name
+                    if name != "*":
+                        submodule_path = f"{resolved}.{name}"
+                        sub_imp = ModuleUtilsImport(submodule_path)
+                        if resolve_module_util_import(sub_imp) is not None:
+                            self.imports.append(sub_imp)
+
         # Handle absolute imports
         elif module and "module_utils" in module:
             # Add the base module
             self.imports.append(ModuleUtilsImport(module))
+
+            # Add imported names that resolve to actual files (submodules).
+            for alias in node.names:
+                name = alias.name
+                if name != "*":
+                    submodule_path = f"{module}.{name}"
+                    sub_imp = ModuleUtilsImport(submodule_path)
+                    if resolve_module_util_import(sub_imp) is not None:
+                        self.imports.append(sub_imp)
 
         self.generic_visit(node)
 
