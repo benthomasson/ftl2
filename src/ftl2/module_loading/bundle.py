@@ -172,6 +172,7 @@ def build_bundle(
     dependencies: list[Path] | DependencyResult | None = None,
     fqcn: str = "",
     collection_paths: list[Path] | None = None,
+    strict_dependencies: bool = False,
 ) -> Bundle:
     """Build an executable ZIP bundle for a module.
 
@@ -180,6 +181,7 @@ def build_bundle(
         dependencies: List of dependency paths, DependencyResult, or None to auto-detect
         fqcn: Optional FQCN for the module (used in metadata)
         collection_paths: Optional collection paths for dependency resolution
+        strict_dependencies: If True, raise RuntimeError on unresolved dependencies
 
     Returns:
         Bundle containing the ZIP data and metadata
@@ -188,6 +190,15 @@ def build_bundle(
     if dependencies is None:
         dep_result = find_all_dependencies(module_path, collection_paths)
         dep_list = dep_result.dependencies
+        if dep_result.unresolved:
+            names = [u.import_path for u in dep_result.unresolved]
+            msg = (
+                f"Unresolved module_utils dependencies for "
+                f"{fqcn or module_path.name}: {', '.join(names)}"
+            )
+            if strict_dependencies:
+                raise RuntimeError(msg)
+            logger.warning(msg)
     elif isinstance(dependencies, DependencyResult):
         dep_list = dependencies.dependencies
     else:
@@ -301,6 +312,7 @@ def build_bundle_from_fqcn(
     fqcn: str,
     playbook_dir: Path | None = None,
     extra_paths: list[Path] | None = None,
+    strict_dependencies: bool = False,
 ) -> Bundle:
     """Build a bundle from a FQCN.
 
@@ -310,6 +322,7 @@ def build_bundle_from_fqcn(
         fqcn: Fully qualified collection name
         playbook_dir: Optional playbook directory for collection search
         extra_paths: Optional additional collection paths
+        strict_dependencies: If True, raise RuntimeError on unresolved dependencies
 
     Returns:
         Bundle containing the ZIP data and metadata
@@ -327,6 +340,7 @@ def build_bundle_from_fqcn(
         module_path,
         fqcn=fqcn,
         collection_paths=collection_paths if collection_paths else None,
+        strict_dependencies=strict_dependencies,
     )
 
 
@@ -358,6 +372,7 @@ class BundleCache:
         fqcn: str,
         playbook_dir: Path | None = None,
         extra_paths: list[Path] | None = None,
+        strict_dependencies: bool = False,
     ) -> Bundle:
         """Get a cached bundle or build a new one.
 
@@ -365,6 +380,7 @@ class BundleCache:
             fqcn: Fully qualified collection name
             playbook_dir: Optional playbook directory
             extra_paths: Optional additional collection paths
+            strict_dependencies: If True, raise RuntimeError on unresolved dependencies
 
         Returns:
             Cached or newly built bundle
@@ -374,7 +390,7 @@ class BundleCache:
             return self._bundles[fqcn]
 
         logger.debug(f"Cache miss for {fqcn}, building bundle")
-        bundle = build_bundle_from_fqcn(fqcn, playbook_dir, extra_paths)
+        bundle = build_bundle_from_fqcn(fqcn, playbook_dir, extra_paths, strict_dependencies)
         self.add(bundle)
         return bundle
 
