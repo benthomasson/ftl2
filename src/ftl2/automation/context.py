@@ -259,6 +259,8 @@ class AutomationContext:
         state_file: str | Path | None = ".ftl2-state.json",
         record: str | Path | None = None,
         replay: str | Path | None = None,
+        policy: str | Path | None = None,
+        environment: str = "",
     ):
         """Initialize the automation context.
 
@@ -325,6 +327,13 @@ class AutomationContext:
                 run corresponds to action 0 in the replay log. Use with record=
                 to write a new audit log that includes both replayed and newly
                 executed actions. Default is None (no replay).
+            policy: Path to a YAML policy file. When provided, every module
+                execution is checked against the policy rules before running.
+                A matching deny rule raises PolicyDeniedError. Default is None
+                (no policy enforcement).
+            environment: Environment label for policy matching (e.g., "prod",
+                "staging"). Passed to the policy engine for environment-based
+                rules. Default is "" (empty string).
         """
         self._enabled_modules = modules
         self._inventory = self._load_inventory(inventory)
@@ -362,6 +371,9 @@ class AutomationContext:
             if replay_path.exists():
                 data = json.loads(replay_path.read_text())
                 self._replay_actions = data.get("actions", [])
+        from ftl2.policy import Policy
+        self._policy = Policy.from_file(policy) if policy else Policy.empty()
+        self._environment = environment
         self._event_handlers: dict[str, dict[str, list]] = {}  # host -> event_type -> [handlers]
         self._proxy = ModuleProxy(self)
         self._results: list[ExecuteResult] = []
@@ -404,6 +416,25 @@ class AutomationContext:
                         injections[param_name] = self._bound_secrets[env_var]
 
         return injections
+
+    def _check_policy(self, module_name: str, params: dict[str, Any], host: str = "localhost") -> None:
+        """Check policy before module execution.
+
+        Args:
+            module_name: Name of the module to execute
+            params: Module parameters
+            host: Target host name
+
+        Raises:
+            PolicyDeniedError: If a policy rule denies the action
+        """
+        from ftl2.policy import PolicyDeniedError
+        result = self._policy.evaluate(module_name, params, host, self._environment)
+        if not result.permitted:
+            raise PolicyDeniedError(
+                f"Policy denied {module_name} on {host}: {result.reason}",
+                rule=result.rule,
+            )
 
     @property
     def output_mode(self) -> OutputMode:
@@ -750,6 +781,9 @@ class AutomationContext:
         if secret_injections:
             params = {**secret_injections, **params}  # params can override if explicitly set
 
+        # Check policy before execution
+        self._check_policy(module_name, params)
+
         # Emit start event
         self._emit_event({
             "event": "module_start",
@@ -1069,6 +1103,9 @@ class AutomationContext:
         secret_injections = self._get_secret_bindings_for_module(module_name)
         if secret_injections:
             params = {**secret_injections, **params}
+
+        # Check policy before execution
+        self._check_policy(module_name, params, host.name)
 
         # Emit start event
         self._emit_event({

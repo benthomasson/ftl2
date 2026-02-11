@@ -74,6 +74,8 @@ async def automation(
     state_file: str | None = ".ftl2-state.json",
     record: str | None = None,
     replay: str | None = None,
+    policy: str | None = None,
+    environment: str = "",
 ) -> AsyncGenerator[AutomationContext, None]:
     """Create an automation context for running FTL modules.
 
@@ -142,6 +144,11 @@ async def automation(
                 execution resumes from the first unmatched or failed action.
                 Matching is positional. Use with record= to write a new audit
                 log including both replayed and newly executed actions.
+        policy: Path to a YAML policy file. When provided, every module
+                execution is checked against policy rules before running.
+                A matching deny rule raises PolicyDeniedError.
+        environment: Environment label for policy matching (e.g., "prod",
+                "staging"). Used by policy rules with environment conditions.
 
     Yields:
         AutomationContext with ftl.module_name() access to all modules
@@ -248,6 +255,8 @@ async def automation(
         state_file=state_file,
         record=record,
         replay=replay,
+        policy=policy,
+        environment=environment,
     )
 
     try:
