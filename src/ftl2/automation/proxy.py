@@ -399,6 +399,11 @@ class HostScopedProxy:
             backup_path = f"{dest}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
             await ssh.rename(dest, backup_path)
 
+        # Ensure destination directory exists
+        if changed:
+            dest_dir = str(Path(dest).parent)
+            await ssh.run(f"mkdir -p '{dest_dir}'")
+
         # Write file
         if changed:
             await ssh.write_file(dest, file_content)
