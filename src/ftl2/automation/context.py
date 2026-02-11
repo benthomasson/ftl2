@@ -256,7 +256,7 @@ class AutomationContext:
         modules_file: str | Path = ".ftl2-modules.txt",
         gate_modules: list[str] | str | None = None,
         gate_subsystem: bool = False,
-        state_file: str | Path | None = None,
+        state_file: str | Path | None = ".ftl2-state.json",
         record: str | Path | None = None,
         replay: str | Path | None = None,
     ):
