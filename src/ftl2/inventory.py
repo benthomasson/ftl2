@@ -4,6 +4,9 @@ This module provides typed inventory management with dataclasses, replacing
 dictionary-based inventory structures with strongly-typed classes.
 """
 
+import json
+import os
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -108,13 +111,15 @@ class Inventory:
 
 
 def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> Inventory:
-    """Load inventory from an Ansible-compatible YAML file.
+    """Load inventory from a file, auto-detecting the format.
 
-    Parses YAML inventory and converts to strongly-typed Inventory structure
-    with HostConfig and HostGroup objects.
+    Supports three formats:
+    - Executable scripts: run with --list, parse JSON output
+    - JSON files: Ansible --list format (groups with host lists + _meta.hostvars)
+    - YAML files: Ansible inventory format (groups with host dicts)
 
     Args:
-        inventory_file: Path to YAML inventory file
+        inventory_file: Path to inventory file or executable script
         require_hosts: If True (default), raise ValueError when no hosts are
             loaded. Set to False for provisioning workflows where hosts are
             added dynamically via add_host().
@@ -127,8 +132,39 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
 
     Example:
         >>> inventory = load_inventory("hosts.yml")
-        >>> hosts = inventory.get_all_hosts()
-        >>> web01 = hosts.get("web01")
+        >>> inventory = load_inventory("inventory.json")
+        >>> inventory = load_inventory("./ec2_inventory.py")
+    """
+    path = Path(inventory_file) if isinstance(inventory_file, str) else inventory_file
+
+    # Executable script — run with --list
+    if os.access(path, os.X_OK) and not path.suffix in (".yml", ".yaml", ".json"):
+        return load_inventory_script(path, require_hosts=require_hosts)
+
+    content = path.read_text()
+
+    # JSON — detect by content
+    stripped = content.lstrip()
+    if stripped.startswith("{"):
+        data = json.loads(content)
+        return load_inventory_json(data, require_hosts=require_hosts)
+
+    # YAML — existing format
+    data = yaml.safe_load(content)
+    return _load_inventory_yaml(data, require_hosts=require_hosts)
+
+
+def _load_inventory_yaml(
+    data: dict[str, Any] | None, require_hosts: bool = True
+) -> Inventory:
+    """Load inventory from parsed YAML data.
+
+    Args:
+        data: Parsed YAML inventory data
+        require_hosts: If True (default), raise ValueError when no hosts are loaded.
+
+    Returns:
+        Inventory object with typed groups and hosts
 
     Note:
         Expected structure (groups at top level, NOT nested under 'all'):
@@ -147,11 +183,6 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
         Nested structure like 'all.children.webservers' is NOT supported.
         FTL2 only processes top-level group names.
     """
-    path = Path(inventory_file) if isinstance(inventory_file, str) else inventory_file
-
-    with path.open() as f:
-        data = yaml.safe_load(f.read())
-
     inventory = Inventory()
 
     # Process each group in the inventory (skip if data is None/empty)
@@ -162,36 +193,12 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
 
             group = HostGroup(name=group_name)
 
-            # Process hosts in this group
+            # Process hosts in this group (YAML format: hosts is a dict)
             if "hosts" in group_data and isinstance(group_data["hosts"], dict):
                 for host_name, host_data in group_data["hosts"].items():
                     if not isinstance(host_data, dict):
                         host_data = {}
-
-                    # Standard ansible_ fields that map to HostConfig attributes
-                    standard_fields = {
-                        "ansible_host",
-                        "ansible_port",
-                        "ansible_user",
-                        "ansible_connection",
-                        "ansible_python_interpreter",
-                    }
-
-                    # Create HostConfig from host data
-                    host = HostConfig(
-                        name=host_name,
-                        ansible_host=host_data.get("ansible_host", host_name),
-                        ansible_port=host_data.get("ansible_port", 22),
-                        ansible_user=host_data.get("ansible_user", ""),
-                        ansible_connection=host_data.get("ansible_connection", "ssh"),
-                        ansible_python_interpreter=host_data.get(
-                            "ansible_python_interpreter", "python3"
-                        ),
-                        # Put all other fields (including ansible_password) into vars
-                        vars={k: v for k, v in host_data.items() if k not in standard_fields},
-                    )
-
-                    group.add_host(host)
+                    group.add_host(_host_from_vars(host_name, host_data))
 
             # Process group vars
             if "vars" in group_data and isinstance(group_data["vars"], dict):
@@ -210,6 +217,150 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
         raise ValueError("No hosts loaded from inventory")
 
     return inventory
+
+
+def _host_from_vars(host_name: str, host_data: dict[str, Any]) -> HostConfig:
+    """Create a HostConfig from a host variables dictionary.
+
+    Args:
+        host_name: The host name
+        host_data: Dictionary of host variables (ansible_host, ansible_port, etc.)
+
+    Returns:
+        HostConfig with standard fields extracted and remainder in vars
+    """
+    standard_fields = {
+        "ansible_host",
+        "ansible_port",
+        "ansible_user",
+        "ansible_connection",
+        "ansible_python_interpreter",
+    }
+
+    return HostConfig(
+        name=host_name,
+        ansible_host=host_data.get("ansible_host", host_name),
+        ansible_port=host_data.get("ansible_port", 22),
+        ansible_user=host_data.get("ansible_user", ""),
+        ansible_connection=host_data.get("ansible_connection", "ssh"),
+        ansible_python_interpreter=host_data.get(
+            "ansible_python_interpreter", "python3"
+        ),
+        vars={k: v for k, v in host_data.items() if k not in standard_fields},
+    )
+
+
+def load_inventory_json(data: dict[str, Any], require_hosts: bool = True) -> Inventory:
+    """Load inventory from Ansible JSON inventory format.
+
+    Parses the JSON format produced by `ansible-inventory --list` and
+    dynamic inventory scripts.
+
+    Args:
+        data: Parsed JSON inventory data
+        require_hosts: If True (default), raise ValueError when no hosts are
+            loaded. Set to False for provisioning workflows.
+
+    Returns:
+        Inventory object with typed groups and hosts
+
+    Raises:
+        ValueError: If require_hosts is True and no hosts are loaded
+
+    Example:
+        >>> data = {
+        ...     "webservers": {"hosts": ["web01"]},
+        ...     "_meta": {"hostvars": {"web01": {"ansible_host": "10.0.0.1"}}}
+        ... }
+        >>> inventory = load_inventory_json(data)
+
+    Note:
+        Expected format (Ansible --list output):
+
+            {
+              "webservers": {"hosts": ["web01", "web02"]},
+              "databases": {"hosts": ["db01"], "vars": {"db_port": 5432}},
+              "_meta": {
+                "hostvars": {
+                  "web01": {"ansible_host": "10.0.0.1"},
+                  "web02": {"ansible_host": "10.0.0.2"},
+                  "db01": {"ansible_host": "10.0.0.3"}
+                }
+              }
+            }
+    """
+    hostvars = data.get("_meta", {}).get("hostvars", {})
+    inventory = Inventory()
+
+    for group_name, group_data in data.items():
+        if group_name == "_meta":
+            continue
+
+        if not isinstance(group_data, dict):
+            continue
+
+        group = HostGroup(name=group_name)
+
+        # JSON format uses hosts as a list of names (not a dict like YAML)
+        hosts_list = group_data.get("hosts", [])
+        if isinstance(hosts_list, list):
+            for host_name in hosts_list:
+                host_data = hostvars.get(host_name, {})
+                if not isinstance(host_data, dict):
+                    host_data = {}
+                group.add_host(_host_from_vars(host_name, host_data))
+
+        # Group vars
+        if "vars" in group_data and isinstance(group_data["vars"], dict):
+            group.vars = group_data["vars"]
+
+        # Children
+        if "children" in group_data:
+            if isinstance(group_data["children"], list):
+                group.children = group_data["children"]
+            elif isinstance(group_data["children"], dict):
+                group.children = list(group_data["children"].keys())
+
+        inventory.add_group(group)
+
+    if require_hosts and not inventory.get_all_hosts():
+        raise ValueError("No hosts loaded from inventory")
+
+    return inventory
+
+
+def load_inventory_script(
+    script_path: str | Path, require_hosts: bool = True
+) -> Inventory:
+    """Run an inventory script and load its JSON output.
+
+    Executes the script with --list and parses the resulting JSON into
+    an Inventory object.
+
+    Args:
+        script_path: Path to an executable inventory script
+        require_hosts: If True (default), raise ValueError when no hosts are
+            loaded.
+
+    Returns:
+        Inventory object with typed groups and hosts
+
+    Raises:
+        ValueError: If require_hosts is True and no hosts are loaded
+        subprocess.CalledProcessError: If the script exits with a non-zero status
+
+    Example:
+        >>> inventory = load_inventory_script("./ec2_inventory.py")
+    """
+    path = Path(script_path)
+    result = subprocess.run(
+        [str(path), "--list"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    data = json.loads(result.stdout)
+    return load_inventory_json(data, require_hosts=require_hosts)
 
 
 def load_localhost(interpreter: str | None = None) -> Inventory:
