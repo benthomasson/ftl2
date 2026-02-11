@@ -328,7 +328,7 @@ class HostScopedProxy:
 
         # Read local file content
         if src:
-            src_path = Path(src)
+            src_path = Path(src).expanduser()
             if not src_path.is_absolute():
                 src_path = Path.cwd() / src_path
 
