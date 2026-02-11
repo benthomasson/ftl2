@@ -412,10 +412,22 @@ class HostScopedProxy:
                 await ssh.chmod(dest, mode_int)
                 changed = True
 
-        # Set ownership
+        # Set ownership (check current owner/group before changing)
         if owner or group:
-            await ssh.chown(dest, owner, group)
-            changed = True
+            stdout, _, _ = await ssh.run(f"stat -c '%U %G' {dest}")
+            parts = stdout.strip().split()
+            if len(parts) == 2:
+                current_owner, current_group = parts
+                needs_owner = owner and current_owner != owner
+                needs_group = group and current_group != group
+                if needs_owner or needs_group:
+                    await ssh.chown(dest, owner if needs_owner else None,
+                                    group if needs_group else None)
+                    changed = True
+            else:
+                # Can't determine current ownership, set unconditionally
+                await ssh.chown(dest, owner, group)
+                changed = True
 
         result = {
             "changed": changed,
