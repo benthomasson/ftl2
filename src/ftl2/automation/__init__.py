@@ -71,7 +71,7 @@ async def automation(
     modules_file: str = ".ftl2-modules.txt",
     gate_modules: "list[str] | str | None" = None,
     gate_subsystem: bool = False,
-    state_file: str | None = None,
+    state_file: str | None = ".ftl2-state.json",
     record: str | None = None,
     replay: str | None = None,
 ) -> AsyncGenerator[AutomationContext, None]:
@@ -132,7 +132,8 @@ async def automation(
         state_file: Path to state file for persistent host/resource tracking.
                    When enabled, add_host() persists to state file immediately,
                    and hosts are loaded from state on context enter. Enables
-                   crash recovery and idempotent provisioning. Default is None.
+                   crash recovery and idempotent provisioning. Default is
+                   ".ftl2-state.json". Pass None to disable.
         record: Path to JSON file for recording all actions as an audit
                 trail. Written on context exit with timestamps, durations,
                 parameters (excluding secrets), and results. Default is None.
