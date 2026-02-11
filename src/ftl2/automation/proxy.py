@@ -9,6 +9,7 @@ Supports both simple modules and FQCN (Fully Qualified Collection Name):
 """
 
 import asyncio
+import time
 from typing import Any, Callable, TYPE_CHECKING
 
 from ftl2.module_loading.excluded import get_excluded
@@ -86,7 +87,6 @@ class HostScopedProxy:
             await ftl.minecraft_9.dnf(name="java-17-openjdk")
         """
         import asyncio
-        import time
 
         # Initial delay before first check
         if delay > 0:
@@ -249,6 +249,36 @@ class HostScopedProxy:
         except KeyError:
             return []
 
+    def _track_result(
+        self,
+        module_name: str,
+        result: dict[str, Any],
+        start_time: float,
+        params: dict[str, Any] | None = None,
+    ) -> None:
+        """Register a native method result in the audit/summary pipeline."""
+        from ftl2.ftl_modules.executor import ExecuteResult
+
+        duration = time.time() - start_time
+        exec_result = ExecuteResult(
+            success=not result.get("failed", False),
+            changed=result.get("changed", False),
+            output=result,
+            module=module_name,
+            host=self._target or "localhost",
+            used_ftl=True,
+            duration=duration,
+            timestamp=start_time,
+        )
+        if params is not None:
+            exec_result.params = params
+        self._context._results.append(exec_result)
+
+        if self._context.verbose and not self._context.quiet:
+            self._context._log_result(
+                f"{self._target}:{module_name}", exec_result, duration
+            )
+
     async def copy(
         self,
         src: str | None = None,
@@ -287,6 +317,8 @@ class HostScopedProxy:
         """
         from pathlib import Path
         from datetime import datetime
+
+        start_time = time.time()
 
         if not dest:
             raise ValueError("dest is required")
@@ -341,6 +373,7 @@ class HostScopedProxy:
             }
             if backup_path:
                 result["backup"] = backup_path
+            self._track_result("copy", result, start_time)
             return result
 
         # Remote execution via SFTP
@@ -391,6 +424,7 @@ class HostScopedProxy:
         }
         if backup_path:
             result["backup"] = backup_path
+        self._track_result("copy", result, start_time)
         return result
 
     async def template(
@@ -495,6 +529,8 @@ class HostScopedProxy:
         """
         from pathlib import Path
 
+        start_time = time.time()
+
         # For localhost, just copy locally
         if self._target in ("local", "localhost"):
             src_path = Path(src)
@@ -510,11 +546,13 @@ class HostScopedProxy:
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             dest_path.write_bytes(content)
 
-            return {
+            result = {
                 "changed": True,
                 "dest": str(dest_path),
                 "src": src,
             }
+            self._track_result("fetch", result, start_time)
+            return result
 
         # Remote fetch via SFTP
         host_configs = await self._get_host_configs()
@@ -538,11 +576,13 @@ class HostScopedProxy:
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         dest_path.write_bytes(content)
 
-        return {
+        result = {
             "changed": True,
             "dest": str(dest_path),
             "src": src,
         }
+        self._track_result("fetch", result, start_time)
+        return result
 
     async def shell(
         self,
@@ -591,7 +631,8 @@ class HostScopedProxy:
         """
         import shlex
         import subprocess
-        import time
+
+        start_time = time.time()
 
         # For localhost, execute locally
         if self._target in ("local", "localhost"):
@@ -599,7 +640,7 @@ class HostScopedProxy:
             from pathlib import Path
 
             if creates and Path(creates).exists():
-                return {
+                result = {
                     "changed": False,
                     "stdout": "",
                     "stderr": "",
@@ -607,9 +648,11 @@ class HostScopedProxy:
                     "cmd": cmd,
                     "msg": f"skipped, since {creates} exists",
                 }
+                self._track_result("shell", result, start_time)
+                return result
 
             if removes and not Path(removes).exists():
-                return {
+                result = {
                     "changed": False,
                     "stdout": "",
                     "stderr": "",
@@ -617,28 +660,30 @@ class HostScopedProxy:
                     "cmd": cmd,
                     "msg": f"skipped, since {removes} does not exist",
                 }
+                self._track_result("shell", result, start_time)
+                return result
 
             # Build and execute locally
-            start_time = time.time()
-            result = subprocess.run(
+            proc = subprocess.run(
                 [executable, "-c", cmd],
                 cwd=chdir,
                 input=stdin,
                 capture_output=True,
                 text=True,
             )
-            end_time = time.time()
 
-            return {
+            result = {
                 "changed": True,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "rc": result.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+                "rc": proc.returncode,
                 "cmd": cmd,
-                "delta": end_time - start_time,
-                "stdout_lines": result.stdout.splitlines(),
-                "stderr_lines": result.stderr.splitlines(),
+                "delta": time.time() - start_time,
+                "stdout_lines": proc.stdout.splitlines(),
+                "stderr_lines": proc.stderr.splitlines(),
             }
+            self._track_result("shell", result, start_time)
+            return result
 
         # Remote execution via SSH
         host_configs = await self._get_host_configs()
@@ -652,7 +697,7 @@ class HostScopedProxy:
         if creates:
             exists = await ssh.path_exists(creates)
             if exists:
-                return {
+                result = {
                     "changed": False,
                     "stdout": "",
                     "stderr": "",
@@ -660,11 +705,13 @@ class HostScopedProxy:
                     "cmd": cmd,
                     "msg": f"skipped, since {creates} exists",
                 }
+                self._track_result("shell", result, start_time)
+                return result
 
         if removes:
             exists = await ssh.path_exists(removes)
             if not exists:
-                return {
+                result = {
                     "changed": False,
                     "stdout": "",
                     "stderr": "",
@@ -672,6 +719,8 @@ class HostScopedProxy:
                     "cmd": cmd,
                     "msg": f"skipped, since {removes} does not exist",
                 }
+                self._track_result("shell", result, start_time)
+                return result
 
         # Build shell command: executable -c 'cmd'
         # Handle chdir by prefixing with cd
@@ -683,7 +732,7 @@ class HostScopedProxy:
         # Execute via SSH
         stdout, stderr, rc = await ssh.run(full_cmd, stdin=stdin or "")
 
-        return {
+        result = {
             "changed": True,
             "stdout": stdout,
             "stderr": stderr,
@@ -692,6 +741,8 @@ class HostScopedProxy:
             "stdout_lines": stdout.splitlines(),
             "stderr_lines": stderr.splitlines(),
         }
+        self._track_result("shell", result, start_time)
+        return result
 
     async def watch(self, path: str) -> dict[str, Any]:
         """Watch a file or directory for changes on the remote host.
