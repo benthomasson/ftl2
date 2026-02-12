@@ -58,7 +58,7 @@ class ExecuteResult:
         used_ftl: bool = True,
     ) -> "ExecuteResult":
         """Create result from module output dict."""
-        failed = output.get("failed", False)
+        failed = output.get("failed", False) or output.get("rc", 0) != 0
         return cls(
             success=not failed,
             changed=output.get("changed", False),
