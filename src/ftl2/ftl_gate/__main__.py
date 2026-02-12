@@ -244,7 +244,7 @@ async def check_output(
     cmd: str,
     env: dict[str, str] | None = None,
     stdin: bytes | None = None,
-) -> tuple[bytes, bytes]:
+) -> tuple[bytes, bytes, int]:
     """Execute a shell command asynchronously and capture its output.
 
     Args:
@@ -253,7 +253,7 @@ async def check_output(
         stdin: Optional bytes data to send to process stdin
 
     Returns:
-        Tuple of (stdout, stderr) as bytes
+        Tuple of (stdout, stderr, returncode) as (bytes, bytes, int)
     """
     logger.debug(f"check_output: {cmd}")
     proc = await asyncio.create_subprocess_shell(
@@ -266,7 +266,7 @@ async def check_output(
 
     stdout, stderr = await proc.communicate(stdin)
     logger.debug(f"check_output complete: rc={proc.returncode}")
-    return stdout, stderr
+    return stdout, stderr, proc.returncode
 
 
 # =============================================================================
@@ -342,7 +342,7 @@ async def execute_module(
                 f.write(module_bytes)
             # Bundles expect JSON args on stdin (like new-style modules)
             stdin_data = json.dumps({"ANSIBLE_MODULE_ARGS": module_args or {}}).encode()
-            stdout, stderr = await check_output(
+            stdout, stderr, rc = await check_output(
                 f"{sys.executable} {bundle_file}",
                 stdin=stdin_data,
                 env=env,
@@ -354,13 +354,13 @@ async def execute_module(
             with open(args_file, "w") as f:
                 json.dump(module_args or {}, f)
             os.chmod(module_file, stat.S_IEXEC | stat.S_IREAD)
-            stdout, stderr = await check_output(f"{module_file} {args_file}")
+            stdout, stderr, rc = await check_output(f"{module_file} {args_file}")
 
         elif is_ftl_module(module_bytes):
             # FTL modules: raw JSON args on stdin, JSON result on stdout
             logger.info("Detected FTL module")
             stdin_data = json.dumps(module_args or {}).encode()
-            stdout, stderr = await check_output(
+            stdout, stderr, rc = await check_output(
                 f"{sys.executable} {module_file}",
                 stdin=stdin_data,
                 env=env,
@@ -369,7 +369,7 @@ async def execute_module(
         elif is_new_style_module(module_bytes):
             logger.info("Detected new-style module (AnsibleModule)")
             stdin_data = json.dumps({"ANSIBLE_MODULE_ARGS": module_args or {}}).encode()
-            stdout, stderr = await check_output(
+            stdout, stderr, rc = await check_output(
                 f"{sys.executable} {module_file}",
                 stdin=stdin_data,
                 env=env,
@@ -380,7 +380,7 @@ async def execute_module(
             args_file = os.path.join(tempdir, "args")
             with open(args_file, "w") as f:
                 json.dump(module_args or {}, f)
-            stdout, stderr = await check_output(
+            stdout, stderr, rc = await check_output(
                 f"{sys.executable} {module_file} {args_file}",
                 env=env,
             )
@@ -393,20 +393,34 @@ async def execute_module(
                     f.write(" ".join(f"{k}={v}" for k, v in module_args.items()))
                 else:
                     f.write("")
-            stdout, stderr = await check_output(
+            stdout, stderr, rc = await check_output(
                 f"{sys.executable} {module_file} {args_file}",
                 env=env,
             )
+
+        # Parse module JSON output to extract structured result fields
+        stdout_str = stdout.decode(errors="replace")
+        stderr_str = stderr.decode(errors="replace")
+        result = {
+            "stdout": stdout_str,
+            "stderr": stderr_str,
+            "rc": rc,
+        }
+        # Ansible modules write JSON to stdout; extract fields like
+        # changed, failed, msg, rc so the runner can handle them properly
+        try:
+            module_output = json.loads(stdout_str)
+            if isinstance(module_output, dict):
+                result.update(module_output)
+        except (json.JSONDecodeError, ValueError):
+            pass
 
         # Send result
         logger.info("Sending ModuleResult")
         await protocol.send_message(
             writer,
             "ModuleResult",
-            {
-                "stdout": stdout.decode(errors="replace"),
-                "stderr": stderr.decode(errors="replace"),
-            },
+            result,
         )
 
     finally:
