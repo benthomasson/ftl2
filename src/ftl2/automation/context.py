@@ -72,11 +72,13 @@ class SecretsProxy:
         ftl.secrets.keys()                # List secret names (not values)
     """
 
-    def __init__(self, secret_names: list[str]):
-        """Initialize secrets from environment variables.
+    def __init__(self, secret_names: list[str], vault_secrets: dict[str, str] | None = None):
+        """Initialize secrets from environment variables and optionally Vault.
 
         Args:
             secret_names: List of environment variable names to load
+            vault_secrets: Optional mapping of {name: "path#field"} to read from
+                HashiCorp Vault KV v2. Requires VAULT_ADDR and VAULT_TOKEN env vars.
         """
         self._secrets: dict[str, str | None] = {}
         self._loaded_names: set[str] = set()
@@ -85,6 +87,13 @@ class SecretsProxy:
             value = os.environ.get(name)
             self._secrets[name] = value
             if value is not None:
+                self._loaded_names.add(name)
+
+        if vault_secrets:
+            from ftl2.vault import read_vault_secrets
+            resolved = read_vault_secrets(vault_secrets)
+            for name, value in resolved.items():
+                self._secrets[name] = value
                 self._loaded_names.add(name)
 
     def __getitem__(self, key: str) -> str:
@@ -259,6 +268,7 @@ class AutomationContext:
         state_file: str | Path | None = ".ftl2-state.json",
         record: str | Path | None = None,
         replay: str | Path | None = None,
+        vault_secrets: dict[str, str] | None = None,
         policy: str | Path | None = None,
         environment: str = "",
     ):
@@ -283,6 +293,11 @@ class AutomationContext:
                         "community.general.slack": {"token": "SLACK_TOKEN"},
                         "amazon.aws.*": {"aws_access_key_id": "AWS_KEY"},
                     }
+            vault_secrets: Mapping of secret names to Vault KV v2 references
+                in "path#field" format. Secrets are read from Vault at startup
+                and accessible via ftl.secrets["NAME"]. Requires VAULT_ADDR
+                and VAULT_TOKEN environment variables. Example:
+                    vault_secrets={"DB_PW": "myapp#db_password"}
             check_mode: Enable dry-run mode (modules report what would change)
             verbose: Enable verbose output for debugging
             quiet: Suppress all output (overrides verbose)
@@ -344,7 +359,7 @@ class AutomationContext:
             from ftl2.state import State, merge_state_into_inventory
             self._state = State(state_file)
             merge_state_into_inventory(self._state, self._inventory)
-        self._secrets_proxy = SecretsProxy(secrets or [])
+        self._secrets_proxy = SecretsProxy(secrets or [], vault_secrets=vault_secrets)
         self._secret_bindings = secret_bindings or {}
         self._load_bound_secrets()
         self.check_mode = check_mode
@@ -383,17 +398,20 @@ class AutomationContext:
         self._start_time: float | None = None
 
     def _load_bound_secrets(self) -> None:
-        """Load all secrets referenced in secret_bindings from environment."""
+        """Load all secrets referenced in secret_bindings from environment or Vault."""
         env_vars_needed: set[str] = set()
         for bindings in self._secret_bindings.values():
             env_vars_needed.update(bindings.values())
 
-        # Load these secrets (they won't be in self._secrets_proxy yet)
+        # Load these secrets — check vault-sourced secrets first, then env
         self._bound_secrets: dict[str, str] = {}
         for env_var in env_vars_needed:
-            value = os.environ.get(env_var)
-            if value is not None:
-                self._bound_secrets[env_var] = value
+            if env_var in self._secrets_proxy:
+                self._bound_secrets[env_var] = self._secrets_proxy[env_var]
+            else:
+                value = os.environ.get(env_var)
+                if value is not None:
+                    self._bound_secrets[env_var] = value
 
     def _get_secret_bindings_for_module(self, module_name: str) -> dict[str, str]:
         """Get secret bindings that apply to a module.

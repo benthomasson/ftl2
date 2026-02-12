@@ -74,6 +74,7 @@ async def automation(
     state_file: str | None = ".ftl2-state.json",
     record: str | None = None,
     replay: str | None = None,
+    vault_secrets: dict[str, str] | None = None,
     policy: str | None = None,
     environment: str = "",
 ) -> AsyncGenerator[AutomationContext, None]:
@@ -144,6 +145,12 @@ async def automation(
                 execution resumes from the first unmatched or failed action.
                 Matching is positional. Use with record= to write a new audit
                 log including both replayed and newly executed actions.
+        vault_secrets: Mapping of secret names to HashiCorp Vault KV v2
+                references in "path#field" format. Secrets are read from Vault
+                at startup and accessible via ftl.secrets["NAME"]. Requires
+                VAULT_ADDR and VAULT_TOKEN environment variables. Example:
+                    vault_secrets={"DB_PW": "myapp#db_password"}
+                Can also be referenced in secret_bindings for auto-injection.
         policy: Path to a YAML policy file. When provided, every module
                 execution is checked against policy rules before running.
                 A matching deny rule raises PolicyDeniedError.
@@ -255,6 +262,7 @@ async def automation(
         state_file=state_file,
         record=record,
         replay=replay,
+        vault_secrets=vault_secrets,
         policy=policy,
         environment=environment,
     )
