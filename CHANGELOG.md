@@ -47,3 +47,11 @@ State file (`.ftl2-state.json`) tracks dynamically provisioned hosts and resourc
 ## Policy Engine (Feb 11)
 
 YAML-based rules evaluated before every module execution. Match conditions: `module` (fnmatch), `host`, `environment`, `param.<name>`. First matching deny rule raises `PolicyDeniedError`. Integrated into both `execute()` (local) and `_execute_on_host()` (remote). `Policy.empty()` for backward compatibility.
+
+## JSON Inventory & Inventory Scripts (Feb 11)
+
+`load_inventory()` auto-detects format: executable scripts (run with `--list`), JSON (Ansible `ansible-inventory --list` format with `_meta.hostvars`), or YAML. Enables dynamic inventory from cloud providers without reimplementing inventory plugins — just shell out to `ansible-inventory` and pass the JSON to FTL2.
+
+## Vault Secrets (Feb 11)
+
+HashiCorp Vault KV v2 support via `vault_secrets` parameter. Maps names to `path#field` references, resolved at context startup, accessible via `ftl.secrets["NAME"]` alongside env var secrets. Uses standard `VAULT_ADDR`/`VAULT_TOKEN` env vars. Reads grouped by path to minimize API calls. `hvac` is an optional dependency (`pip install ftl2[vault]`). Works with `secret_bindings` for auto-injection of vault-sourced credentials.

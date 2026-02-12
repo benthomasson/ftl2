@@ -41,6 +41,7 @@ await ftl.db.community.postgresql.postgresql_db(name="myapp", state="present")
 
 ## Features
 
+- **Vault secrets** — pull secrets from HashiCorp Vault KV v2 with `vault_secrets={"DB_PW": "myapp#db_password"}`
 - **Secret bindings** — inject API tokens into modules automatically, never visible in code or logs
 - **State tracking** — `.ftl2-state.json` for idempotent provisioning with crash recovery
 - **Policy engine** — YAML-based rules to restrict what actions can be taken per module, host, or environment
@@ -60,6 +61,9 @@ async with automation(
         "uri": {"bearer_token": "API_TOKEN"},
     },
     state_file=".ftl2-state.json",
+    vault_secrets={
+        "DB_PASSWORD": "myapp#db_password",
+    },
     policy="policy.yml",
     environment="prod",
     gate_modules="auto",
@@ -95,6 +99,25 @@ async with automation(policy="policy.yml", environment="prod") as ftl:
     await ftl.file(path="/tmp/test", state="absent")
     # Raises PolicyDeniedError: No destructive actions on production hosts
 ```
+
+## Vault Secrets
+
+Pull secrets from HashiCorp Vault instead of environment variables:
+
+```python
+async with automation(
+    vault_secrets={
+        "DB_PASSWORD": "myapp#db_password",
+        "API_KEY": "myapp#api_key",
+    },
+    secret_bindings={
+        "community.general.slack": {"token": "SLACK_TOKEN"},
+    },
+) as ftl:
+    pw = ftl.secrets["DB_PASSWORD"]  # from Vault
+```
+
+Uses standard `VAULT_ADDR` and `VAULT_TOKEN` env vars. Install with `pip install ftl2[vault]`.
 
 ## Dynamic Provisioning
 
