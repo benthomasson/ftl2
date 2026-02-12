@@ -554,7 +554,7 @@ class RemoteModuleRunner(ModuleRunner):
             self.gate_cache[host.name] = gate
 
             # Convert to ModuleResult
-            success = result_data.get("rc", 0) == 0
+            success = result_data.get("rc", 0) == 0 and not result_data.get("failed", False)
             return ModuleResult(
                 host_name=host.name,
                 success=success,

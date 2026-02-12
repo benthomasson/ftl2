@@ -1328,7 +1328,7 @@ class AutomationContext:
             self._remote_runner.gate_cache[host.name] = gate
 
         # Convert to ExecuteResult
-        failed = result_data.get("failed", False)
+        failed = result_data.get("failed", False) or result_data.get("rc", 0) != 0
         return ExecuteResult(
             success=not failed,
             changed=result_data.get("changed", False),
