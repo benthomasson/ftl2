@@ -105,7 +105,7 @@ class RemoteHost(Protocol):
         self,
         command: str,
         stdin: str = "",
-        timeout: int = 300,
+        timeout: int = 3600,
     ) -> tuple[str, str, int]:
         """Run a command on the remote host.
 

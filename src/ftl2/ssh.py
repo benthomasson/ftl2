@@ -163,14 +163,14 @@ class SSHHost:
         self,
         command: str,
         stdin: str = "",
-        timeout: int = 300,
+        timeout: int = 3600,
     ) -> tuple[str, str, int]:
         """Run a command on the remote host.
 
         Args:
             command: Command to execute
             stdin: Input to send to command's stdin
-            timeout: Command timeout in seconds
+            timeout: Command timeout in seconds (default: 1 hour)
 
         Returns:
             Tuple of (stdout, stderr, return_code)
@@ -204,7 +204,7 @@ class SSHHost:
         self,
         command: str,
         stdin: str = "",
-        timeout: int = 300,
+        timeout: int = 3600,
         event_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[str, str, int, list[dict[str, Any]]]:
         """Run a command with real-time event streaming.

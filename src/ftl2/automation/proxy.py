@@ -609,6 +609,7 @@ class HostScopedProxy:
         removes: str | None = None,
         executable: str = "/bin/sh",
         stdin: str | None = None,
+        timeout: int | None = None,
     ) -> dict[str, Any]:
         """Execute a command through a shell.
 
@@ -623,6 +624,7 @@ class HostScopedProxy:
             removes: If this path does NOT exist, skip execution (for idempotency)
             executable: Shell to use (default: /bin/sh). Use /bin/bash for bash features.
             stdin: Data to send to the command's stdin
+            timeout: Command timeout in seconds (default: 3600). Override for long-running commands.
 
         Returns:
             dict with 'changed', 'stdout', 'stderr', 'rc', 'cmd'
@@ -747,7 +749,10 @@ class HostScopedProxy:
             full_cmd = f"{executable} -c {shlex.quote(cmd)}"
 
         # Execute via SSH
-        stdout, stderr, rc = await ssh.run(full_cmd, stdin=stdin or "")
+        run_kwargs: dict[str, Any] = {"stdin": stdin or ""}
+        if timeout is not None:
+            run_kwargs["timeout"] = timeout
+        stdout, stderr, rc = await ssh.run(full_cmd, **run_kwargs)
 
         result = {
             "changed": True,

@@ -655,6 +655,7 @@ class RemoteModuleRunner(ModuleRunner):
                     "username": ssh_user,
                     "known_hosts": None,
                     "connect_timeout": 30,  # 30 seconds per attempt
+                    "keepalive_interval": 30,  # prevent firewall/NAT drops during long operations
                 }
                 # Add authentication method
                 if ssh_password:
