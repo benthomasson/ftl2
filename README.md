@@ -30,7 +30,7 @@ asyncio.run(main())
 
 ## What It Does
 
-FTL2 runs Ansible modules directly from Python without YAML, Jinja2, or the `ansible-playbook` runtime. Modules execute in-process instead of as subprocesses, which is where the speed comes from.
+FTL2 runs Ansible modules directly from Python without YAML, Jinja2, or the `ansible-playbook` runtime. Common modules (file, copy, shell, command, etc.) have native implementations that execute in-process. Ansible collection modules fall back to subprocess execution. For remote hosts, modules are pre-built into a gate package once, then only JSON parameters are sent over SSH on each call — no re-uploading module code per task. Concurrency uses asyncio instead of Ansible's fork-based parallelism.
 
 ```python
 # Any Ansible module works — same names, same parameters
