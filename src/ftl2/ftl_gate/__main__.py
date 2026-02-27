@@ -25,6 +25,7 @@ import base64
 import json
 import logging
 import os
+from pathlib import Path
 import shutil
 import stat
 import sys
@@ -859,9 +860,11 @@ async def main(args: list[str]) -> int | None:
         Exit code: None for normal shutdown, 1 for error
     """
     # Set up logging
+    gate_log = Path.home() / ".ftl" / "gate.log"
+    gate_log.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         format="%(asctime)s - %(message)s",
-        filename="/tmp/ftl2_gate.log",
+        filename=str(gate_log),
         level=logging.DEBUG,
     )
 
