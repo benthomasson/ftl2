@@ -581,6 +581,7 @@ class AutomationContext:
         ansible_host: str | None = None,
         ansible_user: str | None = None,
         ansible_port: int = 22,
+        ansible_python_interpreter: str = "python3",
         groups: list[str] | None = None,
         **vars: Any,
     ) -> HostConfig:
@@ -595,6 +596,8 @@ class AutomationContext:
                          Defaults to hostname if not specified.
             ansible_user: SSH username for the connection
             ansible_port: SSH port (default 22)
+            ansible_python_interpreter: Python interpreter path on the
+                         target host (default "python3")
             groups: List of group names to add this host to.
                    Groups are created if they don't exist.
             **vars: Additional host variables
@@ -624,6 +627,7 @@ class AutomationContext:
             ansible_host=ansible_host or hostname,
             ansible_port=ansible_port,
             ansible_user=ansible_user or "",
+            ansible_python_interpreter=ansible_python_interpreter,
             ansible_connection="ssh",
             vars=vars,
         )

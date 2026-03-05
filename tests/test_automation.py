@@ -515,6 +515,7 @@ class TestAddHost:
             ansible_host="192.168.1.20",
             ansible_user="admin",
             ansible_port=2222,
+            ansible_python_interpreter="/usr/bin/python3.11",
             groups=["databases", "production"],
             db_type="postgres",
         )
@@ -523,6 +524,7 @@ class TestAddHost:
         assert host.ansible_host == "192.168.1.20"
         assert host.ansible_user == "admin"
         assert host.ansible_port == 2222
+        assert host.ansible_python_interpreter == "/usr/bin/python3.11"
         assert host.vars.get("db_type") == "postgres"
         assert "db01" in context.hosts
         assert "databases" in context.hosts

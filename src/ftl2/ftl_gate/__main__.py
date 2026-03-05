@@ -20,6 +20,8 @@ Supports multiple module types:
 - FTL modules: Native async Python modules with main() function
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import json

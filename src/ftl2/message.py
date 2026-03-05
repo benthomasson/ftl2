@@ -7,6 +7,8 @@ Protocol format: [8-byte hex length][JSON message body]
 Example: "0000001a" + ["Hello", {}]
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
