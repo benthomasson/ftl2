@@ -582,6 +582,7 @@ class AutomationContext:
         ansible_user: str | None = None,
         ansible_port: int = 22,
         ansible_python_interpreter: str = "python3",
+        ansible_password: str | None = None,
         groups: list[str] | None = None,
         **vars: Any,
     ) -> HostConfig:
@@ -598,6 +599,8 @@ class AutomationContext:
             ansible_port: SSH port (default 22)
             ansible_python_interpreter: Python interpreter path on the
                          target host (default "python3")
+            ansible_password: SSH password for password-based authentication.
+                         Useful for container-based test environments.
             groups: List of group names to add this host to.
                    Groups are created if they don't exist.
             **vars: Additional host variables
@@ -621,6 +624,10 @@ class AutomationContext:
             await ftl.run_on("web01", "dnf", name="nginx", state="present")
             await ftl.run_on("webservers", "service", name="nginx", state="started")
         """
+        # Store ansible_password in vars where SSH code expects it
+        if ansible_password is not None:
+            vars = {**vars, "ansible_password": ansible_password}
+
         # Create the host config
         host = HostConfig(
             name=hostname,
@@ -1360,12 +1367,7 @@ class AutomationContext:
         if self._remote_runner is None:
             raise RuntimeError("RemoteModuleRunner not initialized")
 
-        # Check cache first
-        if host.name in self._remote_runner.gate_cache:
-            gate = self._remote_runner.gate_cache.pop(host.name)
-            return gate
-
-        # Create new gate
+        # Determine interpreter first (needed for cache check)
         ssh_host = host.ansible_host or host.name
         ssh_port = host.ansible_port or 22
         ssh_user = host.ansible_user or getuser()
@@ -1378,6 +1380,16 @@ class AutomationContext:
             interpreter = host.ansible_python_interpreter or sys.executable
         else:
             interpreter = host.ansible_python_interpreter or "/usr/bin/python3"
+
+        # Check cache — verify interpreter matches
+        if host.name in self._remote_runner.gate_cache:
+            gate = self._remote_runner.gate_cache[host.name]
+            if gate.interpreter == interpreter:
+                self._remote_runner.gate_cache.pop(host.name)
+                return gate
+            else:
+                self._remote_runner.gate_cache.pop(host.name)
+                await self._remote_runner._close_gate(gate)
 
         context = ExecutionContext(
             execution_config=ExecutionConfig(

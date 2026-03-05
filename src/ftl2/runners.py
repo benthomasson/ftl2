@@ -103,6 +103,7 @@ class Gate:
     conn: SSHClientConnection
     gate_process: "SSHClientProcess[Any]"
     temp_dir: str
+    interpreter: str = "python3"
 
 
 class ModuleRunner(ABC):
@@ -598,10 +599,15 @@ class RemoteModuleRunner(ModuleRunner):
         """
         # Check cache first
         if host_name in self.gate_cache:
-            logger.debug(f"Reusing cached gate for {host_name}")
             gate = self.gate_cache[host_name]
-            del self.gate_cache[host_name]  # Remove from cache to use
-            return gate
+            if gate.interpreter == interpreter:
+                logger.debug(f"Reusing cached gate for {host_name}")
+                del self.gate_cache[host_name]  # Remove from cache to use
+                return gate
+            else:
+                logger.info(f"Interpreter changed for {host_name} ({gate.interpreter} -> {interpreter}), creating new gate")
+                del self.gate_cache[host_name]
+                await self._close_gate(gate)
 
         # Create new gate connection
         logger.info(f"Creating new gate for {host_name}")
@@ -696,7 +702,7 @@ class RemoteModuleRunner(ModuleRunner):
                 gate_process, remote_gate_hash, used_subsystem = await self._open_gate(conn, gate_file, interpreter)
 
                 logger.info(f"Connected to {ssh_host}:{ssh_port} successfully")
-                return Gate(conn, gate_process, temp_dir)
+                return Gate(conn, gate_process, temp_dir, interpreter)
 
             except asyncssh.misc.PermissionDenied as e:
                 # Authentication failures should not retry - they won't succeed
