@@ -655,8 +655,9 @@ class AutomationContext:
                 self._inventory.add_group(group)
             group.add_host(host)
 
-        # Invalidate the hosts proxy cache so it picks up the new host
+        # Invalidate caches so the new/updated host is visible
         self._hosts_proxy = None
+        self._inventory._invalidate_cache()
 
         # Persist to state file if enabled
         if self._state is not None:
