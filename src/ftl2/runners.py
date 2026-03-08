@@ -31,7 +31,7 @@ from .exceptions import (
 )
 from .gate import GateBuildConfig, GateBuilder
 from .message import GateProtocol
-from .types import ExecutionConfig, GateConfig, HostConfig, ModuleResult
+from .types import BecomeConfig, ExecutionConfig, GateConfig, HostConfig, ModuleResult
 from .utils import find_module, module_wants_json
 
 logger = logging.getLogger(__name__)
@@ -624,6 +624,7 @@ class RemoteModuleRunner(ModuleRunner):
         context: ExecutionContext,
         max_retries: int = 3,
         register_subsystem: bool = False,
+        become: "BecomeConfig | None" = None,
     ) -> Gate:
         """Establish SSH connection and create gate.
 
@@ -638,6 +639,7 @@ class RemoteModuleRunner(ModuleRunner):
             max_retries: Maximum connection retry attempts (default: 3)
             register_subsystem: If True, register the gate as an SSH
                 subsystem after connecting (requires root)
+            become: Privilege escalation config (starts gate under sudo)
 
         Returns:
             Active Gate connection
@@ -699,7 +701,7 @@ class RemoteModuleRunner(ModuleRunner):
                     await self._update_gate_stable_path(conn, gate_local_path)
 
                 # Start gate process (subsystem now uses the updated .pyz)
-                gate_process, remote_gate_hash, used_subsystem = await self._open_gate(conn, gate_file, interpreter)
+                gate_process, remote_gate_hash, used_subsystem = await self._open_gate(conn, gate_file, interpreter, become=become)
 
                 logger.info(f"Connected to {ssh_host}:{ssh_port} successfully")
                 return Gate(conn, gate_process, temp_dir, interpreter)
@@ -837,7 +839,11 @@ class RemoteModuleRunner(ModuleRunner):
         return gate_file_name, str(gate_path)
 
     async def _open_gate(
-        self, conn: SSHClientConnection, gate_file: str, interpreter: str
+        self,
+        conn: SSHClientConnection,
+        gate_file: str,
+        interpreter: str,
+        become: "BecomeConfig | None" = None,
     ) -> tuple["SSHClientProcess[Any]", str, bool]:
         """Start gate process and perform handshake.
 
@@ -848,6 +854,7 @@ class RemoteModuleRunner(ModuleRunner):
             conn: Active SSH connection
             gate_file: Path to gate executable on remote host
             interpreter: Python interpreter path to use
+            become: Privilege escalation config (starts gate under sudo)
 
         Returns:
             Tuple of (gate process, remote gate hash, used subsystem)
@@ -855,16 +862,23 @@ class RemoteModuleRunner(ModuleRunner):
         Raises:
             Exception: If gate fails to start or handshake fails
         """
-        # Try SSH subsystem first — no shell startup, no PATH lookup
         used_subsystem = False
-        try:
-            process = await conn.create_process(subsystem="ftl2-gate", encoding=None)
-            used_subsystem = True
-            logger.info("Connected via SSH subsystem")
-        except (asyncssh.ChannelOpenError, asyncssh.Error):
-            # Subsystem not registered — fall back to exec
-            process = await conn.create_process(f"{interpreter} {gate_file}", encoding=None)
-            logger.info("Connected via SSH exec (subsystem not available)")
+
+        if become and become.effective:
+            # Cannot use SSH subsystem with sudo — always use exec
+            gate_cmd = become.sudo_prefix(f"{interpreter} {gate_file}")
+            process = await conn.create_process(gate_cmd, encoding=None)
+            logger.info(f"Connected via SSH exec with sudo (become_user={become.become_user})")
+        else:
+            # Try SSH subsystem first — no shell startup, no PATH lookup
+            try:
+                process = await conn.create_process(subsystem="ftl2-gate", encoding=None)
+                used_subsystem = True
+                logger.info("Connected via SSH subsystem")
+            except (asyncssh.ChannelOpenError, asyncssh.Error):
+                # Subsystem not registered — fall back to exec
+                process = await conn.create_process(f"{interpreter} {gate_file}", encoding=None)
+                logger.info("Connected via SSH exec (subsystem not available)")
 
         # Send Hello and wait for response
         await self.protocol.send_message(process.stdin, "Hello", {})  # type: ignore[arg-type]

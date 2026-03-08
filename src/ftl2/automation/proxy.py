@@ -20,6 +20,26 @@ if TYPE_CHECKING:
     from ftl2.automation.context import AutomationContext
 
 
+# Become-control kwargs that are NOT module parameters
+_BECOME_KWARGS = frozenset({"become", "become_user"})
+
+
+def _extract_become_overrides(kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Separate become-control kwargs from module parameters.
+
+    Returns:
+        Tuple of (become_overrides, module_params)
+    """
+    become_overrides: dict[str, Any] = {}
+    module_params: dict[str, Any] = {}
+    for k, v in kwargs.items():
+        if k in _BECOME_KWARGS:
+            become_overrides[k] = v
+        else:
+            module_params[k] = v
+    return become_overrides, module_params
+
+
 def _check_excluded(module_path: str) -> None:
     """Check if a module is excluded and raise if so.
 
@@ -249,6 +269,18 @@ class HostScopedProxy:
         except KeyError:
             return []
 
+    def _resolve_become(
+        self,
+        host_config: Any,
+        overrides: dict[str, Any],
+    ) -> "BecomeConfig":
+        """Resolve effective become config from host defaults + call overrides."""
+        from ftl2.types import BecomeConfig
+        return host_config.become_config.with_overrides(
+            become=overrides.get("become"),
+            become_user=overrides.get("become_user"),
+        )
+
     def _track_result(
         self,
         module_name: str,
@@ -288,6 +320,7 @@ class HostScopedProxy:
         owner: str | None = None,
         group: str | None = None,
         backup: bool = False,
+        _become_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Copy a local file to the remote host via SFTP.
 
@@ -385,54 +418,101 @@ class HostScopedProxy:
         # For group operations, this would need to loop
         host_config = host_configs[0]
         ssh = await self._context._get_ssh_connection(host_config)
+        become = self._resolve_become(host_config, _become_overrides or {})
 
         changed = True
         backup_path = None
 
-        # Check if content matches (idempotency)
-        remote_content = await ssh.read_file_or_none(dest)
-        if remote_content == file_content:
-            changed = False
+        if become.effective:
+            # Become path: SSH user may not have direct access to dest.
+            # Use sudo for reading/writing/permissions.
+            import shlex as _shlex
+            import os as _os
 
-        # Create backup if requested
-        if backup and changed and remote_content is not None:
-            backup_path = f"{dest}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            await ssh.rename(dest, backup_path)
+            quoted_dest = _shlex.quote(dest)
 
-        # Ensure destination directory exists
-        if changed:
-            dest_dir = str(Path(dest).parent)
-            await ssh.run(f"mkdir -p '{dest_dir}'")
+            # Idempotency check via sudo cat (SFTP can't read root-owned files)
+            stdout, _, rc = await ssh.run(become.sudo_prefix(f"cat {quoted_dest}"))
+            if rc == 0 and stdout.encode() == file_content:
+                changed = False
 
-        # Write file
-        if changed:
-            await ssh.write_file(dest, file_content)
+            if changed:
+                # SFTP to temp location (SSH user can always write to /tmp)
+                tmp_name = f"/tmp/.ftl2_copy_{_os.getpid()}_{id(file_content)}"
+                await ssh.write_file(tmp_name, file_content)
 
-        # Set mode
-        if mode:
-            mode_str = mode.lstrip("0") if mode.startswith("0") else mode
-            mode_int = int(mode_str, 8)
-            current_stat = await ssh.stat(dest)
-            if current_stat and current_stat["mode"] != mode_int:
-                await ssh.chmod(dest, mode_int)
-                changed = True
+                # Create backup if requested
+                if backup:
+                    _, _, check_rc = await ssh.run(become.sudo_prefix(f"test -f {quoted_dest}"))
+                    if check_rc == 0:
+                        backup_path = f"{dest}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                        await ssh.run(become.sudo_prefix(
+                            f"cp {quoted_dest} {_shlex.quote(backup_path)}"
+                        ))
 
-        # Set ownership (check current owner/group before changing)
-        if owner or group:
-            stdout, _, _ = await ssh.run(f"stat -c '%U %G' {dest}")
-            parts = stdout.strip().split()
-            if len(parts) == 2:
-                current_owner, current_group = parts
-                needs_owner = owner and current_owner != owner
-                needs_group = group and current_group != group
-                if needs_owner or needs_group:
-                    await ssh.chown(dest, owner if needs_owner else None,
-                                    group if needs_group else None)
+                # Ensure dest directory exists and move file
+                dest_dir = str(Path(dest).parent)
+                await ssh.run(become.sudo_prefix(f"mkdir -p {_shlex.quote(dest_dir)}"))
+                await ssh.run(become.sudo_prefix(f"mv {_shlex.quote(tmp_name)} {quoted_dest}"))
+
+            # Set mode via sudo
+            if mode:
+                await ssh.run(become.sudo_prefix(f"chmod {mode} {quoted_dest}"))
+
+            # Set ownership via sudo
+            if owner and group:
+                await ssh.run(become.sudo_prefix(f"chown {owner}:{group} {quoted_dest}"))
+            elif owner:
+                await ssh.run(become.sudo_prefix(f"chown {owner} {quoted_dest}"))
+            elif group:
+                await ssh.run(become.sudo_prefix(f"chgrp {group} {quoted_dest}"))
+        else:
+            # Direct SFTP path (original behavior, no sudo needed)
+
+            # Check if content matches (idempotency)
+            remote_content = await ssh.read_file_or_none(dest)
+            if remote_content == file_content:
+                changed = False
+
+            # Create backup if requested
+            if backup and changed and remote_content is not None:
+                backup_path = f"{dest}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                await ssh.rename(dest, backup_path)
+
+            # Ensure destination directory exists
+            if changed:
+                dest_dir = str(Path(dest).parent)
+                await ssh.run(f"mkdir -p '{dest_dir}'")
+
+            # Write file
+            if changed:
+                await ssh.write_file(dest, file_content)
+
+            # Set mode
+            if mode:
+                mode_str = mode.lstrip("0") if mode.startswith("0") else mode
+                mode_int = int(mode_str, 8)
+                current_stat = await ssh.stat(dest)
+                if current_stat and current_stat["mode"] != mode_int:
+                    await ssh.chmod(dest, mode_int)
                     changed = True
-            else:
-                # Can't determine current ownership, set unconditionally
-                await ssh.chown(dest, owner, group)
-                changed = True
+
+            # Set ownership (check current owner/group before changing)
+            if owner or group:
+                stdout, _, _ = await ssh.run(f"stat -c '%U %G' {dest}")
+                parts = stdout.strip().split()
+                if len(parts) == 2:
+                    current_owner, current_group = parts
+                    needs_owner = owner and current_owner != owner
+                    needs_group = group and current_group != group
+                    if needs_owner or needs_group:
+                        await ssh.chown(dest, owner if needs_owner else None,
+                                        group if needs_group else None)
+                        changed = True
+                else:
+                    # Can't determine current ownership, set unconditionally
+                    await ssh.chown(dest, owner, group)
+                    changed = True
 
         result = {
             "changed": changed,
@@ -451,6 +531,7 @@ class HostScopedProxy:
         mode: str | None = None,
         owner: str | None = None,
         group: str | None = None,
+        _become_overrides: dict[str, Any] | None = None,
         **variables: Any,
     ) -> dict[str, Any]:
         """Render a Jinja2 template and copy to remote host.
@@ -511,6 +592,7 @@ class HostScopedProxy:
             mode=mode,
             owner=owner,
             group=group,
+            _become_overrides=_become_overrides,
         )
 
         # Update result to show template source
@@ -610,6 +692,7 @@ class HostScopedProxy:
         executable: str = "/bin/sh",
         stdin: str | None = None,
         timeout: int | None = None,
+        _become_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Execute a command through a shell.
 
@@ -747,6 +830,11 @@ class HostScopedProxy:
             full_cmd = f"cd {shlex.quote(chdir)} && {executable} -c {shlex.quote(cmd)}"
         else:
             full_cmd = f"{executable} -c {shlex.quote(cmd)}"
+
+        # Apply become/sudo wrapping
+        become = self._resolve_become(host_config, _become_overrides or {})
+        if become.effective:
+            full_cmd = become.sudo_prefix(full_cmd)
 
         # Execute via SSH
         run_kwargs: dict[str, Any] = {"stdin": stdin or ""}
@@ -954,7 +1042,8 @@ class HostScopedModuleProxy:
         """Execute the module on the target host/group.
 
         Args:
-            **kwargs: Module parameters
+            **kwargs: Module parameters (become/become_user are extracted
+                     as privilege escalation controls, not passed to the module)
 
         Returns:
             For localhost: dict (module output) - more intuitive for local use
@@ -963,21 +1052,28 @@ class HostScopedModuleProxy:
         Raises:
             ExcludedModuleError: If the module is excluded from FTL2
         """
+        # Separate become-control kwargs from module parameters
+        become_overrides, module_params = _extract_become_overrides(kwargs)
+
         # Check if module is shadowed by a native implementation
         if is_shadowed(self._path):
             method_name = get_native_method(self._path)
             host_proxy = HostScopedProxy(self._context, self._target)
             native_method = getattr(host_proxy, method_name)
-            return await native_method(**kwargs)
+            return await native_method(**module_params, _become_overrides=become_overrides)
 
         # Check if module is excluded
         _check_excluded(self._path)
 
         # Special case: local/localhost executes directly without inventory
         if self._target in ("local", "localhost"):
-            return await self._context.execute(self._path, kwargs)
+            return await self._context.execute(self._path, module_params)
 
-        return await self._context.run_on(self._target, self._path, **kwargs)
+        return await self._context.run_on(
+            self._target, self._path,
+            _become_overrides=become_overrides,
+            **module_params,
+        )
 
     def __repr__(self) -> str:
         return f"HostScopedModuleProxy({self._target!r}, {self._path!r})"

@@ -583,6 +583,8 @@ class AutomationContext:
         ansible_port: int = 22,
         ansible_python_interpreter: str = "python3",
         ansible_password: str | None = None,
+        ansible_become: bool = False,
+        ansible_become_user: str = "root",
         groups: list[str] | None = None,
         **vars: Any,
     ) -> HostConfig:
@@ -601,6 +603,8 @@ class AutomationContext:
                          target host (default "python3")
             ansible_password: SSH password for password-based authentication.
                          Useful for container-based test environments.
+            ansible_become: Use sudo for privilege escalation (default False)
+            ansible_become_user: Target user for escalation (default "root")
             groups: List of group names to add this host to.
                    Groups are created if they don't exist.
             **vars: Additional host variables
@@ -616,11 +620,12 @@ class AutomationContext:
             ftl.add_host(
                 hostname="web01",
                 ansible_host=ip,
-                ansible_user="root",
+                ansible_user="admin",
+                ansible_become=True,
                 groups=["webservers"],
             )
 
-            # Now run_on works for the new host
+            # Tasks run via sudo automatically
             await ftl.run_on("web01", "dnf", name="nginx", state="present")
             await ftl.run_on("webservers", "service", name="nginx", state="started")
         """
@@ -636,6 +641,8 @@ class AutomationContext:
             ansible_user=ansible_user or "",
             ansible_python_interpreter=ansible_python_interpreter,
             ansible_connection="ssh",
+            ansible_become=ansible_become,
+            ansible_become_user=ansible_become_user,
             vars=vars,
         )
 
@@ -949,7 +956,8 @@ class AutomationContext:
         """
         from ftl2.message import GateProtocol
 
-        gate = await self._get_or_create_gate(host)
+        become = host.become_config
+        gate = await self._get_or_create_gate(host, become=become)
 
         await self._remote_runner.protocol.send_message(
             gate.gate_process.stdin, msg_type, data
@@ -970,7 +978,8 @@ class AutomationContext:
                 continue
 
             # Cache gate back for reuse
-            self._remote_runner.gate_cache[host.name] = gate
+            cache_key = self._gate_cache_key(host.name, become)
+            self._remote_runner.gate_cache[cache_key] = gate
             return resp_type, resp_data
 
     async def listen(self, timeout: float | None = None) -> None:
@@ -1037,6 +1046,7 @@ class AutomationContext:
         self,
         hosts: str | HostConfig | Sequence[HostConfig],
         module_name: str,
+        _become_overrides: dict[str, Any] | None = None,
         **params: Any,
     ) -> list[ExecuteResult]:
         """Execute a module on remote host(s).
@@ -1047,6 +1057,7 @@ class AutomationContext:
                 - Single HostConfig
                 - List of HostConfig objects
             module_name: Name of the module to execute
+            _become_overrides: Per-call become/become_user overrides (internal)
             **params: Module parameters as keyword arguments
 
         Returns:
@@ -1069,7 +1080,7 @@ class AutomationContext:
 
         # Execute on all hosts concurrently
         tasks = [
-            self._execute_on_host(host, module_name, params)
+            self._execute_on_host(host, module_name, params, _become_overrides)
             for host in host_list
         ]
 
@@ -1098,6 +1109,7 @@ class AutomationContext:
         host: HostConfig,
         module_name: str,
         params: dict[str, Any],
+        become_overrides: dict[str, Any] | None = None,
     ) -> ExecuteResult:
         """Execute module on a single host."""
         from ftl2.ftl_modules import execute
@@ -1144,6 +1156,12 @@ class AutomationContext:
             "check_mode": self.check_mode,
         })
 
+        # Resolve effective become config
+        become = host.become_config.with_overrides(
+            become=become_overrides.get("become") if become_overrides else None,
+            become_user=become_overrides.get("become_user") if become_overrides else None,
+        )
+
         if host.is_local:
             # Local execution
             result = await execute(
@@ -1154,7 +1172,7 @@ class AutomationContext:
             result.host = host.name
         else:
             # Remote execution via gate
-            result = await self._execute_remote_via_gate(host, module_name, params)
+            result = await self._execute_remote_via_gate(host, module_name, params, become=become)
             result.host = host.name
 
         duration = time.time() - start_time
@@ -1186,11 +1204,19 @@ class AutomationContext:
 
         return result
 
+    @staticmethod
+    def _gate_cache_key(host_name: str, become: "BecomeConfig | None" = None) -> str:
+        """Build composite gate cache key including become user."""
+        if become and become.effective:
+            return f"{host_name}:become={become.become_user}"
+        return host_name
+
     async def _execute_remote_via_gate(
         self,
         host: HostConfig,
         module_name: str,
         params: dict[str, Any],
+        become: "BecomeConfig | None" = None,
     ) -> ExecuteResult:
         """Execute module on remote host via gate process.
 
@@ -1202,6 +1228,7 @@ class AutomationContext:
             host: Target host configuration
             module_name: Module to execute
             params: Module parameters
+            become: Privilege escalation config (gate starts under sudo)
 
         Returns:
             ExecuteResult with execution outcome
@@ -1219,7 +1246,7 @@ class AutomationContext:
         if is_ftl_module(module_name):
             # FTL module - try name-only first (gate may have it baked in)
             try:
-                gate = await self._get_or_create_gate(host)
+                gate = await self._get_or_create_gate(host, become=become)
 
                 # Send name-only FTLModule message
                 await self._remote_runner.protocol.send_message(
@@ -1249,7 +1276,8 @@ class AutomationContext:
                     raise Exception(f"Unexpected response: {response}")
 
                 # Cache gate for reuse
-                self._remote_runner.gate_cache[host.name] = gate
+                cache_key = self._gate_cache_key(host.name, become)
+                self._remote_runner.gate_cache[cache_key] = gate
                 ftl_attempted = True
             except Exception as e:
                 # FTL module failed (missing deps, etc.) - fall back to Ansible bundle
@@ -1264,7 +1292,7 @@ class AutomationContext:
             import json
 
             # Get gate connection
-            gate = await self._get_or_create_gate(host)
+            gate = await self._get_or_create_gate(host, become=become)
 
             # Try name-only first (gate may have module baked in)
             await self._remote_runner.protocol.send_message(
@@ -1336,7 +1364,8 @@ class AutomationContext:
                     result_data = {"failed": True, "msg": f"Unexpected response: {msg_type}"}
 
             # Cache gate for reuse
-            self._remote_runner.gate_cache[host.name] = gate
+            cache_key = self._gate_cache_key(host.name, become)
+            self._remote_runner.gate_cache[cache_key] = gate
 
         # Convert to ExecuteResult
         failed = result_data.get("failed", False) or result_data.get("rc", 0) != 0
@@ -1350,17 +1379,22 @@ class AutomationContext:
             used_ftl=is_ftl_module(module_name),
         )
 
-    async def _get_or_create_gate(self, host: HostConfig) -> "Gate":
+    async def _get_or_create_gate(
+        self,
+        host: HostConfig,
+        become: "BecomeConfig | None" = None,
+    ) -> "Gate":
         """Get or create a gate connection for a host.
 
         Args:
             host: Target host configuration
+            become: Privilege escalation config (gate starts under sudo)
 
         Returns:
             Active Gate connection
         """
         from ftl2.runners import ExecutionContext
-        from ftl2.types import ExecutionConfig, GateConfig
+        from ftl2.types import ExecutionConfig, GateConfig, BecomeConfig
         from getpass import getuser
         import sys
 
@@ -1382,13 +1416,14 @@ class AutomationContext:
             interpreter = host.ansible_python_interpreter or "/usr/bin/python3"
 
         # Check cache — verify interpreter matches
-        if host.name in self._remote_runner.gate_cache:
-            gate = self._remote_runner.gate_cache[host.name]
+        cache_key = self._gate_cache_key(host.name, become)
+        if cache_key in self._remote_runner.gate_cache:
+            gate = self._remote_runner.gate_cache[cache_key]
             if gate.interpreter == interpreter:
-                self._remote_runner.gate_cache.pop(host.name)
+                self._remote_runner.gate_cache.pop(cache_key)
                 return gate
             else:
-                self._remote_runner.gate_cache.pop(host.name)
+                self._remote_runner.gate_cache.pop(cache_key)
                 await self._remote_runner._close_gate(gate)
 
         context = ExecutionContext(
@@ -1403,6 +1438,7 @@ class AutomationContext:
         return await self._remote_runner._connect_gate(
             ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context,
             register_subsystem=self._gate_subsystem,
+            become=become,
         )
 
     async def _get_ssh_connection(self, host: HostConfig) -> SSHHost:

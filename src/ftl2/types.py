@@ -11,6 +11,53 @@ from pathlib import Path
 from typing import Any
 
 
+@dataclass(frozen=True)
+class BecomeConfig:
+    """Privilege escalation configuration.
+
+    Controls whether and how commands are executed with elevated privileges
+    via sudo. Follows Ansible's become semantics.
+
+    Attributes:
+        become: Whether to use privilege escalation
+        become_user: Target user for escalation (default: root)
+        become_method: Escalation method (only 'sudo' supported)
+    """
+
+    become: bool = False
+    become_user: str = "root"
+    become_method: str = "sudo"
+
+    def with_overrides(
+        self,
+        become: bool | None = None,
+        become_user: str | None = None,
+    ) -> "BecomeConfig":
+        """Return a new BecomeConfig with non-None values overridden."""
+        return BecomeConfig(
+            become=become if become is not None else self.become,
+            become_user=become_user if become_user is not None else self.become_user,
+            become_method=self.become_method,
+        )
+
+    @property
+    def effective(self) -> bool:
+        """Whether escalation will actually happen."""
+        return self.become
+
+    def sudo_prefix(self, cmd: str) -> str:
+        """Wrap a command with sudo if become is active.
+
+        Uses -n (non-interactive) to fail fast if passwordless sudo
+        is not configured, rather than hanging waiting for a password.
+        """
+        if not self.become:
+            return cmd
+        if self.become_user == "root":
+            return f"sudo -n {cmd}"
+        return f"sudo -n -u {self.become_user} {cmd}"
+
+
 @dataclass
 class HostConfig:
     """Configuration for a single host in the automation inventory.
@@ -26,18 +73,19 @@ class HostConfig:
         ansible_user: Username for SSH authentication (default: current user)
         ansible_connection: Connection type - "ssh" for remote, "local" for localhost
         ansible_python_interpreter: Path to Python interpreter on target host
+        ansible_become: Whether to use sudo for privilege escalation
+        ansible_become_user: Target user for privilege escalation (default: root)
         vars: Additional host-specific variables as key-value pairs
 
     Example:
         >>> host = HostConfig(
         ...     name="web01",
         ...     ansible_host="192.168.1.10",
-        ...     ansible_user="admin"
+        ...     ansible_user="admin",
+        ...     ansible_become=True,
         ... )
-        >>> host.ansible_port
-        22
-        >>> host.is_local
-        False
+        >>> host.become_config.effective
+        True
 
         >>> localhost = HostConfig(
         ...     name="localhost",
@@ -54,6 +102,8 @@ class HostConfig:
     ansible_user: str = field(default_factory=getuser)
     ansible_connection: str = "ssh"
     ansible_python_interpreter: str = "python3"
+    ansible_become: bool = False
+    ansible_become_user: str = "root"
     vars: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -65,6 +115,14 @@ class HostConfig:
     def is_remote(self) -> bool:
         """Check if this host uses remote execution (SSH)."""
         return not self.is_local
+
+    @property
+    def become_config(self) -> BecomeConfig:
+        """Get the host's privilege escalation configuration."""
+        return BecomeConfig(
+            become=self.ansible_become,
+            become_user=self.ansible_become_user,
+        )
 
     def get_var(self, key: str, default: Any = None) -> Any:
         """Get a host variable by key with optional default.
