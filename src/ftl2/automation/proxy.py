@@ -320,6 +320,8 @@ class HostScopedProxy:
         owner: str | None = None,
         group: str | None = None,
         backup: bool = False,
+        become: bool | None = None,
+        become_user: str | None = None,
         _become_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Copy a local file to the remote host via SFTP.
@@ -414,16 +416,23 @@ class HostScopedProxy:
         if not host_configs:
             raise ValueError(f"No hosts found for target: {self._target}")
 
+        # Merge explicit become/become_user kwargs into _become_overrides
+        overrides = dict(_become_overrides or {})
+        if become is not None:
+            overrides["become"] = become
+        if become_user is not None:
+            overrides["become_user"] = become_user
+
         # Execute on first host (copy is typically run on single host)
         # For group operations, this would need to loop
         host_config = host_configs[0]
         ssh = await self._context._get_ssh_connection(host_config)
-        become = self._resolve_become(host_config, _become_overrides or {})
+        become_cfg = self._resolve_become(host_config, overrides)
 
         changed = True
         backup_path = None
 
-        if become.effective:
+        if become_cfg.effective:
             # Become path: SSH user may not have direct access to dest.
             # Use sudo for reading/writing/permissions.
             import shlex as _shlex
@@ -432,7 +441,7 @@ class HostScopedProxy:
             quoted_dest = _shlex.quote(dest)
 
             # Idempotency check via sudo cat (SFTP can't read root-owned files)
-            stdout, _, rc = await ssh.run(become.sudo_prefix(f"cat {quoted_dest}"))
+            stdout, _, rc = await ssh.run(become_cfg.sudo_prefix(f"cat {quoted_dest}"))
             if rc == 0 and stdout.encode() == file_content:
                 changed = False
 
@@ -443,29 +452,29 @@ class HostScopedProxy:
 
                 # Create backup if requested
                 if backup:
-                    _, _, check_rc = await ssh.run(become.sudo_prefix(f"test -f {quoted_dest}"))
+                    _, _, check_rc = await ssh.run(become_cfg.sudo_prefix(f"test -f {quoted_dest}"))
                     if check_rc == 0:
                         backup_path = f"{dest}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                        await ssh.run(become.sudo_prefix(
+                        await ssh.run(become_cfg.sudo_prefix(
                             f"cp {quoted_dest} {_shlex.quote(backup_path)}"
                         ))
 
                 # Ensure dest directory exists and move file
                 dest_dir = str(Path(dest).parent)
-                await ssh.run(become.sudo_prefix(f"mkdir -p {_shlex.quote(dest_dir)}"))
-                await ssh.run(become.sudo_prefix(f"mv {_shlex.quote(tmp_name)} {quoted_dest}"))
+                await ssh.run(become_cfg.sudo_prefix(f"mkdir -p {_shlex.quote(dest_dir)}"))
+                await ssh.run(become_cfg.sudo_prefix(f"mv {_shlex.quote(tmp_name)} {quoted_dest}"))
 
             # Set mode via sudo
             if mode:
-                await ssh.run(become.sudo_prefix(f"chmod {mode} {quoted_dest}"))
+                await ssh.run(become_cfg.sudo_prefix(f"chmod {mode} {quoted_dest}"))
 
             # Set ownership via sudo
             if owner and group:
-                await ssh.run(become.sudo_prefix(f"chown {owner}:{group} {quoted_dest}"))
+                await ssh.run(become_cfg.sudo_prefix(f"chown {owner}:{group} {quoted_dest}"))
             elif owner:
-                await ssh.run(become.sudo_prefix(f"chown {owner} {quoted_dest}"))
+                await ssh.run(become_cfg.sudo_prefix(f"chown {owner} {quoted_dest}"))
             elif group:
-                await ssh.run(become.sudo_prefix(f"chgrp {group} {quoted_dest}"))
+                await ssh.run(become_cfg.sudo_prefix(f"chgrp {group} {quoted_dest}"))
         else:
             # Direct SFTP path (original behavior, no sudo needed)
 
@@ -531,6 +540,8 @@ class HostScopedProxy:
         mode: str | None = None,
         owner: str | None = None,
         group: str | None = None,
+        become: bool | None = None,
+        become_user: str | None = None,
         _become_overrides: dict[str, Any] | None = None,
         **variables: Any,
     ) -> dict[str, Any]:
@@ -586,13 +597,18 @@ class HostScopedProxy:
 
         # Use copy() for the actual transfer (handles idempotency, permissions)
         # Pass content instead of src since we've already rendered
+        overrides = dict(_become_overrides or {})
+        if become is not None:
+            overrides["become"] = become
+        if become_user is not None:
+            overrides["become_user"] = become_user
         result = await self.copy(
             content=rendered,
             dest=dest,
             mode=mode,
             owner=owner,
             group=group,
-            _become_overrides=_become_overrides,
+            _become_overrides=overrides or None,
         )
 
         # Update result to show template source
@@ -692,6 +708,8 @@ class HostScopedProxy:
         executable: str = "/bin/sh",
         stdin: str | None = None,
         timeout: int | None = None,
+        become: bool | None = None,
+        become_user: str | None = None,
         _become_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Execute a command through a shell.
@@ -832,9 +850,14 @@ class HostScopedProxy:
             full_cmd = f"{executable} -c {shlex.quote(cmd)}"
 
         # Apply become/sudo wrapping
-        become = self._resolve_become(host_config, _become_overrides or {})
-        if become.effective:
-            full_cmd = become.sudo_prefix(full_cmd)
+        overrides = dict(_become_overrides or {})
+        if become is not None:
+            overrides["become"] = become
+        if become_user is not None:
+            overrides["become_user"] = become_user
+        become_cfg = self._resolve_become(host_config, overrides)
+        if become_cfg.effective:
+            full_cmd = become_cfg.sudo_prefix(full_cmd)
 
         # Execute via SSH
         run_kwargs: dict[str, Any] = {"stdin": stdin or ""}
