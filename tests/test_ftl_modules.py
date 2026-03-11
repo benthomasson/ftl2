@@ -211,7 +211,7 @@ class TestModuleStubs:
         assert callable(ftl_ec2_instance)
 
     @pytest.mark.asyncio
-    async def test_aws_stubs_raise_not_implemented(self):
-        """Test that AWS stubs (Phase 4) still raise NotImplementedError."""
-        with pytest.raises(NotImplementedError):
+    async def test_aws_stubs_raise_when_dependency_missing(self):
+        """Test that AWS stubs raise when aioboto3 is not installed."""
+        with pytest.raises((NotImplementedError, FTLModuleError)):
             await ftl_ec2_instance(instance_id="i-123")

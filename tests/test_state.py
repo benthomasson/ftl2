@@ -335,6 +335,7 @@ class TestAutomationStateIntegration:
         async with automation(
             print_summary=False,
             quiet=True,
+            state_file=None,
         ) as ftl:
             with pytest.raises(RuntimeError, match="State not available"):
                 _ = ftl.state

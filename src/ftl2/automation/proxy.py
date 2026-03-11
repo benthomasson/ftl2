@@ -1083,7 +1083,7 @@ class HostScopedModuleProxy:
             method_name = get_native_method(self._path)
             host_proxy = HostScopedProxy(self._context, self._target)
             native_method = getattr(host_proxy, method_name)
-            return await native_method(**module_params, _become_overrides=become_overrides)
+            return await native_method(**module_params)
 
         # Check if module is excluded
         _check_excluded(self._path)

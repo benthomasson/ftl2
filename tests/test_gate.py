@@ -301,7 +301,7 @@ class TestCheckOutput:
         """check_output runs simple commands."""
         from ftl2.ftl_gate.__main__ import check_output
 
-        stdout, stderr = await check_output("echo hello")
+        stdout, stderr, rc = await check_output("echo hello")
         assert stdout.strip() == b"hello"
 
     @pytest.mark.asyncio
@@ -309,7 +309,7 @@ class TestCheckOutput:
         """check_output can send stdin data."""
         from ftl2.ftl_gate.__main__ import check_output
 
-        stdout, stderr = await check_output("cat", stdin=b"test input")
+        stdout, stderr, rc = await check_output("cat", stdin=b"test input")
         assert stdout == b"test input"
 
     @pytest.mark.asyncio
@@ -317,7 +317,7 @@ class TestCheckOutput:
         """check_output captures stderr."""
         from ftl2.ftl_gate.__main__ import check_output
 
-        stdout, stderr = await check_output("echo error >&2")
+        stdout, stderr, rc = await check_output("echo error >&2")
         assert b"error" in stderr
 
 
