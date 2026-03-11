@@ -1495,6 +1495,68 @@ def config_run(
     ctx.invoke(cli, args=cmd_args)
 
 
+@cli.group()
+def collection() -> None:
+    """Collection management commands."""
+    pass
+
+
+@collection.command("install")
+@click.argument("name")
+@click.option("--path", "-p", type=click.Path(), default=None,
+              help="Install path (default: ~/.ansible/collections)")
+@click.option("--force", "-f", is_flag=True, help="Overwrite existing collection")
+@click.option("--version", "-v", type=str, default=None, help="Specific version to install")
+def collection_install(name: str, path: Optional[str], force: bool, version: Optional[str]) -> None:
+    """Install a collection from Ansible Galaxy.
+
+    NAME is namespace.collection (e.g., community.general) or
+    namespace.collection:version (e.g., amazon.aws:8.0.0).
+
+    Examples:
+        ftl2 collection install community.general
+
+        ftl2 collection install amazon.aws:8.0.0
+
+        ftl2 collection install ansible.posix --path ./collections
+    """
+    from ftl2.collection import install_collection
+
+    install_path = Path(path) if path else None
+    try:
+        install_collection(name, version=version, path=install_path, force=force)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    except Exception as e:
+        raise click.ClickException(f"Failed to install collection: {e}")
+
+
+@collection.command("list")
+@click.option("--path", "-p", type=click.Path(), default=None,
+              help="Collection path to search (default: all standard paths)")
+def collection_list(path: Optional[str]) -> None:
+    """List installed collections.
+
+    Examples:
+        ftl2 collection list
+
+        ftl2 collection list --path ./collections
+    """
+    from ftl2.collection import list_collections
+
+    search_path = Path(path) if path else None
+    collections = list_collections(search_path)
+
+    if not collections:
+        click.echo("No collections installed.")
+        return
+
+    click.echo(f"{'Collection':<40} {'Version':<15} {'Path'}")
+    click.echo(f"{'─' * 40} {'─' * 15} {'─' * 50}")
+    for c in collections:
+        click.echo(f"{c.namespace}.{c.name:<37} {c.version:<15} {c.path}")
+
+
 @cli.command("run")
 @click.option("--module", "-m", required=True, help="Module to execute")
 @click.option("--module-dir", "-M", multiple=True, help="Module directory to search (can specify multiple, searched before built-ins)")
