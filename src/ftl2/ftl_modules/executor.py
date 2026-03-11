@@ -136,6 +136,8 @@ def _get_module(name: str) -> Any:
     from ftl2.ftl_modules.pip import ftl_pip
     from ftl2.ftl_modules.aws.ec2 import ftl_ec2_instance
     from ftl2.ftl_modules.swap import main as ftl_swap
+    from ftl2.ftl_modules.systemd import ftl_systemd
+    from ftl2.ftl_modules.dnf import ftl_dnf
 
     # Local registry to avoid circular import
     modules = {
@@ -149,6 +151,10 @@ def _get_module(name: str) -> Any:
         "pip": ftl_pip,
         "swap": ftl_swap,
         "ec2_instance": ftl_ec2_instance,
+        "systemd": ftl_systemd,
+        "systemd_service": ftl_systemd,
+        "dnf": ftl_dnf,
+        "dnf5": ftl_dnf,
         # FQCN mappings
         "ansible.builtin.file": ftl_file,
         "ansible.builtin.copy": ftl_copy,
@@ -158,6 +164,10 @@ def _get_module(name: str) -> Any:
         "ansible.builtin.command": ftl_command,
         "ansible.builtin.shell": ftl_shell,
         "ansible.builtin.pip": ftl_pip,
+        "ansible.builtin.systemd": ftl_systemd,
+        "ansible.builtin.systemd_service": ftl_systemd,
+        "ansible.builtin.dnf": ftl_dnf,
+        "ansible.builtin.dnf5": ftl_dnf,
         "amazon.aws.ec2_instance": ftl_ec2_instance,
     }
     return modules.get(name)
@@ -186,6 +196,10 @@ _FTL_MODULE_FILES = {
     "uri": "http.py",
     "get_url": "http.py",
     "pip": "pip.py",
+    "dnf": "dnf.py",
+    "dnf5": "dnf.py",
+    "systemd": "systemd.py",
+    "systemd_service": "systemd.py",
 }
 
 
