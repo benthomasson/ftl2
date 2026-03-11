@@ -21,9 +21,9 @@ dependencies = [
     "httpx>=0.24.0",
     "rich>=13.0.0",
     "importlib-resources>=5.0; python_version < '3.9'",
-    "ftl-module-utils @ git+https://github.com/benthomasson/ftl_module_utils",
-    "ftl-builtin-modules @ git+https://github.com/benthomasson/ftl_builtin_modules",
-    "ftl_collections @ git+https://github.com/benthomasson/ftl-collections",
+    "ftl-module-utils>=0.1.0",
+    "ftl-builtin-modules>=0.1.0",
+    "ftl-collections>=0.1.7",
     "segment-analytics-python>=2.3.0",
 ]
 
@@ -54,9 +54,6 @@ ftl-gate-builder = "ftl2.builder:entry_point"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ftl2"]
