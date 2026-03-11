@@ -5,7 +5,13 @@ Fast Python automation using the Ansible module ecosystem. 3-17x faster than `an
 ## Install
 
 ```bash
-uvx --from "git+https://github.com/benthomasson/ftl2" ftl2
+pip install ftl2
+```
+
+Or run directly with uvx:
+
+```bash
+uvx ftl2 --help
 ```
 
 ## Quick Start
