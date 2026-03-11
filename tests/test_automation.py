@@ -1215,7 +1215,7 @@ class TestSecretBindings:
             ) as ftl:
                 assert "TEST_SECRET" in ftl._bound_secrets
 
-        asyncio.get_event_loop().run_until_complete(check())
+        asyncio.run(check())
 
 
 class TestSecretsProxy:
