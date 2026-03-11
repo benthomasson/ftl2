@@ -1,6 +1,6 @@
 # FTL2
 
-Fast Python automation using the Ansible module ecosystem. 3-17x faster than `ansible-playbook`.
+AI-first Python automation using the Ansible module ecosystem. 3-17x faster than `ansible-playbook`.
 
 ## Install
 
@@ -149,6 +149,39 @@ async with automation(
     await ftl["web01"].dnf(name="nginx", state="present")
     await ftl["web01"].service(name="nginx", state="started", enabled=True)
 ```
+
+## AI-First Automation
+
+FTL2 is designed for AI agents as the primary user. Traditional automation tools force AI to generate YAML with fragile indentation, parse unstructured error output, and work around DSL limitations. FTL2 eliminates all of that — AI agents write native Python, get structured errors, and leverage the Ansible module ecosystem they already know from training data.
+
+**Why Python over YAML for AI:**
+
+| Problem | Ansible | FTL2 |
+|---------|---------|------|
+| Syntax errors | YAML indentation (top LLM failure mode) | Python keywords, standard validation |
+| Control flow | `when`, `block`, `rescue` in YAML strings | Native `if/else`, `try/except`, loops |
+| Error handling | Parse callback output | Structured JSON, full tracebacks |
+| Debugging | Read log files | Print statements, Python debugger |
+| Composition | Role dependencies, meta/main.yml | Import, call functions |
+
+**Safe AI autonomy:** Secret bindings inject credentials at runtime — AI-generated code never sees actual values, preventing accidental leakage into logs or context windows. Policy engines restrict what modules AI can call. Check mode lets AI dry-run before committing.
+
+```python
+# AI agent generates this — secrets stay in the tool layer
+async with automation(
+    secret_bindings={
+        "amazon.aws.*": {"aws_access_key_id": "AWS_KEY"},
+        "community.general.slack": {"token": "SLACK_TOKEN"},
+    },
+    policy="policy.yml",
+) as ftl:
+    await ftl.webservers.dnf(name="nginx", state="present")
+    # Credentials injected automatically, never visible in generated code
+```
+
+**AI reconciliation loop:** FTL2 supports observe-decide-act-verify loops where AI replaces hardcoded controller logic. The AI observes current state through modules, reasons about the gap to desired state, emits FTL2 calls to close the gap, then verifies convergence. As recurring problems get solved, AI writes deterministic rules — cost converges toward zero over time.
+
+**Zero onboarding:** AI already knows Ansible module names and parameters from training data. No need for thousands of tool definitions or MCP servers. A 20-line CLAUDE.md is enough for an AI agent to start provisioning infrastructure.
 
 ## Performance
 
