@@ -1,8 +1,10 @@
-"""FTL Module exceptions."""
+"""FTL Module exceptions and decorators."""
 
 from __future__ import annotations
 
-from typing import Any
+import functools
+import importlib
+from typing import Any, Callable
 
 
 class FTLModuleError(Exception):
@@ -55,3 +57,48 @@ class FTLModuleNotFoundError(FTLModuleError):
             f"Module '{module_name}' not found",
             module=module_name,
         )
+
+
+class FTLModuleMissingDependencyError(FTLModuleError):
+    """Raised when a module requires an optional dependency that isn't installed."""
+
+    def __init__(self, module_name: str, extra: str, package: str) -> None:
+        super().__init__(
+            f"{module_name} requires the '{extra}' extra. "
+            f"Install it with: pip install ftl2[{extra}]",
+            module=module_name,
+            extra=extra,
+            package=package,
+        )
+
+
+def requires_extra(extra: str, package: str) -> Callable:
+    """Decorator for native modules that require optional dependencies.
+
+    Checks that the package is importable before calling the module function.
+    If not, raises FTLModuleMissingDependencyError with an actionable message.
+
+    Args:
+        extra: The pip extra name (e.g., "aws")
+        package: The Python package to check (e.g., "aioboto3")
+
+    Example:
+        @requires_extra("aws", "aioboto3")
+        async def ftl_ec2_instance(**kwargs):
+            import aioboto3
+            ...
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                importlib.import_module(package)
+            except ImportError:
+                # Derive module name from function name (strip ftl_ prefix)
+                module_name = func.__name__
+                if module_name.startswith("ftl_"):
+                    module_name = module_name[4:]
+                raise FTLModuleMissingDependencyError(module_name, extra, package)
+            return await func(*args, **kwargs)
+        return wrapper
+    return decorator

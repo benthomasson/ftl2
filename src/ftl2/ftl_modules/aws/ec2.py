@@ -5,11 +5,12 @@ Async EC2 instance management using aioboto3.
 
 from typing import Any
 
-from ftl2.ftl_modules.exceptions import FTLModuleError
+from ftl2.ftl_modules.exceptions import requires_extra
 
 __all__ = ["ftl_ec2_instance"]
 
 
+@requires_extra("aws", "aioboto3")
 async def ftl_ec2_instance(
     instance_id: str | None = None,
     state: str = "present",
@@ -29,5 +30,5 @@ async def ftl_ec2_instance(
     Returns:
         Result dict with instance_id and changed status
     """
-    # Placeholder - will be implemented in Phase 4
-    raise NotImplementedError("ftl_ec2_instance will be implemented in Phase 4")
+    # Placeholder - will be implemented when AWS native modules are built
+    raise NotImplementedError("ftl_ec2_instance is not yet implemented")
