@@ -6,15 +6,15 @@ FTL2 is a Python automation framework that runs Ansible modules in-process inste
 
 ## Installation
 
-**Preferred: Use `uv run` with PEP 723 inline metadata (no install needed):**
+```bash
+pip install ftl2
+```
 
-Add this header to any script and `uv run` handles everything:
+Or use `uv run` with PEP 723 inline metadata (no install needed):
 ```python
 #!/usr/bin/env python3
 # /// script
-# dependencies = [
-#     "ftl2 @ git+https://github.com/benthomasson/ftl2",
-# ]
+# dependencies = ["ftl2"]
 # requires-python = ">=3.13"
 # ///
 ```
@@ -23,13 +23,6 @@ Then run directly:
 ```bash
 uv run my_script.py
 ```
-
-**Alternative: Install the CLI tool globally:**
-```bash
-uvx --from "git+https://github.com/benthomasson/ftl2" ftl2
-```
-
-Both pull ftl2 and all dependencies (`ftl-module-utils`, `ftl-builtin-modules`, `ftl-collections`, `asyncssh`, `httpx`, etc.) directly from GitHub.
 
 ## The Pattern
 

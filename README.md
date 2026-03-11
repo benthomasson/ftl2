@@ -181,7 +181,31 @@ async with automation(
 
 **AI reconciliation loop:** FTL2 supports observe-decide-act-verify loops where AI replaces hardcoded controller logic. The AI observes current state through modules, reasons about the gap to desired state, emits FTL2 calls to close the gap, then verifies convergence. As recurring problems get solved, AI writes deterministic rules — cost converges toward zero over time.
 
-**Zero onboarding:** AI already knows Ansible module names and parameters from training data. No need for thousands of tool definitions or MCP servers. A 20-line CLAUDE.md is enough for an AI agent to start provisioning infrastructure.
+**Zero onboarding:** AI already knows Ansible module names and parameters from training data. No need for thousands of tool definitions or MCP servers. A minimal CLAUDE.md is enough for an AI agent to start provisioning infrastructure:
+
+```markdown
+# CLAUDE.md — Automation
+
+Use ftl2 for all infrastructure automation. Write Python scripts, not YAML.
+
+## Pattern
+\```python
+from ftl2 import automation
+async with automation(
+    secret_bindings={"community.general.linode_v4": {"access_token": "LINODE_TOKEN"}},
+    state_file=".ftl2-state.json",
+    fail_fast=True,
+) as ftl:
+    await ftl.webservers.dnf(name="nginx", state="present")
+\```
+
+## Rules
+- Use short names for builtins: `file`, `copy`, `shell`, `service`, `dnf`, `user`
+- Use FQCN for collections: `community.general.linode_v4`, `ansible.posix.firewalld`
+- Secrets go in `secret_bindings`, never in code
+- Use `ftl.local` for API/cloud modules, `ftl.groupname` for remote hosts
+- `pip install ftl2` to install
+```
 
 ## Performance
 
