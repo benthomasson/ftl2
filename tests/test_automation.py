@@ -540,7 +540,7 @@ class TestAddHost:
 
     def test_add_host_creates_groups_if_needed(self):
         """Test that groups are created if they don't exist."""
-        context = AutomationContext()
+        context = AutomationContext(state_file=None)
 
         # Group doesn't exist yet
         assert "newgroup" not in context.hosts.groups
