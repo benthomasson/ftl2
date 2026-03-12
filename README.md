@@ -1,6 +1,6 @@
 # FTL2
 
-AI-first Python automation using the Ansible module ecosystem. 3-17x faster than `ansible-playbook`.
+AI-first Python automation using the Ansible module ecosystem. 3-21x faster than `ansible-playbook`.
 
 ## Install
 
@@ -209,7 +209,9 @@ async with automation(
 
 ## Performance
 
-Benchmarked with [ftl2-performance](https://github.com/benthomasson/ftl2-performance):
+### Local benchmarks
+
+Benchmarked with [ftl2-performance](https://github.com/benthomasson/ftl2-performance) (single host, localhost):
 
 | Benchmark | Ansible | FTL2 | Speedup |
 |-----------|---------|------|---------|
@@ -217,6 +219,34 @@ Benchmarked with [ftl2-performance](https://github.com/benthomasson/ftl2-perform
 | template_render (10 tasks) | 3.22s | 0.19s | **16.6x** |
 | uri_requests (15 requests) | 3.75s | 0.30s | **12.4x** |
 | local_facts (1 task) | 0.73s | 0.22s | **3.3x** |
+
+### Scale tests
+
+Benchmarked with [ftl2-scale-tests](https://github.com/benthomasson/ftl2-scale-tests) against real Linode VMs (Fedora 42, us-east). FTL2 uses gate protocol multiplexing and native modules; Ansible uses `--forks N`.
+
+**SSH workloads** (file operations, package install, service setup across remote hosts):
+
+| Hosts | Workload | Ansible | FTL2 | Speedup |
+|-------|----------|---------|------|---------|
+| 3 | file_operations | 11.41s | 3.25s | **3.5x** |
+| 10 | file_operations | 14.04s | 4.03s | **3.5x** |
+| 25 | file_operations | 14.95s | 5.03s | **3.0x** |
+| 3 | service_setup | 17.16s | 10.40s | **1.7x** |
+| 10 | service_setup | 22.80s | 11.40s | **2.0x** |
+| 25 | service_setup | 23.59s | 12.76s | **1.8x** |
+
+**API workloads** (20 HTTP requests per host, `connection: local`):
+
+| Hosts | Ansible | FTL2 | Speedup |
+|-------|---------|------|---------|
+| 1 | 6.0s | 0.3s | **17.8x** |
+| 3 | 6.1s | 0.3s | **19.7x** |
+| 10 | 7.4s | 0.6s | **13.5x** |
+| 25 | 14.7s | 0.7s | **20.9x** |
+
+API calls show the architecture difference most clearly. FTL2 fires all requests concurrently with async httpx. Ansible forks a subprocess per `uri` task, serializing within each host. At 25 hosts (500 total requests), FTL2 finishes in 0.7s vs Ansible's 14.7s.
+
+Ansible also drops hosts as "unreachable" at 25+ hosts even after preflight verification. FTL2's persistent gate connections handle the same hosts without issues.
 
 ## Development
 
