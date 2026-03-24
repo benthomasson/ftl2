@@ -5,6 +5,7 @@ dictionary-based configurations with strongly-typed dataclasses. These types
 provide type safety, validation, and clear interfaces that are portable to Go.
 """
 
+import shlex
 from dataclasses import dataclass, field
 from getpass import getuser
 from pathlib import Path
@@ -70,10 +71,10 @@ class BecomeConfig:
             return f"sudo -n -u {user} {cmd}"
         elif method == "doas":
             if user == "root":
-                return f"doas {cmd}"
-            return f"doas -u {user} {cmd}"
+                return f"doas -n {cmd}"
+            return f"doas -n -u {user} {cmd}"
         elif method == "su":
-            return f"su - {user} -c '{cmd}'"
+            return f"su - {user} -c {shlex.quote(cmd)}"
         else:
             raise ValueError(f"Unsupported become_method: {method!r}. Supported: sudo, su, doas")
 

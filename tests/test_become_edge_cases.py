@@ -14,10 +14,10 @@ class TestBecomeEdgeCases:
         assert bc.sudo_prefix("whoami") == "sudo -n whoami"
 
     def test_su_single_quote_in_command(self):
-        """su -c uses single quotes — documents broken quoting with inner quotes."""
+        """su -c properly escapes commands containing single quotes via shlex.quote."""
         bc = BecomeConfig(become=True, become_method="su")
         result = bc.become_prefix("echo 'hello'")
-        assert result == "su - root -c 'echo 'hello''"
+        assert result == "su - root -c 'echo '\"'\"'hello'\"'\"''"
 
     def test_unsupported_method_error_message(self):
         """ValueError includes the bad method name and lists supported ones."""
@@ -38,7 +38,7 @@ class TestBecomeEdgeCases:
         bc = BecomeConfig(become=True, become_method="doas")
         bc2 = bc.with_overrides(become_user="catbeez")
         assert bc2.become_method == "doas"
-        assert bc2.become_prefix("id") == "doas -u catbeez id"
+        assert bc2.become_prefix("id") == "doas -n -u catbeez id"
 
     def test_empty_command(self):
         """Empty command string doesn't crash."""
@@ -48,9 +48,9 @@ class TestBecomeEdgeCases:
     def test_doas_complex_command(self):
         """doas with a multi-part command."""
         bc = BecomeConfig(become=True, become_method="doas", become_user="app")
-        assert bc.become_prefix("systemctl restart nginx") == "doas -u app systemctl restart nginx"
+        assert bc.become_prefix("systemctl restart nginx") == "doas -n -u app systemctl restart nginx"
 
     def test_su_root_explicit(self):
         """su with default root user."""
         bc = BecomeConfig(become=True, become_method="su")
-        assert bc.become_prefix("whoami") == "su - root -c 'whoami'"
+        assert bc.become_prefix("whoami") == "su - root -c whoami"

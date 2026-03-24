@@ -40,19 +40,19 @@ class TestBecomeConfig:
 
     def test_become_prefix_doas_root(self):
         bc = BecomeConfig(become=True, become_method="doas")
-        assert bc.become_prefix("whoami") == "doas whoami"
+        assert bc.become_prefix("whoami") == "doas -n whoami"
 
     def test_become_prefix_doas_user(self):
         bc = BecomeConfig(become=True, become_method="doas", become_user="catbeez")
-        assert bc.become_prefix("whoami") == "doas -u catbeez whoami"
+        assert bc.become_prefix("whoami") == "doas -n -u catbeez whoami"
 
     def test_become_prefix_su_root(self):
         bc = BecomeConfig(become=True, become_method="su")
-        assert bc.become_prefix("whoami") == "su - root -c 'whoami'"
+        assert bc.become_prefix("whoami") == "su - root -c whoami"
 
     def test_become_prefix_su_user(self):
         bc = BecomeConfig(become=True, become_method="su", become_user="catbeez")
-        assert bc.become_prefix("whoami") == "su - catbeez -c 'whoami'"
+        assert bc.become_prefix("whoami") == "su - catbeez -c whoami"
 
     def test_become_prefix_unsupported_method(self):
         bc = BecomeConfig(become=True, become_method="pbrun")
