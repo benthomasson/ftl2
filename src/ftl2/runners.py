@@ -866,7 +866,7 @@ class RemoteModuleRunner(ModuleRunner):
 
         if become and become.effective:
             # Cannot use SSH subsystem with sudo — always use exec
-            gate_cmd = become.sudo_prefix(f"{interpreter} {gate_file}")
+            gate_cmd = become.become_prefix(f"{interpreter} {gate_file}")
             process = await conn.create_process(gate_cmd, encoding=None)
             logger.info(f"Connected via SSH exec with sudo (become_user={become.become_user})")
         else:
