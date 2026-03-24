@@ -402,11 +402,21 @@ class DependencyResult:
         """Return number of resolved dependencies."""
         return len(self.dependencies)
 
+    def raise_if_unresolved(self) -> None:
+        """Raise RuntimeError if there are unresolved dependencies."""
+        if self.unresolved:
+            names = [u.import_path for u in self.unresolved]
+            raise RuntimeError(
+                f"Unresolved dependencies for {self.module_path.name}: "
+                f"{', '.join(names)}"
+            )
+
 
 def find_all_dependencies(
     module_path: Path,
     collection_paths: list[Path] | None = None,
     max_depth: int = 50,
+    strict: bool = False,
 ) -> DependencyResult:
     """Find all module_utils dependencies for a module (transitive).
 
@@ -417,9 +427,13 @@ def find_all_dependencies(
         module_path: Path to the module file
         collection_paths: Optional list of collection paths
         max_depth: Maximum recursion depth to prevent infinite loops
+        strict: If True, raise RuntimeError on unresolved dependencies
 
     Returns:
         DependencyResult with resolved and unresolved dependencies
+
+    Raises:
+        RuntimeError: If strict is True and there are unresolved dependencies
 
     Example:
         >>> result = find_all_dependencies(Path("/path/to/module.py"))
@@ -460,11 +474,14 @@ def find_all_dependencies(
 
             if dep_path is None:
                 result.unresolved.append(imp)
-                logger.debug(f"Could not resolve: {imp.import_path}")
+                logger.warning(f"Unresolved dependency: {imp.import_path}")
             elif dep_path not in seen_paths:
                 result.dependencies.append(dep_path)
                 # Queue for transitive dependency scanning
                 to_process.append((dep_path, depth + 1))
+
+    if strict:
+        result.raise_if_unresolved()
 
     return result
 

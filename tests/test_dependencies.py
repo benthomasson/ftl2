@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from ftl2.module_loading.dependencies import (
+    DependencyResult,
     find_module_utils_imports,
     find_module_utils_imports_from_file,
     find_all_dependencies,
@@ -431,6 +432,44 @@ from ansible_collections.nonexistent.coll.plugins.module_utils.util import func
             assert len(result.dependencies) == 0
             assert len(result.unresolved) == 1
 
+    def test_strict_raises_on_unresolved(self):
+        """Test that strict=True raises RuntimeError on unresolved deps."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module = Path(tmpdir) / "module.py"
+            module.write_text("""
+from ansible_collections.nonexistent.coll.plugins.module_utils.util import func
+""")
+
+            with pytest.raises(RuntimeError, match="Unresolved dependencies"):
+                find_all_dependencies(module, [Path(tmpdir)], strict=True)
+
+    def test_strict_passes_when_all_resolved(self):
+        """Test that strict=True does not raise when all deps resolve."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+
+            module_utils_dir = (
+                base
+                / "ansible_collections"
+                / "testns"
+                / "testcoll"
+                / "plugins"
+                / "module_utils"
+            )
+            module_utils_dir.mkdir(parents=True)
+
+            module = base / "module.py"
+            module.write_text("""
+from ansible_collections.testns.testcoll.plugins.module_utils.helper import func
+""")
+
+            helper = module_utils_dir / "helper.py"
+            helper.write_text("def func(): pass")
+
+            # Should not raise
+            result = find_all_dependencies(module, [base], strict=True)
+            assert len(result.dependencies) == 1
+
     def test_dependency_result_iteration(self):
         """Test DependencyResult iteration."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -462,6 +501,24 @@ from ansible_collections.testns.testcoll.plugins.module_utils.util import func
 
             # Test len
             assert len(result) == 1
+
+
+class TestDependencyResult:
+    """Tests for DependencyResult dataclass."""
+
+    def test_raise_if_unresolved_with_unresolved(self):
+        """Test raise_if_unresolved raises when there are unresolved deps."""
+        result = DependencyResult(
+            module_path=Path("/fake/module.py"),
+            unresolved=[ModuleUtilsImport("ansible.module_utils.missing")],
+        )
+        with pytest.raises(RuntimeError, match="Unresolved dependencies.*missing"):
+            result.raise_if_unresolved()
+
+    def test_raise_if_unresolved_passes_when_empty(self):
+        """Test raise_if_unresolved does nothing when no unresolved deps."""
+        result = DependencyResult(module_path=Path("/fake/module.py"))
+        result.raise_if_unresolved()  # Should not raise
 
 
 class TestGetDependencyTree:
