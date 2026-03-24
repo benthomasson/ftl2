@@ -1624,10 +1624,15 @@ class AutomationContext:
             gate_config=GateConfig(),
         )
 
+        # Create event callback closure that dispatches events for this host
+        async def _event_cb(event_type: str, data: dict) -> None:
+            await self._dispatch_event(host.name, event_type, data)
+
         return await self._remote_runner._connect_gate(
             ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context,
             register_subsystem=self._gate_subsystem,
             become=become,
+            event_callback=_event_cb,
         )
 
     async def _get_ssh_connection(self, host: HostConfig) -> SSHHost:

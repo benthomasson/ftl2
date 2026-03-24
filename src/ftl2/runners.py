@@ -701,6 +701,7 @@ class RemoteModuleRunner(ModuleRunner):
         max_retries: int = 3,
         register_subsystem: bool = False,
         become: "BecomeConfig | None" = None,
+        event_callback: Any = None,
     ) -> Gate:
         """Establish SSH connection and create gate.
 
@@ -784,7 +785,7 @@ class RemoteModuleRunner(ModuleRunner):
 
                 if supports_multiplex:
                     gate._reader_task = asyncio.create_task(
-                        _gate_reader_loop(gate, self.protocol)
+                        _gate_reader_loop(gate, self.protocol, event_callback)
                     )
                     logger.info(f"Multiplexed gate for {ssh_host}:{ssh_port}")
 

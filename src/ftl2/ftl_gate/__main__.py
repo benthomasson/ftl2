@@ -1316,11 +1316,15 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
             task.add_done_callback(tasks.discard)
 
     finally:
-        # Wait for in-flight tasks to complete (or cancel on error)
-        for task in tasks:
-            task.cancel()
+        # Wait for in-flight tasks to complete gracefully, then cancel stragglers
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            logger.info(f"Waiting for {len(tasks)} in-flight tasks to complete")
+            _, pending = await asyncio.wait(tasks, timeout=30)
+            if pending:
+                logger.warning(f"Cancelling {len(pending)} tasks after timeout")
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
         watcher.stop()
         monitor.stop()
 
