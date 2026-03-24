@@ -1,0 +1,25 @@
+# Production guardrails — deny risky actions in production environments.
+rules:
+  - decision: deny
+    match:
+      module: shell
+      environment: prod
+    reason: "Use proper modules instead of shell in production"
+
+  - decision: deny
+    match:
+      module: command
+      environment: prod
+    reason: "Use proper modules instead of command in production"
+
+  - decision: deny
+    match:
+      host: "prod-*"
+      param.state: absent
+    reason: "Destructive actions (state=absent) not permitted on production hosts"
+
+  - decision: deny
+    match:
+      module: "*.raw"
+      environment: prod
+    reason: "Raw module execution not permitted in production"

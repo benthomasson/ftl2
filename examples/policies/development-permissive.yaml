@@ -1,0 +1,7 @@
+# Development — minimal restrictions, mostly a safety net.
+rules:
+  - decision: deny
+    match:
+      module: shell
+      param.cmd: "rm -rf /*"
+    reason: "Recursive root deletion is never permitted"
