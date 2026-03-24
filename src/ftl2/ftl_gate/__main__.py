@@ -276,28 +276,19 @@ async def check_output(
 # Module Execution
 # =============================================================================
 
+# Cache modules after first transfer so subsequent name-only requests
+# for the same module succeed without a ModuleNotFound round trip.
+_module_cache: dict[str, bytes] = {}
 
-async def execute_module(
-    protocol: GateProtocol,
-    writer: Any,
+
+async def run_module(
     module_name: str,
     module: str | None = None,
     module_args: dict[str, Any] | None = None,
-) -> None:
-    """Execute an automation module within the FTL gate environment.
+) -> dict[str, Any]:
+    """Execute an automation module and return the result dict.
 
-    Handles running modules in various formats:
-    - Binary: Execute directly with JSON args file
-    - New-style: Python with AnsibleModule - args via stdin
-    - WANT_JSON: Python with JSON args file parameter
-    - Old-style: Python with key=value args file
-
-    Args:
-        protocol: Gate protocol for sending responses
-        writer: Output writer for sending results
-        module_name: Name of the module to execute
-        module: Optional base64-encoded module content
-        module_args: Arguments to pass to the module
+    Raises ModuleNotFoundError if module cannot be located.
     """
     logger.info(f"Executing module: {module_name}")
     tempdir = tempfile.mkdtemp(prefix="ftl-module-")
@@ -311,6 +302,12 @@ async def execute_module(
         if module is not None:
             logger.info("Loading module from message")
             module_bytes = base64.b64decode(module)
+            _module_cache[module_name] = module_bytes
+            with open(module_file, "wb") as f:
+                f.write(module_bytes)
+        elif module_name in _module_cache:
+            logger.info("Loading module from cache")
+            module_bytes = _module_cache[module_name]
             with open(module_file, "wb") as f:
                 f.write(module_bytes)
         elif HAS_FTL_GATE:
@@ -318,7 +315,6 @@ async def execute_module(
             try:
                 import importlib.resources
                 gate_files = importlib.resources.files(ftl_gate)
-                # Try exact name first, then with .py extension
                 for candidate in (module_name, f"{module_name}.py"):
                     try:
                         module_bytes = gate_files.joinpath(candidate).read_bytes()
@@ -338,12 +334,10 @@ async def execute_module(
 
         # Detect module type and execute appropriately
         if is_zip_bundle(module_bytes):
-            # ZIP bundle (from build_bundle_from_fqcn) - execute as python bundle.zip
             logger.info("Detected ZIP bundle")
             bundle_file = os.path.join(tempdir, f"{module_name}.zip")
             with open(bundle_file, "wb") as f:
                 f.write(module_bytes)
-            # Bundles expect JSON args on stdin (like new-style modules)
             stdin_data = json.dumps({"ANSIBLE_MODULE_ARGS": module_args or {}}).encode()
             stdout, stderr, rc = await check_output(
                 f"{sys.executable} {bundle_file}",
@@ -360,7 +354,6 @@ async def execute_module(
             stdout, stderr, rc = await check_output(f"{module_file} {args_file}")
 
         elif is_ftl_module(module_bytes):
-            # FTL modules: raw JSON args on stdin, JSON result on stdout
             logger.info("Detected FTL module")
             stdin_data = json.dumps(module_args or {}).encode()
             stdout, stderr, rc = await check_output(
@@ -401,7 +394,7 @@ async def execute_module(
                 env=env,
             )
 
-        # Parse module JSON output to extract structured result fields
+        # Parse module JSON output
         stdout_str = stdout.decode(errors="replace")
         stderr_str = stderr.decode(errors="replace")
         result = {
@@ -409,8 +402,6 @@ async def execute_module(
             "stderr": stderr_str,
             "rc": rc,
         }
-        # Ansible modules write JSON to stdout; extract fields like
-        # changed, failed, msg, rc so the runner can handle them properly
         try:
             module_output = json.loads(stdout_str)
             if isinstance(module_output, dict):
@@ -418,37 +409,34 @@ async def execute_module(
         except (json.JSONDecodeError, ValueError):
             pass
 
-        # Send result
-        logger.info("Sending ModuleResult")
-        await protocol.send_message(
-            writer,
-            "ModuleResult",
-            result,
-        )
+        return result
 
     finally:
         logger.info(f"Cleaning up {tempdir}")
         shutil.rmtree(tempdir, ignore_errors=True)
 
 
-async def execute_ftl_module(
+async def execute_module(
     protocol: GateProtocol,
     writer: Any,
     module_name: str,
-    module: str,
+    module: str | None = None,
     module_args: dict[str, Any] | None = None,
 ) -> None:
-    """Execute an FTL-native module with async main() function.
+    """Execute module and send result via protocol (serial mode wrapper)."""
+    result = await run_module(module_name, module, module_args)
+    logger.info("Sending ModuleResult")
+    await protocol.send_message(writer, "ModuleResult", result)
 
-    FTL modules are Python modules with an async main() function that
-    can be executed directly without subprocess overhead.
 
-    Args:
-        protocol: Gate protocol for sending responses
-        writer: Output writer for sending results
-        module_name: Name identifier for the module
-        module: Base64-encoded Python source code, or empty for baked-in lookup
-        module_args: Arguments available to the module (passed to main)
+async def run_ftl_module(
+    module_name: str,
+    module: str,
+    module_args: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Execute an FTL-native module and return (response_type, response_data).
+
+    Returns ("FTLModuleResult", {...}), ("ModuleNotFound", {...}), or ("Error", {...}).
     """
     logger.info(f"Executing FTL module: {module_name}")
 
@@ -457,7 +445,6 @@ async def execute_ftl_module(
         if module:
             module_source = base64.b64decode(module)
         else:
-            # Try baked-in FTL module lookup
             try:
                 import importlib.resources
                 baked = importlib.resources.files("ftl_modules_baked")
@@ -465,17 +452,10 @@ async def execute_ftl_module(
                 logger.info(f"Loaded FTL module {module_name} from baked-in ftl_modules_baked/")
             except (ImportError, FileNotFoundError, TypeError):
                 logger.info(f"FTL module {module_name} not found in gate")
-                await protocol.send_message(
-                    writer, "ModuleNotFound", {"module_name": module_name}
-                )
-                return
+                return ("ModuleNotFound", {"module_name": module_name})
 
         module_compiled = compile(module_source, module_name, "exec")
 
-        # Execute module in isolated namespace
-        # Use single dict for globals and locals to avoid exec() pitfall where
-        # module-level imports go into locals but function bodies look up in globals
-        # Use module_name (not __main__) to avoid triggering if __name__ == "__main__" blocks
         namespace: dict[str, Any] = {
             "__file__": module_name,
             "__name__": f"ftl_module_{module_name}",
@@ -483,8 +463,6 @@ async def execute_ftl_module(
 
         exec(module_compiled, namespace)
 
-        # Find and call entry point
-        # Look for: main(), ftl_{module_name}(), or the first callable
         func_name = f"ftl_{module_name}"
         if "main" in namespace:
             main_func = namespace["main"]
@@ -493,11 +471,9 @@ async def execute_ftl_module(
         else:
             raise RuntimeError(f"Module {module_name} has no main() or {func_name}() function")
 
-        # Call the module function
         logger.info(f"Calling FTL module {main_func.__name__}()")
         args = module_args or {}
 
-        # Determine calling convention: main() gets dict arg, ftl_* gets kwargs
         import inspect
         sig = inspect.signature(main_func)
         use_kwargs = len(sig.parameters) > 1 or (
@@ -522,24 +498,26 @@ async def execute_ftl_module(
             else:
                 result = main_func(args)
 
-        # Send result
-        logger.info("Sending FTLModuleResult")
-        await protocol.send_message(
-            writer,
-            "FTLModuleResult",
-            {"result": result},
-        )
+        return ("FTLModuleResult", {"result": result})
 
     except Exception as e:
         logger.exception(f"FTL module execution failed: {e}")
-        await protocol.send_message(
-            writer,
-            "Error",
-            {
-                "message": f"FTL module execution failed: {e}",
-                "traceback": traceback.format_exc(),
-            },
-        )
+        return ("Error", {
+            "message": f"FTL module execution failed: {e}",
+            "traceback": traceback.format_exc(),
+        })
+
+
+async def execute_ftl_module(
+    protocol: GateProtocol,
+    writer: Any,
+    module_name: str,
+    module: str,
+    module_args: dict[str, Any] | None = None,
+) -> None:
+    """Execute FTL module and send result via protocol (serial mode wrapper)."""
+    resp_type, resp_data = await run_ftl_module(module_name, module, module_args)
+    await protocol.send_message(writer, resp_type, resp_data)
 
 
 # =============================================================================
@@ -577,6 +555,7 @@ class FileWatcher:
         self._inotify = None
         self._watches = {}  # wd -> path
         self._task = None
+        self._write_lock = None  # Set by main_multiplexed() for stdout serialization
 
     def add_watch(self, path: str) -> None:
         """Add a file watch. Starts the background event loop on first call."""
@@ -644,15 +623,27 @@ class FileWatcher:
                         logger.info(f"Watch removed by kernel for {path}")
 
                     try:
-                        await self._protocol.send_message(
-                            self._writer,
-                            "FileChanged",
-                            {
-                                "path": path,
-                                "event": event_name,
-                                "name": event.name,
-                            },
-                        )
+                        if self._write_lock:
+                            async with self._write_lock:
+                                await self._protocol.send_message(
+                                    self._writer,
+                                    "FileChanged",
+                                    {
+                                        "path": path,
+                                        "event": event_name,
+                                        "name": event.name,
+                                    },
+                                )
+                        else:
+                            await self._protocol.send_message(
+                                self._writer,
+                                "FileChanged",
+                                {
+                                    "path": path,
+                                    "event": event_name,
+                                    "name": event.name,
+                                },
+                            )
                     except BrokenPipeError:
                         return
         except asyncio.CancelledError:
@@ -703,6 +694,7 @@ class SystemMonitor:
         self._psutil = None
         self._prev_net = None
         self._prev_time = None
+        self._write_lock = None  # Set by main_multiplexed() for stdout serialization
 
     def start(self, interval: float = 2.0, include_processes: bool = True) -> None:
         """Start the monitoring loop. Lazy-imports psutil."""
@@ -725,9 +717,15 @@ class SystemMonitor:
                 await asyncio.sleep(self._interval)
                 metrics = self._collect_metrics()
                 try:
-                    await self._protocol.send_message(
-                        self._writer, "SystemMetrics", metrics
-                    )
+                    if self._write_lock:
+                        async with self._write_lock:
+                            await self._protocol.send_message(
+                                self._writer, "SystemMetrics", metrics
+                            )
+                    else:
+                        await self._protocol.send_message(
+                            self._writer, "SystemMetrics", metrics
+                        )
                 except BrokenPipeError:
                     return
         except asyncio.CancelledError:
@@ -927,7 +925,20 @@ async def main(args: list[str]) -> int | None:
                 logger.info("Hello received")
                 response_data = dict(data) if isinstance(data, dict) else {}
                 response_data["gate_hash"] = gate_hash
-                await protocol.send_message(writer, "Hello", response_data)
+
+                # Check for multiplexing capability
+                capabilities = data.get("capabilities", []) if isinstance(data, dict) else []
+                if "multiplex" in capabilities:
+                    response_data["capabilities"] = ["multiplex"]
+                    # Respond to Hello, then enter multiplexed mode
+                    if len(msg) == 3:
+                        await protocol.send_message_with_id(writer, "Hello", response_data, msg[2])
+                    else:
+                        await protocol.send_message(writer, "Hello", response_data)
+                    logger.info("Entering multiplexed mode")
+                    return await main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash)
+                else:
+                    await protocol.send_message(writer, "Hello", response_data)
 
             elif msg_type == "Module":
                 logger.info(f"Module execution requested: {data.get('module_name', 'unknown')}")
@@ -1110,6 +1121,214 @@ async def main(args: list[str]) -> int | None:
                 pass
 
             return 1
+
+
+async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash):
+    """Concurrent message handling loop for multiplexed mode.
+
+    Each incoming request is handled in its own asyncio task.
+    Responses carry the same msg_id as the request.
+    A write_lock serializes all writes to stdout.
+    """
+    write_lock = asyncio.Lock()
+
+    # Install write_lock on event sources so their unsolicited
+    # messages don't interleave with request responses.
+    watcher._write_lock = write_lock
+    monitor._write_lock = write_lock
+
+    async def handle_request(msg_type, data, msg_id):
+        """Handle a single request and send response with same msg_id."""
+        try:
+            if msg_type == "Module":
+                if not isinstance(data, dict):
+                    await protocol.send_message_with_id(
+                        writer, "Error", {"message": "Invalid Module data"},
+                        msg_id, write_lock=write_lock,
+                    )
+                    return
+                try:
+                    result = await run_module(
+                        data.get("module_name", ""),
+                        data.get("module"),
+                        data.get("module_args", {}),
+                    )
+                    await protocol.send_message_with_id(
+                        writer, "ModuleResult", result,
+                        msg_id, write_lock=write_lock,
+                    )
+                except ModuleNotFoundError as e:
+                    await protocol.send_message_with_id(
+                        writer, "ModuleNotFound",
+                        {"message": f"Module not found: {e}"},
+                        msg_id, write_lock=write_lock,
+                    )
+
+            elif msg_type == "FTLModule":
+                if not isinstance(data, dict):
+                    await protocol.send_message_with_id(
+                        writer, "Error", {"message": "Invalid FTLModule data"},
+                        msg_id, write_lock=write_lock,
+                    )
+                    return
+                resp_type, resp_data = await run_ftl_module(
+                    data.get("module_name", ""),
+                    data.get("module", ""),
+                    data.get("module_args", {}),
+                )
+                await protocol.send_message_with_id(
+                    writer, resp_type, resp_data,
+                    msg_id, write_lock=write_lock,
+                )
+
+            elif msg_type == "Info":
+                await protocol.send_message_with_id(
+                    writer, "InfoResult", {
+                        "python_version": sys.version,
+                        "python_executable": sys.executable,
+                        "gate_location": os.path.abspath(sys.argv[0]) if sys.argv else "",
+                        "platform": sys.platform,
+                        "pid": os.getpid(),
+                        "cwd": os.getcwd(),
+                    },
+                    msg_id, write_lock=write_lock,
+                )
+
+            elif msg_type == "ListModules":
+                modules = list_gate_modules()
+                await protocol.send_message_with_id(
+                    writer, "ListModulesResult", {"modules": modules},
+                    msg_id, write_lock=write_lock,
+                )
+
+            elif msg_type == "Watch":
+                path = data.get("path", "") if isinstance(data, dict) else ""
+                try:
+                    watcher.add_watch(path)
+                    await protocol.send_message_with_id(
+                        writer, "WatchResult",
+                        {"path": path, "status": "ok"},
+                        msg_id, write_lock=write_lock,
+                    )
+                except ImportError:
+                    await protocol.send_message_with_id(
+                        writer, "WatchResult",
+                        {"path": path, "status": "error",
+                         "message": "inotify not available (Linux only)"},
+                        msg_id, write_lock=write_lock,
+                    )
+                except Exception as e:
+                    await protocol.send_message_with_id(
+                        writer, "WatchResult",
+                        {"path": path, "status": "error", "message": str(e)},
+                        msg_id, write_lock=write_lock,
+                    )
+
+            elif msg_type == "Unwatch":
+                path = data.get("path", "") if isinstance(data, dict) else ""
+                found = watcher.remove_watch(path)
+                await protocol.send_message_with_id(
+                    writer, "UnwatchResult",
+                    {"path": path, "removed": found},
+                    msg_id, write_lock=write_lock,
+                )
+
+            elif msg_type == "StartMonitor":
+                interval = data.get("interval", 2.0) if isinstance(data, dict) else 2.0
+                include_procs = data.get("include_processes", True) if isinstance(data, dict) else True
+                try:
+                    monitor.start(interval=interval, include_processes=include_procs)
+                    await protocol.send_message_with_id(
+                        writer, "MonitorResult", {"status": "ok"},
+                        msg_id, write_lock=write_lock,
+                    )
+                except ImportError:
+                    await protocol.send_message_with_id(
+                        writer, "MonitorResult",
+                        {"status": "error",
+                         "message": "psutil not available — install python3-psutil"},
+                        msg_id, write_lock=write_lock,
+                    )
+                except Exception as e:
+                    await protocol.send_message_with_id(
+                        writer, "MonitorResult",
+                        {"status": "error", "message": str(e)},
+                        msg_id, write_lock=write_lock,
+                    )
+
+            elif msg_type == "StopMonitor":
+                monitor.stop()
+                await protocol.send_message_with_id(
+                    writer, "MonitorResult", {"status": "stopped"},
+                    msg_id, write_lock=write_lock,
+                )
+
+            else:
+                await protocol.send_message_with_id(
+                    writer, "Error",
+                    {"message": f"Unknown message type: {msg_type}"},
+                    msg_id, write_lock=write_lock,
+                )
+
+        except Exception as e:
+            logger.exception(f"Request handler error for msg_id={msg_id}: {e}")
+            try:
+                await protocol.send_message_with_id(
+                    writer, "GateSystemError", {
+                        "message": f"System error: {e}",
+                        "traceback": traceback.format_exc(),
+                    },
+                    msg_id, write_lock=write_lock,
+                )
+            except Exception:
+                pass
+
+    # Main reader loop
+    tasks = set()
+    try:
+        while True:
+            msg = await protocol.read_message(reader)
+
+            if msg is None:
+                logger.info("EOF received in multiplexed mode, shutting down")
+                break
+
+            if len(msg) == 3:
+                msg_type, data, msg_id = msg
+            else:
+                msg_type, data = msg
+                msg_id = 0
+                logger.warning(f"Received 2-tuple in multiplexed mode: {msg_type}")
+
+            logger.debug(f"Multiplexed request: {msg_type} msg_id={msg_id}")
+
+            # Handle Shutdown synchronously
+            if msg_type == "Shutdown":
+                logger.info("Shutdown requested in multiplexed mode")
+                await protocol.send_message_with_id(
+                    writer, "Goodbye", {}, msg_id, write_lock=write_lock,
+                )
+                break
+
+            # Spawn concurrent task for all other message types
+            task = asyncio.create_task(handle_request(msg_type, data, msg_id))
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
+    finally:
+        # Wait for in-flight tasks to complete gracefully, then cancel stragglers
+        if tasks:
+            logger.info(f"Waiting for {len(tasks)} in-flight tasks to complete")
+            _, pending = await asyncio.wait(tasks, timeout=30)
+            if pending:
+                logger.warning(f"Cancelling {len(pending)} tasks after timeout")
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+        watcher.stop()
+        monitor.stop()
+
+    return None
 
 
 if __name__ == "__main__":

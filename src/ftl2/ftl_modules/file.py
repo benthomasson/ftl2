@@ -4,7 +4,9 @@ These modules handle file system operations like creating, copying,
 and managing files and directories. They run in-process for maximum
 performance.
 
-Supports event streaming for progress reporting on long-running operations.
+NOTE: Top-level imports are restricted to stdlib + FTLModuleError so
+that ftl_file works on remote gates (which don't have jinja2 or
+ftl2.events). Imports for ftl_copy and ftl_template are lazy.
 """
 
 import grp
@@ -14,29 +16,70 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Template
-
 from ftl2.ftl_modules.exceptions import FTLModuleError
-from ftl2.events import emit_progress, emit_log
 
 __all__ = ["ftl_file", "ftl_copy", "ftl_template"]
 
 
+def _apply_mode(p: Path, mode: str) -> bool:
+    """Apply file mode if different from current. Returns True if changed."""
+    mode_str = mode.lstrip("0") if mode.startswith("0") else mode
+    mode_int = int(mode_str, 8)
+    current_mode = p.stat().st_mode & 0o7777
+    if current_mode != mode_int:
+        p.chmod(mode_int)
+        return True
+    return False
+
+
+def _apply_owner(p: Path, owner: str) -> bool:
+    """Apply file owner if different from current. Returns True if changed."""
+    try:
+        uid = pwd.getpwnam(owner).pw_uid
+    except KeyError:
+        raise FTLModuleError(f"Unknown user: {owner}", path=str(p), owner=owner)
+    if p.stat().st_uid != uid:
+        os.chown(p, uid, -1)
+        return True
+    return False
+
+
+def _apply_group(p: Path, group: str) -> bool:
+    """Apply file group if different from current. Returns True if changed."""
+    try:
+        gid = grp.getgrnam(group).gr_gid
+    except KeyError:
+        raise FTLModuleError(f"Unknown group: {group}", path=str(p), group=group)
+    if p.stat().st_gid != gid:
+        os.chown(p, -1, gid)
+        return True
+    return False
+
+
 def ftl_file(
-    path: str,
+    path: str | None = None,
     state: str = "file",
     mode: str | None = None,
     owner: str | None = None,
     group: str | None = None,
+    src: str | None = None,
+    dest: str | None = None,
+    recurse: bool = False,
+    force: bool = False,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Manage file properties.
 
     Args:
         path: Path to the file or directory
-        state: Desired state - file, directory, absent, touch
+        state: Desired state - file, directory, absent, touch, link, hard
         mode: File mode (e.g., "0644", "755")
         owner: File owner username
         group: File group name
+        src: Source path for symlinks/hard links
+        dest: Alias for path (Ansible compat)
+        recurse: Apply mode/owner/group recursively to directory contents
+        force: Force link creation even if destination exists
 
     Returns:
         Result dict with changed status and path
@@ -44,13 +87,18 @@ def ftl_file(
     Raises:
         FTLModuleError: If operation fails
     """
+    # Resolve path — dest is an alias for path (Ansible compat)
+    path = dest or path
+    if not path:
+        raise FTLModuleError("'path' or 'dest' is required")
+
     p = Path(path)
     changed = False
 
     try:
         if state == "absent":
-            if p.exists():
-                if p.is_dir():
+            if p.exists() or p.is_symlink():
+                if p.is_dir() and not p.is_symlink():
                     shutil.rmtree(p)
                 else:
                     p.unlink()
@@ -68,10 +116,10 @@ def ftl_file(
 
         elif state == "touch":
             if not p.exists():
+                p.parent.mkdir(parents=True, exist_ok=True)
                 p.touch()
                 changed = True
             else:
-                # Update mtime
                 p.touch()
                 changed = True
 
@@ -82,57 +130,106 @@ def ftl_file(
                     path=path,
                 )
 
+        elif state == "link":
+            if not src:
+                raise FTLModuleError(
+                    "'src' is required for state=link",
+                    path=path,
+                )
+            if p.is_symlink():
+                current_target = os.readlink(p)
+                if current_target == src:
+                    changed = False
+                elif force:
+                    p.unlink()
+                    os.symlink(src, p)
+                    changed = True
+                else:
+                    p.unlink()
+                    os.symlink(src, p)
+                    changed = True
+            elif p.exists():
+                if force:
+                    if p.is_dir():
+                        shutil.rmtree(p)
+                    else:
+                        p.unlink()
+                    os.symlink(src, p)
+                    changed = True
+                else:
+                    raise FTLModuleError(
+                        f"Destination exists and is not a symlink: {path}",
+                        path=path,
+                        src=src,
+                    )
+            else:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(src, p)
+                changed = True
+
+        elif state == "hard":
+            if not src:
+                raise FTLModuleError(
+                    "'src' is required for state=hard",
+                    path=path,
+                )
+            if p.exists():
+                # Check if already the same inode
+                if os.stat(p).st_ino == os.stat(src).st_ino:
+                    changed = False
+                elif force:
+                    p.unlink()
+                    os.link(src, p)
+                    changed = True
+                else:
+                    raise FTLModuleError(
+                        f"Destination already exists: {path}",
+                        path=path,
+                        src=src,
+                    )
+            else:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                os.link(src, p)
+                changed = True
+
         else:
             raise FTLModuleError(
-                f"Invalid state: {state}",
+                f"Invalid state: {state}. Must be one of: file, directory, absent, touch, link, hard",
                 path=path,
                 state=state,
             )
 
-        # Handle mode changes
-        if mode and p.exists():
-            # Normalize mode string
-            mode_str = mode.lstrip("0") if mode.startswith("0") else mode
-            mode_int = int(mode_str, 8)
-            current_mode = p.stat().st_mode & 0o7777
-
-            if current_mode != mode_int:
-                p.chmod(mode_int)
-                changed = True
-
-        # Handle owner changes
-        if owner and p.exists():
-            try:
-                uid = pwd.getpwnam(owner).pw_uid
-                current_uid = p.stat().st_uid
-                if current_uid != uid:
-                    os.chown(p, uid, -1)
+        # Apply mode/owner/group
+        if p.exists() and not p.is_symlink():
+            if recurse and p.is_dir():
+                # Walk directory tree and apply to all entries
+                for dirpath, dirnames, filenames in os.walk(str(p)):
+                    dp = Path(dirpath)
+                    if mode and _apply_mode(dp, mode):
+                        changed = True
+                    if owner and _apply_owner(dp, owner):
+                        changed = True
+                    if group and _apply_group(dp, group):
+                        changed = True
+                    for fname in filenames:
+                        fp = dp / fname
+                        if mode and _apply_mode(fp, mode):
+                            changed = True
+                        if owner and _apply_owner(fp, owner):
+                            changed = True
+                        if group and _apply_group(fp, group):
+                            changed = True
+            else:
+                if mode and _apply_mode(p, mode):
                     changed = True
-            except KeyError:
-                raise FTLModuleError(
-                    f"Unknown user: {owner}",
-                    path=path,
-                    owner=owner,
-                )
-
-        # Handle group changes
-        if group and p.exists():
-            try:
-                gid = grp.getgrnam(group).gr_gid
-                current_gid = p.stat().st_gid
-                if current_gid != gid:
-                    os.chown(p, -1, gid)
+                if owner and _apply_owner(p, owner):
                     changed = True
-            except KeyError:
-                raise FTLModuleError(
-                    f"Unknown group: {group}",
-                    path=path,
-                    group=group,
-                )
+                if group and _apply_group(p, group):
+                    changed = True
 
         return {
             "changed": changed,
-            "path": str(p.absolute()),
+            "path": str(p.absolute()) if not p.is_symlink() else str(p),
             "state": state,
         }
 
@@ -180,6 +277,13 @@ def ftl_copy(
     Events:
         progress: Emitted during copy with percent, current, total bytes
     """
+    # Lazy import — not available on remote gates
+    try:
+        from ftl2.events import emit_progress
+    except ImportError:
+        emit_events = False
+        emit_progress = None
+
     # Resolve relative paths from current working directory
     # This matches Ansible's behavior where src is relative to playbook dir
     src_path = Path(src)
@@ -234,7 +338,7 @@ def ftl_copy(
             copied = 0
             chunk_size = 65536  # 64KB chunks
 
-            if emit_events:
+            if emit_events and emit_progress:
                 emit_progress(
                     percent=0,
                     message=f"Copying {src_path.name}",
@@ -247,7 +351,7 @@ def ftl_copy(
                     f_out.write(chunk)
                     copied += len(chunk)
 
-                    if emit_events and total_size > 0:
+                    if emit_events and emit_progress and total_size > 0:
                         percent = int(copied * 100 / total_size)
                         emit_progress(
                             percent=percent,
@@ -261,11 +365,7 @@ def ftl_copy(
 
         # Apply mode if specified
         if mode:
-            mode_str = mode.lstrip("0") if mode.startswith("0") else mode
-            mode_int = int(mode_str, 8)
-            current_mode = dest_path.stat().st_mode & 0o7777
-            if current_mode != mode_int:
-                dest_path.chmod(mode_int)
+            if _apply_mode(dest_path, mode):
                 changed = True
 
         result: dict[str, Any] = {
@@ -315,6 +415,14 @@ def ftl_template(
     Raises:
         FTLModuleError: If rendering or writing fails
     """
+    # Lazy import — jinja2 not available on remote gates
+    try:
+        from jinja2 import Template
+    except ImportError:
+        raise FTLModuleError(
+            "jinja2 is required for template module but not installed",
+        )
+
     # Resolve relative paths from current working directory
     src_path = Path(src)
     if not src_path.is_absolute():
@@ -349,11 +457,7 @@ def ftl_template(
 
         # Apply mode if specified
         if mode:
-            mode_str = mode.lstrip("0") if mode.startswith("0") else mode
-            mode_int = int(mode_str, 8)
-            current_mode = dest_path.stat().st_mode & 0o7777
-            if current_mode != mode_int:
-                dest_path.chmod(mode_int)
+            if _apply_mode(dest_path, mode):
                 changed = True
 
         return {

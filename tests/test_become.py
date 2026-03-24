@@ -198,11 +198,11 @@ class TestGateCacheKey:
 
         bc = BecomeConfig(become=True, become_user="root")
         key = AutomationContext._gate_cache_key("web01", bc)
-        assert key == "web01:become=root"
+        assert key == "web01:become=root:method=sudo"
 
     def test_become_user(self):
         from ftl2.automation.context import AutomationContext
 
         bc = BecomeConfig(become=True, become_user="catbeez")
         key = AutomationContext._gate_cache_key("web01", bc)
-        assert key == "web01:become=catbeez"
+        assert key == "web01:become=catbeez:method=sudo"
