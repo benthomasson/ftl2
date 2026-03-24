@@ -203,6 +203,115 @@ class TestStateClass:
             assert state2.get_host("web01")["ansible_host"] == "1.2.3.4"
 
 
+class TestStateToInventoryRoundTrip:
+    """Tests for state -> inventory YAML -> load_inventory round-trip."""
+
+    def test_single_group_round_trip(self):
+        """State with one group round-trips through YAML inventory."""
+        from tools.ftl2_state_to_inventory import state_to_inventory
+        from ftl2.inventory import load_inventory
+
+        state = {
+            "hosts": {
+                "web01": {
+                    "ansible_host": "1.2.3.4",
+                    "ansible_user": "admin",
+                    "ansible_port": 22,
+                    "groups": ["webservers"],
+                },
+            },
+        }
+
+        yaml_out = state_to_inventory(state)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_out)
+            f.flush()
+            inventory = load_inventory(f.name)
+
+        hosts = inventory.get_all_hosts()
+        assert "web01" in hosts
+        assert hosts["web01"].ansible_host == "1.2.3.4"
+        assert hosts["web01"].ansible_user == "admin"
+
+    def test_multiple_groups_round_trip(self):
+        """State with multiple groups round-trips through YAML inventory."""
+        from tools.ftl2_state_to_inventory import state_to_inventory
+        from ftl2.inventory import load_inventory
+
+        state = {
+            "hosts": {
+                "web01": {
+                    "ansible_host": "1.2.3.4",
+                    "groups": ["webservers", "production"],
+                },
+                "db01": {
+                    "ansible_host": "1.2.3.5",
+                    "ansible_user": "dbadmin",
+                    "groups": ["databases"],
+                },
+            },
+        }
+
+        yaml_out = state_to_inventory(state)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_out)
+            f.flush()
+            inventory = load_inventory(f.name)
+
+        hosts = inventory.get_all_hosts()
+        assert "web01" in hosts
+        assert "db01" in hosts
+        assert hosts["web01"].ansible_host == "1.2.3.4"
+        assert hosts["db01"].ansible_host == "1.2.3.5"
+        assert hosts["db01"].ansible_user == "dbadmin"
+
+        # Check groups exist
+        assert inventory.get_group("webservers") is not None
+        assert inventory.get_group("production") is not None
+        assert inventory.get_group("databases") is not None
+
+    def test_ungrouped_round_trip(self):
+        """State with no groups round-trips through YAML inventory."""
+        from tools.ftl2_state_to_inventory import state_to_inventory
+        from ftl2.inventory import load_inventory
+
+        state = {
+            "hosts": {
+                "web01": {
+                    "ansible_host": "1.2.3.4",
+                    "ansible_port": 22,
+                },
+            },
+        }
+
+        yaml_out = state_to_inventory(state)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_out)
+            f.flush()
+            inventory = load_inventory(f.name)
+
+        hosts = inventory.get_all_hosts()
+        assert "web01" in hosts
+        assert hosts["web01"].ansible_host == "1.2.3.4"
+
+    def test_empty_state_round_trip(self):
+        """Empty state produces valid YAML inventory."""
+        from tools.ftl2_state_to_inventory import state_to_inventory
+        from ftl2.inventory import load_inventory
+
+        yaml_out = state_to_inventory({"hosts": {}})
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_out)
+            f.flush()
+            inventory = load_inventory(f.name, require_hosts=False)
+
+        assert len(inventory.get_all_hosts()) == 0
+
+
 class TestMergeStateIntoInventory:
     """Tests for merging state hosts into inventory."""
 
