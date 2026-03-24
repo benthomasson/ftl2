@@ -89,21 +89,86 @@ class Gate:
     Holds all components needed for remote module execution through a gate:
     the SSH connection, the gate process, and the temporary directory.
 
+    When multiplexed=True, multiple requests can be in-flight simultaneously.
+    A background reader task dispatches responses to Futures by msg_id.
+
     Attributes:
         conn: Active SSH connection to the remote host
         gate_process: Running gate process for module execution
         temp_dir: Temporary directory path on remote host
-
-    Example:
-        >>> gate = Gate(conn, process, "/tmp")
-        >>> # Use gate for module execution
-        >>> await close_gate(gate)
+        multiplexed: True if gate negotiated multiplexing support
     """
 
     conn: SSHClientConnection
     gate_process: "SSHClientProcess[Any]"
     temp_dir: str
     interpreter: str = "python3"
+    multiplexed: bool = False
+    _msg_counter: int = field(default=0, repr=False)
+    _pending: dict[int, asyncio.Future] = field(default_factory=dict, repr=False)
+    _reader_task: asyncio.Task | None = field(default=None, repr=False)
+    _write_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+    def next_msg_id(self) -> int:
+        """Return the next message ID."""
+        self._msg_counter += 1
+        return self._msg_counter
+
+    def create_future(self, msg_id: int) -> asyncio.Future:
+        """Create a Future for a pending request."""
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._pending[msg_id] = future
+        return future
+
+
+async def _gate_reader_loop(
+    gate: Gate,
+    protocol: "GateProtocol",
+    event_callback: Any = None,
+) -> None:
+    """Background task: reads all messages from a multiplexed gate.
+
+    Routes 3-tuple responses to pending Futures by msg_id.
+    Routes 2-tuple events to the event callback.
+    Fails all pending Futures on EOF or error.
+    """
+    try:
+        while True:
+            msg = await protocol.read_message(gate.gate_process.stdout)
+            if msg is None:
+                # EOF — fail all pending
+                for future in gate._pending.values():
+                    if not future.done():
+                        future.set_exception(
+                            ConnectionError("Gate connection closed")
+                        )
+                gate._pending.clear()
+                return
+
+            if len(msg) == 3:
+                msg_type, data, msg_id = msg
+                future = gate._pending.pop(msg_id, None)
+                if future and not future.done():
+                    future.set_result((msg_type, data))
+                else:
+                    logger.warning(f"No pending future for msg_id={msg_id}")
+            elif len(msg) == 2:
+                msg_type, data = msg
+                if event_callback:
+                    try:
+                        await event_callback(msg_type, data)
+                    except Exception:
+                        logger.exception(f"Event callback error for {msg_type}")
+
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        logger.error(f"Gate reader error: {e}")
+        for future in gate._pending.values():
+            if not future.done():
+                future.set_exception(e)
+        gate._pending.clear()
 
 
 class ModuleRunner(ABC):
@@ -488,6 +553,13 @@ class RemoteModuleRunner(ModuleRunner):
         self.gate_builder: GateBuilder | None = None
         self.protocol = GateProtocol()
 
+    @staticmethod
+    def _gate_cache_key(host_name: str, become: "BecomeConfig | None" = None) -> str:
+        """Build composite gate cache key including become config."""
+        if become and become.effective:
+            return f"{host_name}:become={become.become_user}:method={become.become_method}"
+        return host_name
+
     async def run(
         self,
         host: HostConfig,
@@ -540,9 +612,13 @@ class RemoteModuleRunner(ModuleRunner):
                 cache_dir = Path.home() / ".ftl2" / "gates"
             self.gate_builder = GateBuilder(cache_dir)
 
+        # Build composite cache key including become config
+        become = host.become_config
+        cache_key = self._gate_cache_key(host.name, become)
+
         # Get or create gate connection
         gate = await self._get_or_create_gate(
-            host.name, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context
+            cache_key, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context
         )
 
         try:
@@ -552,7 +628,7 @@ class RemoteModuleRunner(ModuleRunner):
             )
 
             # Cache the gate for reuse
-            self.gate_cache[host.name] = gate
+            self.gate_cache[cache_key] = gate
 
             # Convert to ModuleResult
             success = result_data.get("rc", 0) == 0 and not result_data.get("failed", False)
@@ -567,13 +643,13 @@ class RemoteModuleRunner(ModuleRunner):
         except Exception as e:
             # Clean up gate on error
             await self._close_gate(gate)
-            if host.name in self.gate_cache:
-                del self.gate_cache[host.name]
+            if cache_key in self.gate_cache:
+                del self.gate_cache[cache_key]
             raise ModuleExecutionError(f"Remote execution failed on {host.name}: {e}") from e
 
     async def _get_or_create_gate(
         self,
-        host_name: str,
+        cache_key: str,
         ssh_host: str,
         ssh_port: int,
         ssh_user: str,
@@ -585,7 +661,7 @@ class RemoteModuleRunner(ModuleRunner):
         """Get cached gate or create new one.
 
         Args:
-            host_name: Host identifier for caching
+            cache_key: Composite cache key (host + become config)
             ssh_host: SSH hostname/IP
             ssh_port: SSH port
             ssh_user: SSH username
@@ -598,19 +674,19 @@ class RemoteModuleRunner(ModuleRunner):
             Active Gate connection
         """
         # Check cache first
-        if host_name in self.gate_cache:
-            gate = self.gate_cache[host_name]
+        if cache_key in self.gate_cache:
+            gate = self.gate_cache[cache_key]
             if gate.interpreter == interpreter:
-                logger.debug(f"Reusing cached gate for {host_name}")
-                del self.gate_cache[host_name]  # Remove from cache to use
+                logger.debug(f"Reusing cached gate for {cache_key}")
+                del self.gate_cache[cache_key]  # Remove from cache to use
                 return gate
             else:
-                logger.info(f"Interpreter changed for {host_name} ({gate.interpreter} -> {interpreter}), creating new gate")
-                del self.gate_cache[host_name]
+                logger.info(f"Interpreter changed for {cache_key} ({gate.interpreter} -> {interpreter}), creating new gate")
+                del self.gate_cache[cache_key]
                 await self._close_gate(gate)
 
         # Create new gate connection
-        logger.info(f"Creating new gate for {host_name}")
+        logger.info(f"Creating new gate for {cache_key}")
         return await self._connect_gate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context)
 
     async def _connect_gate(
@@ -701,10 +777,19 @@ class RemoteModuleRunner(ModuleRunner):
                     await self._update_gate_stable_path(conn, gate_local_path)
 
                 # Start gate process (subsystem now uses the updated .pyz)
-                gate_process, remote_gate_hash, used_subsystem = await self._open_gate(conn, gate_file, interpreter, become=become)
+                gate_process, remote_gate_hash, used_subsystem, supports_multiplex = await self._open_gate(conn, gate_file, interpreter, become=become)
+
+                gate = Gate(conn, gate_process, temp_dir, interpreter,
+                            multiplexed=supports_multiplex)
+
+                if supports_multiplex:
+                    gate._reader_task = asyncio.create_task(
+                        _gate_reader_loop(gate, self.protocol)
+                    )
+                    logger.info(f"Multiplexed gate for {ssh_host}:{ssh_port}")
 
                 logger.info(f"Connected to {ssh_host}:{ssh_port} successfully")
-                return Gate(conn, gate_process, temp_dir, interpreter)
+                return gate
 
             except asyncssh.misc.PermissionDenied as e:
                 # Authentication failures should not retry - they won't succeed
@@ -880,8 +965,10 @@ class RemoteModuleRunner(ModuleRunner):
                 process = await conn.create_process(f"{interpreter} {gate_file}", encoding=None)
                 logger.info("Connected via SSH exec (subsystem not available)")
 
-        # Send Hello and wait for response
-        await self.protocol.send_message(process.stdin, "Hello", {})  # type: ignore[arg-type]
+        # Send Hello with multiplexing capability request
+        await self.protocol.send_message(
+            process.stdin, "Hello", {"capabilities": ["multiplex"]}  # type: ignore[arg-type]
+        )
         response = await self.protocol.read_message(process.stdout)  # type: ignore[arg-type]
 
         if response is None or response[0] != "Hello":
@@ -889,13 +976,16 @@ class RemoteModuleRunner(ModuleRunner):
             logger.error(f"Gate handshake failed: {error}")
             raise Exception(f"Gate handshake failed: {error}")
 
-        # Extract gate hash from Hello response
-        _, hello_data = response
+        # Extract gate hash and capabilities from Hello response
+        hello_data = response[1]
         remote_gate_hash = ""
+        supports_multiplex = False
         if isinstance(hello_data, dict):
             remote_gate_hash = hello_data.get("gate_hash", "")
+            capabilities = hello_data.get("capabilities", [])
+            supports_multiplex = "multiplex" in capabilities
 
-        return process, remote_gate_hash, used_subsystem
+        return process, remote_gate_hash, used_subsystem, supports_multiplex
 
     async def _execute_through_gate(
         self,
@@ -1180,9 +1270,30 @@ class RemoteModuleRunner(ModuleRunner):
         Args:
             gate: Gate connection to close
         """
+        # Cancel background reader task
+        if gate._reader_task:
+            gate._reader_task.cancel()
+            try:
+                await gate._reader_task
+            except asyncio.CancelledError:
+                pass
+
+        # Fail any pending futures
+        for future in gate._pending.values():
+            if not future.done():
+                future.set_exception(ConnectionError("Gate shutting down"))
+        gate._pending.clear()
+
         try:
             # Send shutdown message
-            await self.protocol.send_message(gate.gate_process.stdin, "Shutdown", {})  # type: ignore[arg-type]
+            if gate.multiplexed:
+                msg_id = gate.next_msg_id()
+                await self.protocol.send_message_with_id(
+                    gate.gate_process.stdin, "Shutdown", {},  # type: ignore[arg-type]
+                    msg_id, write_lock=gate._write_lock,
+                )
+            else:
+                await self.protocol.send_message(gate.gate_process.stdin, "Shutdown", {})  # type: ignore[arg-type]
             # Read any remaining stderr
             if gate.gate_process.exit_status is not None:
                 await gate.gate_process.stderr.read()

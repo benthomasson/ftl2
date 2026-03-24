@@ -4,7 +4,10 @@ Implements length-prefixed JSON protocol for communication between
 the main process and remote gate processes via SSH.
 
 Protocol format: [8-byte hex length][JSON message body]
-Example: "0000001a" + ["Hello", {}]
+
+Messages are either 2-tuples or 3-tuples:
+  2-tuple: ["MsgType", {data}]           — legacy / event messages
+  3-tuple: ["MsgType", {data}, msg_id]   — multiplexed request/response
 """
 
 from __future__ import annotations
@@ -103,6 +106,53 @@ class GateProtocol:
             logger.exception(f"Failed to send message: {e}")
             raise ProtocolError(f"Failed to send message: {e}") from e
 
+    async def send_message_with_id(
+        self,
+        writer: asyncio.StreamWriter,
+        msg_type: str,
+        data: Any,
+        msg_id: int,
+        *,
+        write_lock: asyncio.Lock | None = None,
+    ) -> None:
+        """Send a multiplexed message with a msg_id.
+
+        Serialized as 3-tuple: [msg_type, data, msg_id].
+        If write_lock is provided, the write+drain is atomic.
+
+        Args:
+            writer: Async stream writer (binary mode)
+            msg_type: Message type string
+            data: Message data (must be JSON-serializable)
+            msg_id: Message ID for request/response correlation
+            write_lock: Optional lock for concurrent writer access
+        """
+        try:
+            message = [msg_type, data, msg_id]
+            json_str = json.dumps(message)
+            json_bytes = json_str.encode("utf-8")
+            length = len(json_bytes)
+            length_prefix = f"{length:08x}".encode("ascii")
+
+            if write_lock:
+                async with write_lock:
+                    writer.write(length_prefix)
+                    writer.write(json_bytes)
+                    await writer.drain()
+            else:
+                writer.write(length_prefix)
+                writer.write(json_bytes)
+                await writer.drain()
+
+            logger.debug(f"Sent message: {msg_type}, msg_id={msg_id}, length={length}")
+
+        except BrokenPipeError:
+            logger.error("Broken pipe while sending message")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to send message: {e}")
+            raise ProtocolError(f"Failed to send message: {e}") from e
+
     async def send_message_str(
         self,
         writer: Any,
@@ -150,14 +200,16 @@ class GateProtocol:
     async def read_message(
         self,
         reader: asyncio.StreamReader,
-    ) -> tuple[str, Any] | None:
+    ) -> tuple[str, Any] | tuple[str, Any, int] | None:
         """Read a message using length-prefixed JSON protocol.
 
         Args:
             reader: Async stream reader (binary mode)
 
         Returns:
-            Tuple of (message_type, data) or None on EOF
+            2-tuple (msg_type, data) for legacy/event messages,
+            3-tuple (msg_type, data, msg_id) for multiplexed messages,
+            or None on EOF.
 
         Raises:
             ProtocolError: If message format is invalid
@@ -219,17 +271,20 @@ class GateProtocol:
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 raise ProtocolError(f"Invalid JSON: {json_bytes[:100]!r}") from e
 
-            # Validate message format
-            if not isinstance(message, list) or len(message) != 2:
+            # Validate message format (2-tuple or 3-tuple)
+            if not isinstance(message, list) or len(message) not in (2, 3):
                 raise ProtocolError(f"Invalid message format: {message}")
 
-            msg_type, data = message
+            msg_type = message[0]
+            data = message[1]
 
             if not isinstance(msg_type, str):
                 raise ProtocolError(f"Invalid message type: {msg_type}")
 
             logger.debug(f"Received message: {msg_type}, length={length}")
 
+            if len(message) == 3:
+                return (msg_type, data, message[2])
             return (msg_type, data)
 
         except ProtocolError:

@@ -395,6 +395,8 @@ class AutomationContext:
         self._hosts_proxy: HostsProxy | None = None
         self._ssh_connections: dict[str, SSHHost] = {}
         self._remote_runner: "RemoteModuleRunner | None" = None
+        self._gate_locks: dict[str, asyncio.Lock] = {}
+        self._bundle_cache: "BundleCache | None" = None
         self._start_time: float | None = None
 
     def _load_bound_secrets(self) -> None:
@@ -958,30 +960,54 @@ class AutomationContext:
         from ftl2.message import GateProtocol
 
         become = host.become_config
-        gate = await self._get_or_create_gate(host, become=become)
+        cache_key = self._gate_cache_key(host.name, become)
 
-        await self._remote_runner.protocol.send_message(
-            gate.gate_process.stdin, msg_type, data
-        )
-
-        while True:
-            response = await self._remote_runner.protocol.read_message(
-                gate.gate_process.stdout
+        # Fast path: multiplexed gate — use msg_id future, no lock
+        cached_gate = self._remote_runner.gate_cache.get(cache_key)
+        if cached_gate and cached_gate.multiplexed:
+            msg_id = cached_gate.next_msg_id()
+            future = cached_gate.create_future(msg_id)
+            await self._remote_runner.protocol.send_message_with_id(
+                cached_gate.gate_process.stdin, msg_type, data,
+                msg_id, write_lock=cached_gate._write_lock,
             )
-            if response is None:
-                raise ConnectionError(f"Gate connection closed for {host.name}")
+            return await future
 
-            resp_type, resp_data = response
+        # Serial path
+        async with self._gate_lock(cache_key):
+            gate = await self._get_or_create_gate(host, become=become)
 
-            # If this is an event message, dispatch it and keep reading
-            if resp_type in GateProtocol.EVENT_TYPES:
-                await self._dispatch_event(host.name, resp_type, resp_data)
-                continue
+            if gate.multiplexed:
+                self._remote_runner.gate_cache[cache_key] = gate
+                msg_id = gate.next_msg_id()
+                future = gate.create_future(msg_id)
+                await self._remote_runner.protocol.send_message_with_id(
+                    gate.gate_process.stdin, msg_type, data,
+                    msg_id, write_lock=gate._write_lock,
+                )
+                return await future
 
-            # Cache gate back for reuse
-            cache_key = self._gate_cache_key(host.name, become)
-            self._remote_runner.gate_cache[cache_key] = gate
-            return resp_type, resp_data
+            await self._remote_runner.protocol.send_message(
+                gate.gate_process.stdin, msg_type, data
+            )
+
+            while True:
+                response = await self._remote_runner.protocol.read_message(
+                    gate.gate_process.stdout
+                )
+                if response is None:
+                    raise ConnectionError(f"Gate connection closed for {host.name}")
+
+                resp_type, resp_data = response
+
+                # If this is an event message, dispatch it and keep reading
+                if resp_type in GateProtocol.EVENT_TYPES:
+                    await self._dispatch_event(host.name, resp_type, resp_data)
+                    continue
+
+                # Cache gate back for reuse
+                self._remote_runner.gate_cache[cache_key] = gate
+                return resp_type, resp_data
 
     async def listen(self, timeout: float | None = None) -> None:
         """Listen for events from all active gate connections.
@@ -1207,10 +1233,23 @@ class AutomationContext:
 
     @staticmethod
     def _gate_cache_key(host_name: str, become: "BecomeConfig | None" = None) -> str:
-        """Build composite gate cache key including become user."""
+        """Build composite gate cache key including become config."""
         if become and become.effective:
-            return f"{host_name}:become={become.become_user}"
+            return f"{host_name}:become={become.become_user}:method={become.become_method}"
         return host_name
+
+    def _gate_lock(self, cache_key: str) -> asyncio.Lock:
+        """Get or create a per-host lock for serializing gate access.
+
+        The gate communicates over stdin/stdout — a serial channel.
+        Without this lock, concurrent calls to the same host would each
+        create new SSH connections and gate processes (expensive), because
+        the pop-to-use cache pattern makes the gate invisible to other
+        callers while in use.
+        """
+        if cache_key not in self._gate_locks:
+            self._gate_locks[cache_key] = asyncio.Lock()
+        return self._gate_locks[cache_key]
 
     async def _execute_remote_via_gate(
         self,
@@ -1243,45 +1282,215 @@ class AutomationContext:
         if self._remote_runner is None:
             raise RuntimeError("RemoteModuleRunner not initialized - use 'async with' context manager")
 
-        ftl_attempted = False
-        if is_ftl_module(module_name):
-            # FTL module - try name-only first (gate may have it baked in)
-            try:
+        cache_key = self._gate_cache_key(host.name, become)
+
+        # Fast path: multiplexed gate already in cache — no lock needed
+        cached_gate = self._remote_runner.gate_cache.get(cache_key)
+        if cached_gate and cached_gate.multiplexed:
+            return await self._execute_multiplexed(cached_gate, host, module_name, params)
+
+        # Serial path: lock to prevent redundant SSH connections
+        async with self._gate_lock(cache_key):
+            # Re-check — another task may have created a multiplexed gate
+            cached_gate = self._remote_runner.gate_cache.get(cache_key)
+            if cached_gate and cached_gate.multiplexed:
+                return await self._execute_multiplexed(cached_gate, host, module_name, params)
+
+            # Create gate if needed — if it turns out multiplexed, use that path
+            gate = await self._get_or_create_gate(host, become=become)
+            if gate.multiplexed:
+                self._remote_runner.gate_cache[cache_key] = gate
+                return await self._execute_multiplexed(gate, host, module_name, params)
+
+            ftl_attempted = False
+            if is_ftl_module(module_name):
+                # FTL module - try name-only first (gate may have it baked in)
+                try:
+                    gate = await self._get_or_create_gate(host, become=become)
+
+                    # Send name-only FTLModule message
+                    await self._remote_runner.protocol.send_message(
+                        gate.gate_process.stdin,
+                        "FTLModule",
+                        {
+                            "module_name": module_name,
+                            "module_args": params,
+                        },
+                    )
+                    response = await self._remote_runner.protocol.read_message(gate.gate_process.stdout)
+
+                    if response is not None and response[0] == "ModuleNotFound":
+                        # Not baked in — send source
+                        source = get_ftl_module_source(module_name)
+                        result_data = await self._remote_runner.run_ftl_module(
+                            gate, module_name, source, params
+                        )
+                    elif response is not None and response[0] == "FTLModuleResult":
+                        result_data = dict(response[1])
+                        # Gate wraps module output in {"result": ...} — unwrap it
+                        if "result" in result_data and isinstance(result_data["result"], dict):
+                            result_data = result_data["result"]
+                    elif response is not None and response[0] == "Error":
+                        raise Exception(response[1].get("message", "Unknown FTL module error"))
+                    else:
+                        raise Exception(f"Unexpected response: {response}")
+
+                    # Cache gate for reuse
+                    self._remote_runner.gate_cache[cache_key] = gate
+                    ftl_attempted = True
+                except Exception as e:
+                    # FTL module failed (missing deps, etc.) - fall back to Ansible bundle
+                    error_msg = str(e)
+                    if "No module named" in error_msg or "ImportError" in error_msg:
+                        ftl_attempted = False
+                    else:
+                        raise
+
+            if not ftl_attempted:
+                # Ansible module - build bundle and send through gate
+                import json
+
+                # Get gate connection
                 gate = await self._get_or_create_gate(host, become=become)
 
-                # Send name-only FTLModule message
+                # Try name-only first (gate may have module baked in)
                 await self._remote_runner.protocol.send_message(
                     gate.gate_process.stdin,
-                    "FTLModule",
+                    "Module",
                     {
                         "module_name": module_name,
                         "module_args": params,
                     },
                 )
+
                 response = await self._remote_runner.protocol.read_message(gate.gate_process.stdout)
 
                 if response is not None and response[0] == "ModuleNotFound":
-                    # Not baked in — send source
-                    source = get_ftl_module_source(module_name)
-                    result_data = await self._remote_runner.run_ftl_module(
-                        gate, module_name, source, params
+                    # Module not in gate — build bundle and retry
+                    import base64
+
+                    if "." not in module_name:
+                        fqcn = f"ansible.builtin.{module_name}"
+                    else:
+                        fqcn = module_name
+
+                    bundle = self._bundle_cache.get_or_build(fqcn)
+                    bundle_b64 = base64.b64encode(bundle.data).decode()
+                    await self._remote_runner.protocol.send_message(
+                        gate.gate_process.stdin,
+                        "Module",
+                        {
+                            "module": bundle_b64,
+                            "module_name": module_name,
+                            "module_args": params,
+                        },
                     )
-                elif response is not None and response[0] == "FTLModuleResult":
-                    result_data = dict(response[1])
-                    # Gate wraps module output in {"result": ...} — unwrap it
-                    if "result" in result_data and isinstance(result_data["result"], dict):
-                        result_data = result_data["result"]
-                elif response is not None and response[0] == "Error":
-                    raise Exception(response[1].get("message", "Unknown FTL module error"))
+                    response = await self._remote_runner.protocol.read_message(gate.gate_process.stdout)
+
+                if response is None:
+                    result_data = {"failed": True, "msg": "No response from gate"}
                 else:
-                    raise Exception(f"Unexpected response: {response}")
+                    msg_type, data = response
+                    if msg_type == "ModuleResult":
+                        # Parse the stdout as JSON (Ansible module output)
+                        stdout = data.get("stdout", "")
+                        stderr = data.get("stderr", "")
+                        try:
+                            result_data = json.loads(stdout) if stdout.strip() else {}
+                            if stderr:
+                                result_data["_stderr"] = stderr
+                            if not result_data:
+                                result_data = {
+                                    "failed": True,
+                                    "msg": f"Empty response from module. stderr: {stderr}",
+                                }
+                            # Module crashed during import/execution — stderr has
+                            # a traceback but stdout has no failure indicator.
+                            if stderr and "Traceback" in stderr and not result_data.get("failed"):
+                                result_data["failed"] = True
+                                result_data["msg"] = f"Module crashed: {stderr.strip().splitlines()[-1]}"
+                        except json.JSONDecodeError as e:
+                            result_data = {
+                                "failed": True,
+                                "msg": f"Invalid JSON response: {e}",
+                                "stdout": stdout,
+                                "stderr": stderr,
+                            }
+                    elif msg_type == "Error":
+                        result_data = {"failed": True, "msg": data.get("message", "Unknown error")}
+                    else:
+                        result_data = {"failed": True, "msg": f"Unexpected response: {msg_type}"}
 
                 # Cache gate for reuse
-                cache_key = self._gate_cache_key(host.name, become)
                 self._remote_runner.gate_cache[cache_key] = gate
+
+        # Convert to ExecuteResult (outside lock — no gate access needed)
+        failed = result_data.get("failed", False) or result_data.get("rc", 0) != 0
+        return ExecuteResult(
+            success=not failed,
+            changed=result_data.get("changed", False),
+            output=result_data,
+            error=result_data.get("msg", "") if failed else "",
+            module=module_name,
+            host=host.name,
+            used_ftl=is_ftl_module(module_name),
+        )
+
+    async def _execute_multiplexed(
+        self,
+        gate: "Gate",
+        host: HostConfig,
+        module_name: str,
+        params: dict[str, Any],
+    ) -> "ExecuteResult":
+        """Execute module through a multiplexed gate using msg_id futures.
+
+        No lock needed — multiple requests can be in-flight on the same gate.
+        The background reader task dispatches responses to Futures by msg_id.
+        """
+        from ftl2.ftl_modules.executor import is_ftl_module, get_ftl_module_source, ExecuteResult
+        import base64
+        import json
+
+        ftl_attempted = False
+        result_data: dict[str, Any] = {}
+
+        if is_ftl_module(module_name):
+            try:
+                # Send name-only FTLModule request
+                msg_id = gate.next_msg_id()
+                future = gate.create_future(msg_id)
+                await self._remote_runner.protocol.send_message_with_id(
+                    gate.gate_process.stdin, "FTLModule",
+                    {"module_name": module_name, "module_args": params},
+                    msg_id, write_lock=gate._write_lock,
+                )
+                resp_type, resp_data = await future
+
+                if resp_type == "ModuleNotFound":
+                    # Not baked in — send source with new msg_id
+                    source = get_ftl_module_source(module_name)
+                    module_b64 = base64.b64encode(source).decode()
+                    msg_id2 = gate.next_msg_id()
+                    future2 = gate.create_future(msg_id2)
+                    await self._remote_runner.protocol.send_message_with_id(
+                        gate.gate_process.stdin, "FTLModule",
+                        {"module_name": module_name, "module": module_b64, "module_args": params},
+                        msg_id2, write_lock=gate._write_lock,
+                    )
+                    resp_type, resp_data = await future2
+
+                if resp_type == "FTLModuleResult":
+                    result_data = dict(resp_data)
+                    if "result" in result_data and isinstance(result_data["result"], dict):
+                        result_data = result_data["result"]
+                elif resp_type == "Error":
+                    raise Exception(resp_data.get("message", "Unknown FTL module error"))
+                else:
+                    raise Exception(f"Unexpected response: {resp_type}")
+
                 ftl_attempted = True
             except Exception as e:
-                # FTL module failed (missing deps, etc.) - fall back to Ansible bundle
                 error_msg = str(e)
                 if "No module named" in error_msg or "ImportError" in error_msg:
                     ftl_attempted = False
@@ -1289,86 +1498,62 @@ class AutomationContext:
                     raise
 
         if not ftl_attempted:
-            # Ansible module - build bundle and send through gate
-            import json
-
-            # Get gate connection
-            gate = await self._get_or_create_gate(host, become=become)
-
-            # Try name-only first (gate may have module baked in)
-            await self._remote_runner.protocol.send_message(
-                gate.gate_process.stdin,
-                "Module",
-                {
-                    "module_name": module_name,
-                    "module_args": params,
-                },
+            # Ansible module — try name-only first
+            msg_id = gate.next_msg_id()
+            future = gate.create_future(msg_id)
+            await self._remote_runner.protocol.send_message_with_id(
+                gate.gate_process.stdin, "Module",
+                {"module_name": module_name, "module_args": params},
+                msg_id, write_lock=gate._write_lock,
             )
+            resp_type, resp_data = await future
 
-            response = await self._remote_runner.protocol.read_message(gate.gate_process.stdout)
-
-            if response is not None and response[0] == "ModuleNotFound":
-                # Module not in gate — build bundle and retry
-                from ftl2.module_loading.bundle import build_bundle_from_fqcn
-                import base64
-
+            if resp_type == "ModuleNotFound":
+                # Build bundle and retry
                 if "." not in module_name:
                     fqcn = f"ansible.builtin.{module_name}"
                 else:
                     fqcn = module_name
 
-                bundle = build_bundle_from_fqcn(fqcn)
+                bundle = self._bundle_cache.get_or_build(fqcn)
                 bundle_b64 = base64.b64encode(bundle.data).decode()
-                await self._remote_runner.protocol.send_message(
-                    gate.gate_process.stdin,
-                    "Module",
-                    {
-                        "module": bundle_b64,
-                        "module_name": module_name,
-                        "module_args": params,
-                    },
-                )
-                response = await self._remote_runner.protocol.read_message(gate.gate_process.stdout)
 
-            if response is None:
-                result_data = {"failed": True, "msg": "No response from gate"}
-            else:
-                msg_type, data = response
-                if msg_type == "ModuleResult":
-                    # Parse the stdout as JSON (Ansible module output)
-                    stdout = data.get("stdout", "")
-                    stderr = data.get("stderr", "")
-                    try:
-                        result_data = json.loads(stdout) if stdout.strip() else {}
-                        if stderr:
-                            result_data["_stderr"] = stderr
-                        if not result_data:
-                            result_data = {
-                                "failed": True,
-                                "msg": f"Empty response from module. stderr: {stderr}",
-                            }
-                        # Module crashed during import/execution — stderr has
-                        # a traceback but stdout has no failure indicator.
-                        if stderr and "Traceback" in stderr and not result_data.get("failed"):
-                            result_data["failed"] = True
-                            result_data["msg"] = f"Module crashed: {stderr.strip().splitlines()[-1]}"
-                    except json.JSONDecodeError as e:
+                msg_id2 = gate.next_msg_id()
+                future2 = gate.create_future(msg_id2)
+                await self._remote_runner.protocol.send_message_with_id(
+                    gate.gate_process.stdin, "Module",
+                    {"module": bundle_b64, "module_name": module_name, "module_args": params},
+                    msg_id2, write_lock=gate._write_lock,
+                )
+                resp_type, resp_data = await future2
+
+            if resp_type == "ModuleResult":
+                stdout = resp_data.get("stdout", "")
+                stderr = resp_data.get("stderr", "")
+                try:
+                    result_data = json.loads(stdout) if stdout.strip() else {}
+                    if stderr:
+                        result_data["_stderr"] = stderr
+                    if not result_data:
                         result_data = {
                             "failed": True,
-                            "msg": f"Invalid JSON response: {e}",
-                            "stdout": stdout,
-                            "stderr": stderr,
+                            "msg": f"Empty response from module. stderr: {stderr}",
                         }
-                elif msg_type == "Error":
-                    result_data = {"failed": True, "msg": data.get("message", "Unknown error")}
-                else:
-                    result_data = {"failed": True, "msg": f"Unexpected response: {msg_type}"}
+                    if stderr and "Traceback" in stderr and not result_data.get("failed"):
+                        result_data["failed"] = True
+                        result_data["msg"] = f"Module crashed: {stderr.strip().splitlines()[-1]}"
+                except json.JSONDecodeError as e:
+                    result_data = {
+                        "failed": True,
+                        "msg": f"Invalid JSON response: {e}",
+                        "stdout": stdout,
+                        "stderr": stderr,
+                    }
+            elif resp_type == "Error":
+                result_data = {"failed": True, "msg": resp_data.get("message", "Unknown error")}
+            else:
+                result_data = {"failed": True, "msg": f"Unexpected response: {resp_type}"}
 
-            # Cache gate for reuse
-            cache_key = self._gate_cache_key(host.name, become)
-            self._remote_runner.gate_cache[cache_key] = gate
-
-        # Convert to ExecuteResult
         failed = result_data.get("failed", False) or result_data.get("rc", 0) != 0
         return ExecuteResult(
             success=not failed,
@@ -1421,7 +1606,10 @@ class AutomationContext:
         if cache_key in self._remote_runner.gate_cache:
             gate = self._remote_runner.gate_cache[cache_key]
             if gate.interpreter == interpreter:
-                self._remote_runner.gate_cache.pop(cache_key)
+                # Multiplexed gates stay in cache (shared access).
+                # Serial gates are popped (exclusive access).
+                if not gate.multiplexed:
+                    self._remote_runner.gate_cache.pop(cache_key)
                 return gate
             else:
                 self._remote_runner.gate_cache.pop(cache_key)
@@ -1470,9 +1658,11 @@ class AutomationContext:
         """Enter the async context manager."""
         from ftl2.runners import RemoteModuleRunner
         from ftl2.gate import GateBuilder
+        from ftl2.module_loading.bundle import BundleCache
 
         self._remote_runner = RemoteModuleRunner()
         self._remote_runner.gate_builder = GateBuilder()
+        self._bundle_cache = BundleCache()
         self._resolve_gate_modules()
         self._start_time = time.time()
         return self
