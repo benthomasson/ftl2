@@ -15,7 +15,11 @@ import sys
 
 
 def state_to_inventory(state: dict) -> str:
-    """Convert state dict to YAML inventory string."""
+    """Convert state dict to YAML inventory string.
+
+    Outputs groups at the top level (not nested under all.children)
+    so the result can be loaded by ftl2's inventory loader.
+    """
     hosts = state.get("hosts", {})
     if not hosts:
         return "all:\n  hosts: {}\n"
@@ -40,26 +44,14 @@ def state_to_inventory(state: dict) -> str:
         for group in host_groups:
             groups.setdefault(group, {})[host_name] = host_vars
 
-    # Build YAML
-    lines = ["all:"]
-
-    # If there's only one group, put hosts directly under all
-    if len(groups) == 1:
-        group_name, group_hosts = next(iter(groups.items()))
-        if group_name == "ungrouped":
-            lines.append("  hosts:")
-            for host_name, host_vars in sorted(group_hosts.items()):
-                _append_host(lines, host_name, host_vars, indent=4)
-            return "\n".join(lines) + "\n"
-
-    # Multiple groups or single named group — use children
-    lines.append("  children:")
+    # Build YAML with groups at the top level (compatible with ftl2 loader)
+    lines = []
     for group_name in sorted(groups):
         group_hosts = groups[group_name]
-        lines.append(f"    {group_name}:")
-        lines.append(f"      hosts:")
+        lines.append(f"{group_name}:")
+        lines.append(f"  hosts:")
         for host_name in sorted(group_hosts):
-            _append_host(lines, host_name, group_hosts[host_name], indent=8)
+            _append_host(lines, host_name, group_hosts[host_name], indent=4)
 
     return "\n".join(lines) + "\n"
 
