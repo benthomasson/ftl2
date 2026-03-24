@@ -641,10 +641,11 @@ class RemoteModuleRunner(ModuleRunner):
             )
 
         except Exception as e:
-            # Clean up gate on error
-            await self._close_gate(gate)
-            if cache_key in self.gate_cache:
-                del self.gate_cache[cache_key]
+            # Clean up gate on error — but not multiplexed gates (other requests may be in-flight)
+            if not gate.multiplexed:
+                await self._close_gate(gate)
+                if cache_key in self.gate_cache:
+                    del self.gate_cache[cache_key]
             raise ModuleExecutionError(f"Remote execution failed on {host.name}: {e}") from e
 
     async def _get_or_create_gate(
@@ -678,7 +679,10 @@ class RemoteModuleRunner(ModuleRunner):
             gate = self.gate_cache[cache_key]
             if gate.interpreter == interpreter:
                 logger.debug(f"Reusing cached gate for {cache_key}")
-                del self.gate_cache[cache_key]  # Remove from cache to use
+                # Multiplexed gates stay in cache (shared access).
+                # Serial gates are popped (exclusive access).
+                if not gate.multiplexed:
+                    del self.gate_cache[cache_key]
                 return gate
             else:
                 logger.info(f"Interpreter changed for {cache_key} ({gate.interpreter} -> {interpreter}), creating new gate")
@@ -997,6 +1001,9 @@ class RemoteModuleRunner(ModuleRunner):
     ) -> dict[str, Any]:
         """Execute module through gate connection.
 
+        Automatically uses the multiplexed protocol (msg_id + futures) when
+        the gate supports it, falling back to serial send/read otherwise.
+
         Args:
             gate: Active gate connection
             module_path: Path to module file
@@ -1008,20 +1015,19 @@ class RemoteModuleRunner(ModuleRunner):
         """
         # Try without uploading module first
         try:
-            await self.protocol.send_message(
-                gate.gate_process.stdin,  # type: ignore[arg-type]
-                "Module",
-                {
-                    "module_name": module_name,
-                    "module_args": module_args,
-                },
-            )
-            response = await self.protocol.read_message(gate.gate_process.stdout)  # type: ignore[arg-type]
+            msg_data = {"module_name": module_name, "module_args": module_args}
 
-            if response is None:
-                raise ModuleExecutionError("No response from gate")
-
-            msg_type, data = response
+            if gate.multiplexed:
+                msg_type, data = await self._send_and_wait(gate, "Module", msg_data)
+            else:
+                await self.protocol.send_message(
+                    gate.gate_process.stdin,  # type: ignore[arg-type]
+                    "Module", msg_data,
+                )
+                response = await self.protocol.read_message(gate.gate_process.stdout)  # type: ignore[arg-type]
+                if response is None:
+                    raise ModuleExecutionError("No response from gate")
+                msg_type, data = response
 
             if msg_type == "ModuleResult":
                 return dict(data)  # Ensure it's a dict
@@ -1036,6 +1042,30 @@ class RemoteModuleRunner(ModuleRunner):
         except Exception as e:
             logger.exception(f"Module execution failed: {e}")
             raise
+
+    async def _send_and_wait(
+        self,
+        gate: Gate,
+        msg_type: str,
+        data: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        """Send a multiplexed message and wait for the response via future.
+
+        Args:
+            gate: Multiplexed gate connection
+            msg_type: Message type string
+            data: Message data
+
+        Returns:
+            Tuple of (response_type, response_data)
+        """
+        msg_id = gate.next_msg_id()
+        future = gate.create_future(msg_id)
+        await self.protocol.send_message_with_id(
+            gate.gate_process.stdin, msg_type, data,
+            msg_id, write_lock=gate._write_lock,
+        )
+        return await future
 
     async def _execute_with_upload(
         self,
@@ -1060,23 +1090,23 @@ class RemoteModuleRunner(ModuleRunner):
             module_content = f.read()
         module_b64 = base64.b64encode(module_content).decode()
 
-        # Send with module content
-        await self.protocol.send_message(
-            gate.gate_process.stdin,  # type: ignore[arg-type]
-            "Module",
-            {
-                "module": module_b64,
-                "module_name": module_name,
-                "module_args": module_args,
-            },
-        )
+        msg_data = {
+            "module": module_b64,
+            "module_name": module_name,
+            "module_args": module_args,
+        }
 
-        response = await self.protocol.read_message(gate.gate_process.stdout)  # type: ignore[arg-type]
-
-        if response is None:
-            raise ModuleExecutionError("No response from gate after upload")
-
-        msg_type, data = response
+        if gate.multiplexed:
+            msg_type, data = await self._send_and_wait(gate, "Module", msg_data)
+        else:
+            await self.protocol.send_message(
+                gate.gate_process.stdin,  # type: ignore[arg-type]
+                "Module", msg_data,
+            )
+            response = await self.protocol.read_message(gate.gate_process.stdout)  # type: ignore[arg-type]
+            if response is None:
+                raise ModuleExecutionError("No response from gate after upload")
+            msg_type, data = response
 
         if msg_type == "ModuleResult":
             return dict(data)  # Ensure it's a dict
@@ -1111,22 +1141,23 @@ class RemoteModuleRunner(ModuleRunner):
         """
         module_b64 = base64.b64encode(module_source).decode()
 
-        await self.protocol.send_message(
-            gate.gate_process.stdin,  # type: ignore[arg-type]
-            "FTLModule",
-            {
-                "module": module_b64,
-                "module_name": module_name,
-                "module_args": module_args,
-            },
-        )
+        msg_data = {
+            "module": module_b64,
+            "module_name": module_name,
+            "module_args": module_args,
+        }
 
-        response = await self.protocol.read_message(gate.gate_process.stdout)  # type: ignore[arg-type]
-
-        if response is None:
-            raise ModuleExecutionError("No response from gate for FTLModule")
-
-        msg_type, data = response
+        if gate.multiplexed:
+            msg_type, data = await self._send_and_wait(gate, "FTLModule", msg_data)
+        else:
+            await self.protocol.send_message(
+                gate.gate_process.stdin,  # type: ignore[arg-type]
+                "FTLModule", msg_data,
+            )
+            response = await self.protocol.read_message(gate.gate_process.stdout)  # type: ignore[arg-type]
+            if response is None:
+                raise ModuleExecutionError("No response from gate for FTLModule")
+            msg_type, data = response
 
         if msg_type == "FTLModuleResult":
             result_dict = dict(data)
