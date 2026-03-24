@@ -66,6 +66,7 @@ class GateBuildConfig:
     dependencies: list[str] = field(default_factory=list)
     interpreter: str = sys.executable
     local_interpreter: str = sys.executable
+    strict_dependencies: bool = False
 
     def __post_init__(self):
         """Convert string paths to Path objects."""
@@ -347,12 +348,20 @@ class GateBuilder:
             logger.debug(f"Installed module {module} to {target_path}")
 
             # Resolve dependencies
-            dep_result = find_all_dependencies(module_path)
+            dep_result = find_all_dependencies(
+                module_path, strict=config.strict_dependencies,
+            )
             for dep_path in dep_result.dependencies:
                 archive_path = get_archive_path(dep_path)
                 if archive_path not in all_deps:
                     all_deps[archive_path] = dep_path
 
+            if dep_result.unresolved:
+                names = [u.import_path for u in dep_result.unresolved]
+                logger.warning(
+                    f"Module {module}: {len(dep_result.unresolved)} unresolved "
+                    f"dependencies: {', '.join(names)}"
+                )
             logger.debug(
                 f"Module {module}: {len(dep_result.dependencies)} deps, "
                 f"{len(dep_result.unresolved)} unresolved"
