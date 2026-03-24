@@ -13,6 +13,7 @@ Features:
 import asyncio
 import json
 import logging
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -318,7 +319,7 @@ class SSHHost:
         except Exception as e:
             logger.warning(f"Error checking file {path}: {e}")
             # Fall back to shell check
-            stdout, _, rc = await self.run(f"test -f {path}")
+            stdout, _, rc = await self.run(f"test -f {shlex.quote(path)}")
             return rc == 0
 
     async def path_exists(self, path: str) -> bool:
@@ -330,7 +331,7 @@ class SSHHost:
         Returns:
             True if path exists (file, directory, or symlink)
         """
-        stdout, _, rc = await self.run(f"test -e {path}")
+        stdout, _, rc = await self.run(f"test -e {shlex.quote(path)}")
         return rc == 0
 
     async def write_file(self, path: str, content: bytes) -> None:
@@ -350,7 +351,7 @@ class SSHHost:
 
         # Make executable if it's a .pyz bundle
         if path.endswith(".pyz"):
-            await self.run(f"chmod +x {path}")
+            await self.run(f"chmod +x {shlex.quote(path)}")
 
         logger.debug(f"Wrote file: {path}")
 
@@ -418,9 +419,9 @@ class SSHHost:
             group: Group name (optional)
         """
         if owner:
-            await self.run(f"chown {owner} {path}")
+            await self.run(f"chown {shlex.quote(owner)} {shlex.quote(path)}")
         if group:
-            await self.run(f"chgrp {group} {path}")
+            await self.run(f"chgrp {shlex.quote(group)} {shlex.quote(path)}")
 
     async def stat(self, path: str) -> dict[str, int] | None:
         """Get file info from the remote host.
@@ -479,7 +480,7 @@ class SSHConnectionPool:
     """
 
     def __init__(self):
-        self._hosts: dict[tuple[str, int, str | None], SSHHost] = {}
+        self._hosts: dict[tuple, SSHHost] = {}
         self._lock = asyncio.Lock()
 
     async def get(
@@ -504,7 +505,9 @@ class SSHConnectionPool:
         Returns:
             SSHHost instance (may be reused)
         """
-        key = (hostname, port, username)
+        # Include credentials in key so different auth produces different connections
+        keys_tuple = tuple(client_keys) if client_keys else None
+        key = (hostname, port, username, password, keys_tuple)
 
         async with self._lock:
             if key not in self._hosts:
@@ -570,7 +573,6 @@ async def ssh_run(
         username=username,
         password=password,
         client_keys=client_keys,
-        known_hosts=None,  # Disable for one-off commands
     )
 
     async with host:

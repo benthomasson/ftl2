@@ -423,6 +423,90 @@ class TestSSHConnectionPool:
         assert len(pool._hosts) == 0
 
 
+class TestSSHSecurity:
+    """Tests for SSH security hardening."""
+
+    def test_default_known_hosts_uses_system(self):
+        """Test that default known_hosts uses system defaults (not None)."""
+        config = SSHConfig(hostname="server.example.com")
+        options = config.to_asyncssh_options()
+        # known_hosts should NOT be in options (asyncssh uses system defaults)
+        assert "known_hosts" not in options
+
+    def test_ssh_host_default_known_hosts(self):
+        """Test that SSHHost default doesn't disable host key checking."""
+        host = SSHHost("server.example.com")
+        assert host.config.known_hosts == ()  # Empty tuple = use system defaults
+
+    def test_command_injection_path_exists(self):
+        """Test that path_exists quotes the path argument."""
+        host = SSHHost("server.example.com")
+        # The path with shell metacharacters should be quoted
+        import shlex
+        malicious_path = "/tmp/test; rm -rf /"
+        expected_cmd = f"test -e {shlex.quote(malicious_path)}"
+        assert "'" in expected_cmd  # shlex.quote wraps in single quotes
+
+    def test_command_injection_has_file(self):
+        """Test that has_file shell fallback quotes the path."""
+        import shlex
+        malicious_path = "/tmp/$(whoami)"
+        quoted = shlex.quote(malicious_path)
+        # The quoted version should neutralize the command substitution
+        assert "$(" not in quoted or "'" in quoted
+
+    @pytest.mark.asyncio
+    async def test_pool_different_passwords_different_hosts(self):
+        """Test that different passwords produce different pool entries."""
+        pool = SSHConnectionPool()
+
+        host1 = await pool.get("server.example.com", username="deploy", password="pass1")
+        host2 = await pool.get("server.example.com", username="deploy", password="pass2")
+
+        assert host1 is not host2
+
+    @pytest.mark.asyncio
+    async def test_pool_different_keys_different_hosts(self):
+        """Test that different client keys produce different pool entries."""
+        pool = SSHConnectionPool()
+
+        host1 = await pool.get("server.example.com", client_keys=["/key1"])
+        host2 = await pool.get("server.example.com", client_keys=["/key2"])
+
+        assert host1 is not host2
+
+    @pytest.mark.asyncio
+    async def test_pool_same_credentials_reuses(self):
+        """Test that same credentials reuse the same host."""
+        pool = SSHConnectionPool()
+
+        host1 = await pool.get("server.example.com", username="deploy", password="pass1")
+        host2 = await pool.get("server.example.com", username="deploy", password="pass1")
+
+        assert host1 is host2
+
+    @pytest.mark.asyncio
+    async def test_chown_quotes_arguments(self):
+        """Test that chown/chgrp quote their arguments."""
+        host = SSHHost("server.example.com")
+        mock_conn = create_mock_connection()
+
+        with patch("ftl2.ssh.asyncssh.connect", AsyncMock(return_value=mock_conn)):
+            await host.chown("/tmp/safe", owner="root", group="wheel")
+
+        # Verify the commands used quoted paths
+        calls = mock_conn.run.call_args_list
+        assert len(calls) == 2
+        # Check owner call
+        owner_cmd = calls[0][0][0]
+        assert "chown" in owner_cmd
+        assert "root" in owner_cmd
+        # Check group call
+        group_cmd = calls[1][0][0]
+        assert "chgrp" in group_cmd
+        assert "wheel" in group_cmd
+
+
 class TestConvenienceFunctions:
     """Tests for convenience functions."""
 

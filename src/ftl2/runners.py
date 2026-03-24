@@ -735,7 +735,7 @@ class RemoteModuleRunner(ModuleRunner):
                     "host": ssh_host,
                     "port": ssh_port,
                     "username": ssh_user,
-                    "known_hosts": None,
+                    "known_hosts": (),  # Use system known_hosts
                     "connect_timeout": 30,  # 30 seconds per attempt
                     "keepalive_interval": 30,  # prevent firewall/NAT drops during long operations
                 }
