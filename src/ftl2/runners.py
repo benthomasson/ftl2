@@ -31,7 +31,7 @@ from .exceptions import (
 )
 from .gate import GateBuildConfig, GateBuilder
 from .message import GateProtocol
-from .types import BecomeConfig, ExecutionConfig, GateConfig, HostConfig, ModuleResult
+from .types import BecomeConfig, ExecutionConfig, GateConfig, HostConfig, ModuleResult, gate_cache_key
 from .utils import find_module, module_wants_json
 
 logger = logging.getLogger(__name__)
@@ -553,13 +553,6 @@ class RemoteModuleRunner(ModuleRunner):
         self.gate_builder: GateBuilder | None = None
         self.protocol = GateProtocol()
 
-    @staticmethod
-    def _gate_cache_key(host_name: str, become: "BecomeConfig | None" = None) -> str:
-        """Build composite gate cache key including become config."""
-        if become and become.effective:
-            return f"{host_name}:become={become.become_user}:method={become.become_method}"
-        return host_name
-
     async def run(
         self,
         host: HostConfig,
@@ -614,7 +607,7 @@ class RemoteModuleRunner(ModuleRunner):
 
         # Build composite cache key including become config
         become = host.become_config
-        cache_key = self._gate_cache_key(host.name, become)
+        cache_key = gate_cache_key(host.name, become)
 
         # Get or create gate connection
         gate = await self._get_or_create_gate(

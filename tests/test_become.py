@@ -1,7 +1,7 @@
 """Tests for become privilege escalation support (sudo, su, doas)."""
 
 import pytest
-from ftl2.types import BecomeConfig, HostConfig
+from ftl2.types import BecomeConfig, HostConfig, gate_cache_key
 
 
 class TestBecomeConfig:
@@ -172,37 +172,22 @@ class TestExtractBecomeOverrides:
 
 
 class TestGateCacheKey:
-    """Tests for _gate_cache_key static method."""
+    """Tests for gate_cache_key function."""
 
     def test_no_become(self):
-        from ftl2.automation.context import AutomationContext
-
-        key = AutomationContext._gate_cache_key("web01")
-        assert key == "web01"
+        assert gate_cache_key("web01") == "web01"
 
     def test_become_none(self):
-        from ftl2.automation.context import AutomationContext
-
-        key = AutomationContext._gate_cache_key("web01", None)
-        assert key == "web01"
+        assert gate_cache_key("web01", None) == "web01"
 
     def test_become_disabled(self):
-        from ftl2.automation.context import AutomationContext
-
         bc = BecomeConfig(become=False)
-        key = AutomationContext._gate_cache_key("web01", bc)
-        assert key == "web01"
+        assert gate_cache_key("web01", bc) == "web01"
 
     def test_become_root(self):
-        from ftl2.automation.context import AutomationContext
-
         bc = BecomeConfig(become=True, become_user="root")
-        key = AutomationContext._gate_cache_key("web01", bc)
-        assert key == "web01:become=root:method=sudo"
+        assert gate_cache_key("web01", bc) == "web01:become=root:method=sudo"
 
     def test_become_user(self):
-        from ftl2.automation.context import AutomationContext
-
         bc = BecomeConfig(become=True, become_user="catbeez")
-        key = AutomationContext._gate_cache_key("web01", bc)
-        assert key == "web01:become=catbeez:method=sudo"
+        assert gate_cache_key("web01", bc) == "web01:become=catbeez:method=sudo"

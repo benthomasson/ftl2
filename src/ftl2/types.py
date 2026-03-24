@@ -79,6 +79,13 @@ class BecomeConfig:
             raise ValueError(f"Unsupported become_method: {method!r}. Supported: sudo, su, doas")
 
 
+def gate_cache_key(host_name: str, become: "BecomeConfig | None" = None) -> str:
+    """Build composite gate cache key including become config."""
+    if become and become.effective:
+        return f"{host_name}:become={become.become_user}:method={become.become_method}"
+    return host_name
+
+
 @dataclass
 class HostConfig:
     """Configuration for a single host in the automation inventory.

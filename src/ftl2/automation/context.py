@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from ftl2.state import State
 from ftl2.ftl_modules import list_modules, ExecuteResult
 from ftl2.inventory import Inventory, HostGroup, load_inventory, load_localhost
-from ftl2.types import HostConfig
+from ftl2.types import HostConfig, gate_cache_key
 from ftl2.ssh import SSHHost
 
 
@@ -960,7 +960,7 @@ class AutomationContext:
         from ftl2.message import GateProtocol
 
         become = host.become_config
-        cache_key = self._gate_cache_key(host.name, become)
+        cache_key = gate_cache_key(host.name, become)
 
         # Fast path: multiplexed gate — use msg_id future, no lock
         cached_gate = self._remote_runner.gate_cache.get(cache_key)
@@ -1231,13 +1231,6 @@ class AutomationContext:
 
         return result
 
-    @staticmethod
-    def _gate_cache_key(host_name: str, become: "BecomeConfig | None" = None) -> str:
-        """Build composite gate cache key including become config."""
-        if become and become.effective:
-            return f"{host_name}:become={become.become_user}:method={become.become_method}"
-        return host_name
-
     def _gate_lock(self, cache_key: str) -> asyncio.Lock:
         """Get or create a per-host lock for serializing gate access.
 
@@ -1282,7 +1275,7 @@ class AutomationContext:
         if self._remote_runner is None:
             raise RuntimeError("RemoteModuleRunner not initialized - use 'async with' context manager")
 
-        cache_key = self._gate_cache_key(host.name, become)
+        cache_key = gate_cache_key(host.name, become)
 
         # Fast path: multiplexed gate already in cache — no lock needed
         cached_gate = self._remote_runner.gate_cache.get(cache_key)
@@ -1602,7 +1595,7 @@ class AutomationContext:
             interpreter = host.ansible_python_interpreter or "/usr/bin/python3"
 
         # Check cache — verify interpreter matches
-        cache_key = self._gate_cache_key(host.name, become)
+        cache_key = gate_cache_key(host.name, become)
         if cache_key in self._remote_runner.gate_cache:
             gate = self._remote_runner.gate_cache[cache_key]
             if gate.interpreter == interpreter:
