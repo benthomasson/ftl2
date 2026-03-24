@@ -627,7 +627,7 @@ def test_ssh(inventory: str, timeout: int) -> None:
                 "host": addr,
                 "port": port,
                 "username": user,
-                "known_hosts": None,
+                "known_hosts": (),  # Use system known_hosts
                 "connect_timeout": timeout,
             }
 

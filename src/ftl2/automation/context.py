@@ -1639,7 +1639,6 @@ class AutomationContext:
                 port=host.ansible_port,
                 username=host.ansible_user or None,
                 password=password,
-                known_hosts=None,  # Disable for automation
             )
             await ssh_host.connect()
             self._ssh_connections[host.name] = ssh_host
