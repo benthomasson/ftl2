@@ -1,7 +1,7 @@
 """Tests for gate multiplexing paths.
 
-Tests the Gate dataclass, _gate_reader_loop routing, cache key consistency
-between runners.py and context.py, and multiplexed message handling.
+Tests the Gate dataclass, _gate_reader_loop routing, cache key format,
+and multiplexed message handling.
 """
 
 import asyncio
@@ -9,10 +9,9 @@ import json
 
 import pytest
 
-from ftl2.runners import Gate, _gate_reader_loop, RemoteModuleRunner
-from ftl2.automation.context import AutomationContext
+from ftl2.runners import Gate, _gate_reader_loop
 from ftl2.message import GateProtocol
-from ftl2.types import BecomeConfig
+from ftl2.types import BecomeConfig, gate_cache_key
 
 
 # ---------------------------------------------------------------------------
@@ -225,57 +224,36 @@ class TestGateReaderLoop:
 # Cache key consistency
 # ---------------------------------------------------------------------------
 
-class TestCacheKeyConsistency:
-    """Verify runners.py and context.py produce identical cache keys."""
+class TestCacheKeyFormat:
+    """Verify gate_cache_key produces correct keys."""
 
     def test_no_become(self):
-        assert (
-            RemoteModuleRunner._gate_cache_key("web01")
-            == AutomationContext._gate_cache_key("web01")
-        )
+        assert gate_cache_key("web01") == "web01"
 
     def test_become_none(self):
-        assert (
-            RemoteModuleRunner._gate_cache_key("web01", None)
-            == AutomationContext._gate_cache_key("web01", None)
-        )
+        assert gate_cache_key("web01", None) == "web01"
 
     def test_become_disabled(self):
         bc = BecomeConfig(become=False)
-        assert (
-            RemoteModuleRunner._gate_cache_key("web01", bc)
-            == AutomationContext._gate_cache_key("web01", bc)
-        )
+        assert gate_cache_key("web01", bc) == "web01"
 
     def test_become_root_sudo(self):
         bc = BecomeConfig(become=True, become_user="root", become_method="sudo")
-        key_r = RemoteModuleRunner._gate_cache_key("web01", bc)
-        key_c = AutomationContext._gate_cache_key("web01", bc)
-        assert key_r == key_c
-        assert key_r == "web01:become=root:method=sudo"
+        assert gate_cache_key("web01", bc) == "web01:become=root:method=sudo"
 
     def test_become_deploy_doas(self):
         bc = BecomeConfig(become=True, become_user="deploy", become_method="doas")
-        key_r = RemoteModuleRunner._gate_cache_key("web01", bc)
-        key_c = AutomationContext._gate_cache_key("web01", bc)
-        assert key_r == key_c
-        assert key_r == "web01:become=deploy:method=doas"
+        assert gate_cache_key("web01", bc) == "web01:become=deploy:method=doas"
 
     def test_different_users_no_collision(self):
         bc1 = BecomeConfig(become=True, become_user="root")
         bc2 = BecomeConfig(become=True, become_user="deploy")
-        assert (
-            RemoteModuleRunner._gate_cache_key("web01", bc1)
-            != RemoteModuleRunner._gate_cache_key("web01", bc2)
-        )
+        assert gate_cache_key("web01", bc1) != gate_cache_key("web01", bc2)
 
     def test_different_methods_no_collision(self):
         bc_sudo = BecomeConfig(become=True, become_method="sudo")
         bc_doas = BecomeConfig(become=True, become_method="doas")
-        assert (
-            RemoteModuleRunner._gate_cache_key("web01", bc_sudo)
-            != RemoteModuleRunner._gate_cache_key("web01", bc_doas)
-        )
+        assert gate_cache_key("web01", bc_sudo) != gate_cache_key("web01", bc_doas)
 
 
 # ---------------------------------------------------------------------------
