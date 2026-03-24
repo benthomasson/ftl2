@@ -5,6 +5,7 @@ dictionary-based configurations with strongly-typed dataclasses. These types
 provide type safety, validation, and clear interfaces that are portable to Go.
 """
 
+import shlex
 from dataclasses import dataclass, field
 from getpass import getuser
 from pathlib import Path
@@ -21,7 +22,7 @@ class BecomeConfig:
     Attributes:
         become: Whether to use privilege escalation
         become_user: Target user for escalation (default: root)
-        become_method: Escalation method (only 'sudo' supported)
+        become_method: Escalation method ('sudo', 'su', or 'doas')
     """
 
     become: bool = False
@@ -46,16 +47,36 @@ class BecomeConfig:
         return self.become
 
     def sudo_prefix(self, cmd: str) -> str:
-        """Wrap a command with sudo if become is active.
+        """Deprecated: use become_prefix instead."""
+        return self.become_prefix(cmd)
 
-        Uses -n (non-interactive) to fail fast if passwordless sudo
-        is not configured, rather than hanging waiting for a password.
+    def become_prefix(self, cmd: str) -> str:
+        """Wrap a command with privilege escalation if become is active.
+
+        Args:
+            cmd: The command to wrap.
+
+        Returns:
+            The command with appropriate escalation prefix, or unchanged if become is False.
         """
         if not self.become:
             return cmd
-        if self.become_user == "root":
-            return f"sudo -n {cmd}"
-        return f"sudo -n -u {self.become_user} {cmd}"
+
+        method = self.become_method
+        user = self.become_user
+
+        if method == "sudo":
+            if user == "root":
+                return f"sudo -n {cmd}"
+            return f"sudo -n -u {user} {cmd}"
+        elif method == "doas":
+            if user == "root":
+                return f"doas -n {cmd}"
+            return f"doas -n -u {user} {cmd}"
+        elif method == "su":
+            return f"su - {user} -c {shlex.quote(cmd)}"
+        else:
+            raise ValueError(f"Unsupported become_method: {method!r}. Supported: sudo, su, doas")
 
 
 @dataclass

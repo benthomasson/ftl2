@@ -1,4 +1,4 @@
-"""Tests for sudo/become privilege escalation support."""
+"""Tests for become privilege escalation support (sudo, su, doas)."""
 
 import pytest
 from ftl2.types import BecomeConfig, HostConfig
@@ -21,22 +21,43 @@ class TestBecomeConfig:
         bc = BecomeConfig(become=True)
         assert bc.effective is True
 
-    def test_sudo_prefix_disabled(self):
+    def test_become_prefix_disabled(self):
         bc = BecomeConfig(become=False)
-        assert bc.sudo_prefix("whoami") == "whoami"
+        assert bc.become_prefix("whoami") == "whoami"
 
-    def test_sudo_prefix_root(self):
+    def test_become_prefix_root(self):
         bc = BecomeConfig(become=True)
-        assert bc.sudo_prefix("whoami") == "sudo -n whoami"
+        assert bc.become_prefix("whoami") == "sudo -n whoami"
 
-    def test_sudo_prefix_nonroot_user(self):
+    def test_become_prefix_nonroot_user(self):
         bc = BecomeConfig(become=True, become_user="catbeez")
-        assert bc.sudo_prefix("whoami") == "sudo -n -u catbeez whoami"
+        assert bc.become_prefix("whoami") == "sudo -n -u catbeez whoami"
 
-    def test_sudo_prefix_preserves_command(self):
+    def test_become_prefix_preserves_command(self):
         bc = BecomeConfig(become=True)
         cmd = "/bin/sh -c 'firewall-cmd --reload'"
-        assert bc.sudo_prefix(cmd) == f"sudo -n {cmd}"
+        assert bc.become_prefix(cmd) == f"sudo -n {cmd}"
+
+    def test_become_prefix_doas_root(self):
+        bc = BecomeConfig(become=True, become_method="doas")
+        assert bc.become_prefix("whoami") == "doas -n whoami"
+
+    def test_become_prefix_doas_user(self):
+        bc = BecomeConfig(become=True, become_method="doas", become_user="catbeez")
+        assert bc.become_prefix("whoami") == "doas -n -u catbeez whoami"
+
+    def test_become_prefix_su_root(self):
+        bc = BecomeConfig(become=True, become_method="su")
+        assert bc.become_prefix("whoami") == "su - root -c whoami"
+
+    def test_become_prefix_su_user(self):
+        bc = BecomeConfig(become=True, become_method="su", become_user="catbeez")
+        assert bc.become_prefix("whoami") == "su - catbeez -c whoami"
+
+    def test_become_prefix_unsupported_method(self):
+        bc = BecomeConfig(become=True, become_method="pbrun")
+        with pytest.raises(ValueError, match="Unsupported become_method"):
+            bc.become_prefix("whoami")
 
     def test_with_overrides_become(self):
         bc = BecomeConfig(become=True, become_user="root")
