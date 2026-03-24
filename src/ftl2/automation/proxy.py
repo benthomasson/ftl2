@@ -441,7 +441,7 @@ class HostScopedProxy:
             quoted_dest = _shlex.quote(dest)
 
             # Idempotency check via sudo cat (SFTP can't read root-owned files)
-            stdout, _, rc = await ssh.run(become_cfg.sudo_prefix(f"cat {quoted_dest}"))
+            stdout, _, rc = await ssh.run(become_cfg.become_prefix(f"cat {quoted_dest}"))
             if rc == 0 and stdout.encode() == file_content:
                 changed = False
 
@@ -452,29 +452,29 @@ class HostScopedProxy:
 
                 # Create backup if requested
                 if backup:
-                    _, _, check_rc = await ssh.run(become_cfg.sudo_prefix(f"test -f {quoted_dest}"))
+                    _, _, check_rc = await ssh.run(become_cfg.become_prefix(f"test -f {quoted_dest}"))
                     if check_rc == 0:
                         backup_path = f"{dest}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                        await ssh.run(become_cfg.sudo_prefix(
+                        await ssh.run(become_cfg.become_prefix(
                             f"cp {quoted_dest} {_shlex.quote(backup_path)}"
                         ))
 
                 # Ensure dest directory exists and move file
                 dest_dir = str(Path(dest).parent)
-                await ssh.run(become_cfg.sudo_prefix(f"mkdir -p {_shlex.quote(dest_dir)}"))
-                await ssh.run(become_cfg.sudo_prefix(f"mv {_shlex.quote(tmp_name)} {quoted_dest}"))
+                await ssh.run(become_cfg.become_prefix(f"mkdir -p {_shlex.quote(dest_dir)}"))
+                await ssh.run(become_cfg.become_prefix(f"mv {_shlex.quote(tmp_name)} {quoted_dest}"))
 
             # Set mode via sudo
             if mode:
-                await ssh.run(become_cfg.sudo_prefix(f"chmod {mode} {quoted_dest}"))
+                await ssh.run(become_cfg.become_prefix(f"chmod {mode} {quoted_dest}"))
 
             # Set ownership via sudo
             if owner and group:
-                await ssh.run(become_cfg.sudo_prefix(f"chown {owner}:{group} {quoted_dest}"))
+                await ssh.run(become_cfg.become_prefix(f"chown {owner}:{group} {quoted_dest}"))
             elif owner:
-                await ssh.run(become_cfg.sudo_prefix(f"chown {owner} {quoted_dest}"))
+                await ssh.run(become_cfg.become_prefix(f"chown {owner} {quoted_dest}"))
             elif group:
-                await ssh.run(become_cfg.sudo_prefix(f"chgrp {group} {quoted_dest}"))
+                await ssh.run(become_cfg.become_prefix(f"chgrp {group} {quoted_dest}"))
         else:
             # Direct SFTP path (original behavior, no sudo needed)
 
@@ -857,7 +857,7 @@ class HostScopedProxy:
             overrides["become_user"] = become_user
         become_cfg = self._resolve_become(host_config, overrides)
         if become_cfg.effective:
-            full_cmd = become_cfg.sudo_prefix(full_cmd)
+            full_cmd = become_cfg.become_prefix(full_cmd)
 
         # Execute via SSH
         run_kwargs: dict[str, Any] = {"stdin": stdin or ""}
