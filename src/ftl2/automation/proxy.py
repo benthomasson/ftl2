@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 # Become-control kwargs that are NOT module parameters
-_BECOME_KWARGS = frozenset({"become", "become_user"})
+_BECOME_KWARGS = frozenset({"become", "become_user", "become_method"})
 
 
 def _extract_become_overrides(kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
