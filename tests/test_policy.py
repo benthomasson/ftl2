@@ -30,14 +30,13 @@ class TestPolicyEvaluate:
         result = policy.evaluate("ping", {})
         assert result.permitted is True
 
-    def test_allow_rules_are_skipped(self):
-        rules = [
-            PolicyRule(decision="allow", match={"module": "shell"}),
-            PolicyRule(decision="deny", match={"module": "shell"}, reason="denied"),
-        ]
-        policy = Policy(rules)
-        result = policy.evaluate("shell", {})
-        assert result.permitted is False
+    def test_allow_rules_raise_error(self):
+        with pytest.raises(ValueError, match="allow rules are not supported"):
+            PolicyRule(decision="allow", match={"module": "shell"})
+
+    def test_invalid_decision_raises_error(self):
+        with pytest.raises(ValueError, match="Invalid decision 'dennied'"):
+            PolicyRule(decision="dennied", match={"module": "shell"})
 
     def test_multiple_conditions_all_must_match(self):
         rule = PolicyRule(
@@ -81,11 +80,9 @@ class TestPolicyEvaluate:
         # Missing param -> empty string, no match
         assert policy.evaluate("file", {}).permitted is True
 
-    def test_unknown_condition_key_rejects_match(self):
-        rule = PolicyRule(decision="deny", match={"bogus_key": "val"}, reason="bad")
-        policy = Policy([rule])
-        # Unknown key causes rule to NOT match -> action permitted
-        assert policy.evaluate("shell", {}).permitted is True
+    def test_unknown_condition_key_raises_error(self):
+        with pytest.raises(ValueError, match="Unknown match key 'bogus_key'"):
+            PolicyRule(decision="deny", match={"bogus_key": "val"}, reason="bad")
 
     def test_first_matching_deny_wins(self):
         rules = [

@@ -23,12 +23,16 @@ class PolicyDeniedError(Exception):
         self.rule = rule
 
 
+VALID_DECISIONS = frozenset({"allow", "deny"})
+VALID_MATCH_KEYS = frozenset({"module", "host", "environment"})
+
+
 @dataclass
 class PolicyRule:
     """A single policy rule.
 
     Attributes:
-        decision: "allow" or "deny"
+        decision: "deny" (only supported decision; "allow" is not implemented)
         match: Conditions to match against. Keys can be:
             - module: fnmatch pattern against module name
             - host: fnmatch pattern against target host
@@ -40,6 +44,21 @@ class PolicyRule:
     decision: str
     match: dict[str, str] = field(default_factory=dict)
     reason: str = ""
+
+    def __post_init__(self):
+        if self.decision not in VALID_DECISIONS:
+            raise ValueError(
+                f"Invalid decision {self.decision!r}; must be one of {sorted(VALID_DECISIONS)}"
+            )
+        if self.decision == "allow":
+            raise ValueError(
+                "allow rules are not supported; the policy engine uses a deny-list model"
+            )
+        for key in self.match:
+            if key not in VALID_MATCH_KEYS and not key.startswith("param."):
+                raise ValueError(
+                    f"Unknown match key {key!r}; must be one of {sorted(VALID_MATCH_KEYS)} or 'param.<name>'"
+                )
 
 
 @dataclass
