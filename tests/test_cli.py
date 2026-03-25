@@ -1165,6 +1165,15 @@ class TestRetryLogic:
         # Even 100% failure shouldn't trigger when disabled
         assert not check_circuit_breaker(10, 10, config)
 
+    def test_circuit_breaker_zero_hosts(self):
+        """Test that zero total_hosts does not raise ZeroDivisionError."""
+        from ftl2.retry import check_circuit_breaker, CircuitBreakerConfig
+
+        config = CircuitBreakerConfig(enabled=True, threshold_percent=30, min_hosts=0)
+
+        # Zero hosts should return False, not raise
+        assert not check_circuit_breaker(0, 0, config)
+
     def test_run_help_shows_retry_options(self):
         """Test that run help shows retry options."""
         runner = CliRunner()
