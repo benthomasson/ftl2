@@ -33,12 +33,13 @@ class BecomeConfig:
         self,
         become: bool | None = None,
         become_user: str | None = None,
+        become_method: str | None = None,
     ) -> "BecomeConfig":
         """Return a new BecomeConfig with non-None values overridden."""
         return BecomeConfig(
             become=become if become is not None else self.become,
             become_user=become_user if become_user is not None else self.become_user,
-            become_method=self.become_method,
+            become_method=become_method if become_method is not None else self.become_method,
         )
 
     @property
