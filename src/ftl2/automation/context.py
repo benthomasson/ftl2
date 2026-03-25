@@ -271,6 +271,7 @@ class AutomationContext:
         vault_secrets: dict[str, str] | None = None,
         policy: str | Path | None = None,
         environment: str = "",
+        ignore_missing_inventory: bool = False,
     ):
         """Initialize the automation context.
 
@@ -281,6 +282,8 @@ class AutomationContext:
                 - Inventory object directly
                 - Dict with inventory structure
                 - None for localhost-only execution
+            ignore_missing_inventory: If True, fall back to localhost when
+                inventory file is missing instead of raising.
             secrets: List of environment variable names to load as secrets.
                 Secrets are accessed via ftl.secrets["NAME"] and are never
                 logged or exposed in string representations.
@@ -351,7 +354,7 @@ class AutomationContext:
                 rules. Default is "" (empty string).
         """
         self._enabled_modules = modules
-        self._inventory = self._load_inventory(inventory)
+        self._inventory = self._load_inventory(inventory, ignore_missing=ignore_missing_inventory)
 
         # Initialize state if state_file provided
         self._state: "State | None" = None
@@ -512,12 +515,15 @@ class AutomationContext:
         return [r.error for r in self._results if not r.success and r.error]
 
     def _load_inventory(
-        self, inventory: str | Path | Inventory | dict[str, Any] | None
+        self,
+        inventory: str | Path | Inventory | dict[str, Any] | None,
+        ignore_missing: bool = False,
     ) -> Inventory:
         """Load inventory from various sources.
 
         Args:
             inventory: Inventory source
+            ignore_missing: If True, fall back to localhost when file is missing.
 
         Returns:
             Loaded Inventory object
@@ -533,9 +539,10 @@ class AutomationContext:
             path = Path(inventory)
             if path.exists():
                 return load_inventory(path, require_hosts=False)
-            else:
-                # File doesn't exist, return localhost
+            elif ignore_missing:
                 return load_localhost()
+            else:
+                raise FileNotFoundError(f"Inventory file not found: {path}")
 
         if isinstance(inventory, dict):
             # Build inventory from dict
@@ -657,9 +664,8 @@ class AutomationContext:
                 self._inventory.add_group(group)
             group.add_host(host)
 
-        # Invalidate caches so the new/updated host is visible
+        # Invalidate proxy so the new/updated host is visible
         self._hosts_proxy = None
-        self._inventory._invalidate_cache()
 
         # Persist to state file if enabled
         if self._state is not None:

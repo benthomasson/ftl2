@@ -77,6 +77,7 @@ async def automation(
     vault_secrets: dict[str, str] | None = None,
     policy: str | None = None,
     environment: str = "",
+    ignore_missing_inventory: bool = True,
 ) -> AsyncGenerator[AutomationContext, None]:
     """Create an automation context for running FTL modules.
 
@@ -265,6 +266,7 @@ async def automation(
         vault_secrets=vault_secrets,
         policy=policy,
         environment=environment,
+        ignore_missing_inventory=ignore_missing_inventory,
     )
 
     try:

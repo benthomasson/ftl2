@@ -72,12 +72,10 @@ class Inventory:
     """
 
     groups: dict[str, HostGroup] = field(default_factory=dict)
-    _all_hosts: dict[str, HostConfig] = field(default_factory=dict, init=False, repr=False)
 
     def add_group(self, group: HostGroup) -> None:
         """Add a group to the inventory."""
         self.groups[group.name] = group
-        self._invalidate_cache()
 
     def get_group(self, name: str) -> HostGroup | None:
         """Get a group by name."""
@@ -88,26 +86,13 @@ class Inventory:
         return list(self.groups.values())
 
     def get_all_hosts(self) -> dict[str, HostConfig]:
-        """Get all unique hosts across all groups.
-
-        Returns a dictionary mapping host names to HostConfig objects.
-        This is cached for performance.
-        """
-        if not self._all_hosts:
-            self._rebuild_hosts_cache()
-        return self._all_hosts
-
-    def _rebuild_hosts_cache(self) -> None:
-        """Rebuild the all_hosts cache."""
-        self._all_hosts = {}
+        """Get all unique hosts across all groups."""
+        result: dict[str, HostConfig] = {}
         for group in self.groups.values():
             for host_name, host in group.hosts.items():
-                if host_name not in self._all_hosts:
-                    self._all_hosts[host_name] = host
-
-    def _invalidate_cache(self) -> None:
-        """Invalidate the hosts cache."""
-        self._all_hosts = {}
+                if host_name not in result:
+                    result[host_name] = host
+        return result
 
 
 def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> Inventory:
@@ -136,6 +121,9 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
         >>> inventory = load_inventory("./ec2_inventory.py")
     """
     path = Path(inventory_file) if isinstance(inventory_file, str) else inventory_file
+
+    if not path.exists():
+        raise FileNotFoundError(f"Inventory file not found: {path}")
 
     # Executable script — run with --list
     if os.access(path, os.X_OK) and not path.suffix in (".yml", ".yaml", ".json"):
