@@ -1,7 +1,7 @@
 """Tests for copy() multi-host fan-out (issue #27).
 
 Verifies that HostScopedProxy.copy() operates on ALL hosts in a group,
-not just the first one.
+not just the first one. Always returns a list of result dicts.
 """
 
 import asyncio
@@ -62,7 +62,6 @@ class TestCopyMultiHost:
         proxy = HostScopedProxy(ctx, "webservers")
         results = await proxy.copy(content="hello", dest="/tmp/test.txt")
 
-        # Should return a list for multi-host
         assert isinstance(results, list)
         assert len(results) == 3
 
@@ -71,19 +70,20 @@ class TestCopyMultiHost:
             ssh.write_file.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_copy_single_host_returns_dict(self):
-        """copy() with a single remote host returns a dict (backward compat)."""
+    async def test_copy_single_host_returns_list(self):
+        """copy() with a single remote host still returns a list."""
         hosts = [_make_host_config("web1")]
         ssh = _make_ssh_mock()
         ctx = _make_context_with_hosts(hosts)
         ctx._get_ssh_connection = AsyncMock(return_value=ssh)
 
         proxy = HostScopedProxy(ctx, "web1")
-        result = await proxy.copy(content="hello", dest="/tmp/test.txt")
+        results = await proxy.copy(content="hello", dest="/tmp/test.txt")
 
-        assert isinstance(result, dict)
-        assert result["changed"] is True
-        assert result["host"] == "web1"
+        assert isinstance(results, list)
+        assert len(results) == 1
+        assert results[0]["changed"] is True
+        assert results[0]["host"] == "web1"
 
     @pytest.mark.asyncio
     async def test_copy_multi_host_results_have_host_key(self):
@@ -190,3 +190,38 @@ class TestCopyMultiHost:
         finally:
             import os
             os.unlink(src_path)
+
+    @pytest.mark.asyncio
+    async def test_copy_partial_failure(self):
+        """If one host fails, other hosts still succeed with failed host marked."""
+        hosts = [_make_host_config("ok1"), _make_host_config("fail1"), _make_host_config("ok2")]
+
+        ssh_ok = _make_ssh_mock()
+        ssh_fail = AsyncMock()
+
+        async def raise_on_connect(h):
+            if h.name == "fail1":
+                raise ConnectionError("SSH timeout")
+            return ssh_ok
+
+        ctx = _make_context_with_hosts(hosts)
+        ctx._get_ssh_connection = AsyncMock(side_effect=raise_on_connect)
+
+        proxy = HostScopedProxy(ctx, "mixed")
+        results = await proxy.copy(content="data", dest="/tmp/test.txt")
+
+        assert isinstance(results, list)
+        assert len(results) == 3
+
+        r_by_host = {r["host"]: r for r in results}
+
+        # Successful hosts
+        assert r_by_host["ok1"]["changed"] is True
+        assert "failed" not in r_by_host["ok1"]
+        assert r_by_host["ok2"]["changed"] is True
+        assert "failed" not in r_by_host["ok2"]
+
+        # Failed host
+        assert r_by_host["fail1"]["failed"] is True
+        assert r_by_host["fail1"]["changed"] is False
+        assert "SSH timeout" in r_by_host["fail1"]["error"]

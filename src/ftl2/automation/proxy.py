@@ -305,8 +305,8 @@ class HostScopedProxy:
         become: bool | None = None,
         become_user: str | None = None,
         _become_overrides: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Copy a local file to the remote host via SFTP.
+    ) -> list[dict[str, Any]]:
+        """Copy a local file to the remote host(s) via SFTP.
 
         This is the FTL2-native implementation that shadows Ansible's copy
         module. Unlike bundled modules, this reads the source file locally
@@ -322,7 +322,8 @@ class HostScopedProxy:
             backup: Create timestamped backup if dest exists
 
         Returns:
-            dict with 'changed', 'dest', 'src', and optionally 'backup'
+            list of dicts, one per host, each with 'changed', 'dest', 'src',
+            'host', and optionally 'backup' or 'failed'/'error'
 
         Raises:
             FileNotFoundError: If src doesn't exist
@@ -387,11 +388,12 @@ class HostScopedProxy:
                 "changed": changed,
                 "dest": dest,
                 "src": str(src_path) if src else "<content>",
+                "host": self._target,
             }
             if backup_path:
                 result["backup"] = backup_path
             self._track_result("copy", result, start_time)
-            return result
+            return [result]
 
         # Remote execution via SFTP
         host_configs = await self._get_host_configs()
@@ -407,6 +409,7 @@ class HostScopedProxy:
 
         # Fan out copy to all hosts concurrently
         async def _copy_to_host(host_config):
+          try:
             ssh = await self._context._get_ssh_connection(host_config)
             become_cfg = self._resolve_become(host_config, overrides)
 
@@ -428,7 +431,8 @@ class HostScopedProxy:
 
                 if changed:
                     # SFTP to temp location (SSH user can always write to /tmp)
-                    tmp_name = f"/tmp/.ftl2_copy_{_os.getpid()}_{id(file_content)}"
+                    # Include host name to avoid collisions if multiple hosts share a filesystem
+                    tmp_name = f"/tmp/.ftl2_copy_{_os.getpid()}_{host_config.name}_{id(file_content)}"
                     await ssh.write_file(tmp_name, file_content)
 
                     # Create backup if requested
@@ -513,6 +517,15 @@ class HostScopedProxy:
             if backup_path:
                 result["backup"] = backup_path
             return result
+          except Exception as exc:
+            return {
+                "changed": False,
+                "failed": True,
+                "dest": dest,
+                "src": str(src_path) if src else "<content>",
+                "host": host_config.name,
+                "error": str(exc),
+            }
 
         results = await asyncio.gather(*(_copy_to_host(h) for h in host_configs))
 
@@ -520,9 +533,6 @@ class HostScopedProxy:
         for r in results:
             self._track_result("copy", r, start_time)
 
-        # Single host: return dict for backward compatibility
-        if len(results) == 1:
-            return results[0]
         return results
 
     async def template(
@@ -536,8 +546,8 @@ class HostScopedProxy:
         become_user: str | None = None,
         _become_overrides: dict[str, Any] | None = None,
         **variables: Any,
-    ) -> dict[str, Any]:
-        """Render a Jinja2 template and copy to remote host.
+    ) -> list[dict[str, Any]]:
+        """Render a Jinja2 template and copy to remote host(s).
 
         This is the FTL2-native implementation that shadows Ansible's template
         module. Renders the template locally using Jinja2, then transfers the
@@ -552,7 +562,7 @@ class HostScopedProxy:
             **variables: Template variables passed to Jinja2
 
         Returns:
-            dict with 'changed', 'dest', 'src'
+            list of dicts, one per host, each with 'changed', 'dest', 'src'
 
         Raises:
             FileNotFoundError: If template doesn't exist
@@ -594,7 +604,7 @@ class HostScopedProxy:
             overrides["become"] = become
         if become_user is not None:
             overrides["become_user"] = become_user
-        result = await self.copy(
+        results = await self.copy(
             content=rendered,
             dest=dest,
             mode=mode,
@@ -603,9 +613,10 @@ class HostScopedProxy:
             _become_overrides=overrides or None,
         )
 
-        # Update result to show template source
-        result["src"] = str(src_path)
-        return result
+        # Update results to show template source
+        for r in results:
+            r["src"] = str(src_path)
+        return results
 
     async def fetch(
         self,
