@@ -1156,6 +1156,19 @@ class TestRetryLogic:
         # Too few hosts - don't trigger
         assert not check_circuit_breaker(3, 3, config)  # 100% but only 3 hosts
 
+    def test_circuit_breaker_zero_hosts(self):
+        """Test circuit breaker with zero total hosts doesn't divide by zero."""
+        from ftl2.retry import check_circuit_breaker, CircuitBreakerConfig
+
+        config = CircuitBreakerConfig(
+            enabled=True,
+            threshold_percent=30.0,
+            min_hosts=0,
+        )
+
+        # Zero hosts should return False, not raise ZeroDivisionError
+        assert not check_circuit_breaker(0, 0, config)
+
     def test_circuit_breaker_disabled(self):
         """Test that disabled circuit breaker never triggers."""
         from ftl2.retry import check_circuit_breaker, CircuitBreakerConfig
