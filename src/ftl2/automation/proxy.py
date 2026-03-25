@@ -260,6 +260,7 @@ class HostScopedProxy:
         return host_config.become_config.with_overrides(
             become=overrides.get("become"),
             become_user=overrides.get("become_user"),
+            become_method=overrides.get("become_method"),
         )
 
     def _track_result(

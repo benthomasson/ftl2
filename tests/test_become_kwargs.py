@@ -5,6 +5,7 @@ and not passed through as a module parameter.
 """
 
 from ftl2.automation.become import _BECOME_KWARGS, _extract_become_overrides
+from ftl2.types import BecomeConfig
 
 
 class TestBecomeKwargs:
@@ -77,3 +78,32 @@ class TestExtractBecomeOverrides:
         snapshot = original.copy()
         _extract_become_overrides(original)
         assert original == snapshot
+
+
+class TestBecomeConfigWithOverrides:
+    """Test BecomeConfig.with_overrides applies become_method."""
+
+    def test_override_become_method(self):
+        """become_method override should be applied to the new config."""
+        cfg = BecomeConfig(become=True, become_user="root", become_method="sudo")
+        overridden = cfg.with_overrides(become_method="doas")
+        assert overridden.become_method == "doas"
+        assert overridden.become is True
+        assert overridden.become_user == "root"
+
+    def test_override_all_fields(self):
+        cfg = BecomeConfig()
+        overridden = cfg.with_overrides(become=True, become_user="admin", become_method="su")
+        assert overridden.become is True
+        assert overridden.become_user == "admin"
+        assert overridden.become_method == "su"
+
+    def test_no_overrides_returns_equivalent(self):
+        cfg = BecomeConfig(become=True, become_user="deploy", become_method="doas")
+        overridden = cfg.with_overrides()
+        assert overridden == cfg
+
+    def test_none_overrides_preserve_originals(self):
+        cfg = BecomeConfig(become=True, become_user="deploy", become_method="doas")
+        overridden = cfg.with_overrides(become=None, become_user=None, become_method=None)
+        assert overridden == cfg

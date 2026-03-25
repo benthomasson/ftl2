@@ -1193,6 +1193,7 @@ class AutomationContext:
         become = host.become_config.with_overrides(
             become=become_overrides.get("become") if become_overrides else None,
             become_user=become_overrides.get("become_user") if become_overrides else None,
+            become_method=become_overrides.get("become_method") if become_overrides else None,
         )
 
         if host.is_local:
