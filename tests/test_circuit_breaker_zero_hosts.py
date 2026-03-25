@@ -4,8 +4,6 @@ Validates that check_circuit_breaker handles total_hosts=0 without
 raising ZeroDivisionError, and that the fix doesn't break existing behavior.
 """
 
-import os
-
 from ftl2.retry import check_circuit_breaker, CircuitBreakerConfig
 
 
@@ -64,8 +62,3 @@ def test_at_exact_threshold():
 def test_below_min_hosts():
     """Even 100% failure with too few hosts — should not trigger."""
     assert not check_circuit_breaker(3, 3, make_config(min_hosts=5))
-
-
-if __name__ == '__main__':
-    import pytest
-    sys.exit(pytest.main([__file__, '-v']))
