@@ -281,6 +281,9 @@ def check_circuit_breaker(
     if not config.enabled:
         return False
 
+    if total_hosts == 0:
+        return False
+
     if total_hosts < config.min_hosts:
         return False
 
