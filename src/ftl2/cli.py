@@ -1928,7 +1928,6 @@ def run_module(
                         name: host for name, host in group.hosts.items()
                         if name in filtered
                     }
-                inv._invalidate_cache()
 
                 if output_format != "json" and limit:
                     click.echo(format_filter_summary(original_host_count, len(filtered), limit))
@@ -1962,7 +1961,6 @@ def run_module(
                             name: host for name, host in group.hosts.items()
                             if name in hosts_to_run
                         }
-                    inv._invalidate_cache()
 
                     logger.info(
                         f"Resume mode: running on {len(hosts_to_run)} hosts, "

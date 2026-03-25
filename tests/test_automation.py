@@ -403,9 +403,15 @@ webservers:
             assert len(context.hosts["webservers"]) == 2
 
     @pytest.mark.asyncio
-    async def test_inventory_missing_file_falls_back_to_localhost(self):
-        """Test that missing inventory file falls back to localhost."""
-        context = AutomationContext(inventory="/nonexistent/path.yml")
+    async def test_inventory_missing_file_raises(self):
+        """Test that missing inventory file raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            AutomationContext(inventory="/nonexistent/path.yml")
+
+    @pytest.mark.asyncio
+    async def test_inventory_missing_file_ignore_missing(self):
+        """Test that ignore_missing_inventory falls back to localhost."""
+        context = AutomationContext(inventory="/nonexistent/path.yml", ignore_missing_inventory=True)
         assert "localhost" in context.hosts
 
     @pytest.mark.asyncio
