@@ -15,29 +15,10 @@ from typing import Any, Callable, TYPE_CHECKING
 from ftl2.module_loading.excluded import get_excluded
 from ftl2.module_loading.shadowed import is_shadowed, get_native_method
 from ftl2.exceptions import ExcludedModuleError
+from ftl2.automation.become import _BECOME_KWARGS, _extract_become_overrides
 
 if TYPE_CHECKING:
     from ftl2.automation.context import AutomationContext
-
-
-# Become-control kwargs that are NOT module parameters
-_BECOME_KWARGS = frozenset({"become", "become_user", "become_method"})
-
-
-def _extract_become_overrides(kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Separate become-control kwargs from module parameters.
-
-    Returns:
-        Tuple of (become_overrides, module_params)
-    """
-    become_overrides: dict[str, Any] = {}
-    module_params: dict[str, Any] = {}
-    for k, v in kwargs.items():
-        if k in _BECOME_KWARGS:
-            become_overrides[k] = v
-        else:
-            module_params[k] = v
-    return become_overrides, module_params
 
 
 def _check_excluded(module_path: str) -> None:
