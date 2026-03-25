@@ -284,6 +284,9 @@ def check_circuit_breaker(
     if total_hosts < config.min_hosts:
         return False
 
+    if total_hosts == 0:
+        return False
+
     failure_percent = (failed_hosts / total_hosts) * 100
     return failure_percent >= config.threshold_percent
 
