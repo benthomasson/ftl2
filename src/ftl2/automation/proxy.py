@@ -305,8 +305,8 @@ class HostScopedProxy:
         become: bool | None = None,
         become_user: str | None = None,
         _become_overrides: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Copy a local file to the remote host via SFTP.
+    ) -> list[dict[str, Any]]:
+        """Copy a local file to the remote host(s) via SFTP.
 
         This is the FTL2-native implementation that shadows Ansible's copy
         module. Unlike bundled modules, this reads the source file locally
@@ -322,7 +322,8 @@ class HostScopedProxy:
             backup: Create timestamped backup if dest exists
 
         Returns:
-            dict with 'changed', 'dest', 'src', and optionally 'backup'
+            list of dicts, one per host, each with 'changed', 'dest', 'src',
+            'host', and optionally 'backup' or 'failed'/'error'
 
         Raises:
             FileNotFoundError: If src doesn't exist
@@ -387,11 +388,12 @@ class HostScopedProxy:
                 "changed": changed,
                 "dest": dest,
                 "src": str(src_path) if src else "<content>",
+                "host": self._target,
             }
             if backup_path:
                 result["backup"] = backup_path
             self._track_result("copy", result, start_time)
-            return result
+            return [result]
 
         # Remote execution via SFTP
         host_configs = await self._get_host_configs()
@@ -405,115 +407,133 @@ class HostScopedProxy:
         if become_user is not None:
             overrides["become_user"] = become_user
 
-        # Execute on first host (copy is typically run on single host)
-        # For group operations, this would need to loop
-        host_config = host_configs[0]
-        ssh = await self._context._get_ssh_connection(host_config)
-        become_cfg = self._resolve_become(host_config, overrides)
+        # Fan out copy to all hosts concurrently
+        async def _copy_to_host(host_config):
+            try:
+                ssh = await self._context._get_ssh_connection(host_config)
+                become_cfg = self._resolve_become(host_config, overrides)
 
-        changed = True
-        backup_path = None
+                changed = True
+                backup_path = None
 
-        if become_cfg.effective:
-            # Become path: SSH user may not have direct access to dest.
-            # Use sudo for reading/writing/permissions.
-            import shlex as _shlex
-            import os as _os
+                if become_cfg.effective:
+                    # Become path: SSH user may not have direct access to dest.
+                    # Use sudo for reading/writing/permissions.
+                    import shlex as _shlex
+                    import os as _os
 
-            quoted_dest = _shlex.quote(dest)
+                    quoted_dest = _shlex.quote(dest)
 
-            # Idempotency check via sudo cat (SFTP can't read root-owned files)
-            stdout, _, rc = await ssh.run(become_cfg.become_prefix(f"cat {quoted_dest}"))
-            if rc == 0 and stdout.encode() == file_content:
-                changed = False
+                    # Idempotency check via sudo cat (SFTP can't read root-owned files)
+                    stdout, _, rc = await ssh.run(become_cfg.become_prefix(f"cat {quoted_dest}"))
+                    if rc == 0 and stdout.encode() == file_content:
+                        changed = False
 
-            if changed:
-                # SFTP to temp location (SSH user can always write to /tmp)
-                tmp_name = f"/tmp/.ftl2_copy_{_os.getpid()}_{id(file_content)}"
-                await ssh.write_file(tmp_name, file_content)
+                    if changed:
+                        # SFTP to temp location (SSH user can always write to /tmp)
+                        # Include host name to avoid collisions if multiple hosts share a filesystem
+                        tmp_name = f"/tmp/.ftl2_copy_{_os.getpid()}_{host_config.name}_{id(file_content)}"
+                        await ssh.write_file(tmp_name, file_content)
 
-                # Create backup if requested
-                if backup:
-                    _, _, check_rc = await ssh.run(become_cfg.become_prefix(f"test -f {quoted_dest}"))
-                    if check_rc == 0:
-                        backup_path = f"{dest}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                        await ssh.run(become_cfg.become_prefix(
-                            f"cp {quoted_dest} {_shlex.quote(backup_path)}"
-                        ))
+                        # Create backup if requested
+                        if backup:
+                            _, _, check_rc = await ssh.run(become_cfg.become_prefix(f"test -f {quoted_dest}"))
+                            if check_rc == 0:
+                                backup_path = f"{dest}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                                await ssh.run(become_cfg.become_prefix(
+                                    f"cp {quoted_dest} {_shlex.quote(backup_path)}"
+                                ))
 
-                # Ensure dest directory exists and move file
-                dest_dir = str(Path(dest).parent)
-                await ssh.run(become_cfg.become_prefix(f"mkdir -p {_shlex.quote(dest_dir)}"))
-                await ssh.run(become_cfg.become_prefix(f"mv {_shlex.quote(tmp_name)} {quoted_dest}"))
+                        # Ensure dest directory exists and move file
+                        dest_dir = str(Path(dest).parent)
+                        await ssh.run(become_cfg.become_prefix(f"mkdir -p {_shlex.quote(dest_dir)}"))
+                        await ssh.run(become_cfg.become_prefix(f"mv {_shlex.quote(tmp_name)} {quoted_dest}"))
 
-            # Set mode via sudo
-            if mode:
-                await ssh.run(become_cfg.become_prefix(f"chmod {mode} {quoted_dest}"))
+                    # Set mode via sudo
+                    if mode:
+                        await ssh.run(become_cfg.become_prefix(f"chmod {mode} {quoted_dest}"))
 
-            # Set ownership via sudo
-            if owner and group:
-                await ssh.run(become_cfg.become_prefix(f"chown {owner}:{group} {quoted_dest}"))
-            elif owner:
-                await ssh.run(become_cfg.become_prefix(f"chown {owner} {quoted_dest}"))
-            elif group:
-                await ssh.run(become_cfg.become_prefix(f"chgrp {group} {quoted_dest}"))
-        else:
-            # Direct SFTP path (original behavior, no sudo needed)
-
-            # Check if content matches (idempotency)
-            remote_content = await ssh.read_file_or_none(dest)
-            if remote_content == file_content:
-                changed = False
-
-            # Create backup if requested
-            if backup and changed and remote_content is not None:
-                backup_path = f"{dest}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                await ssh.rename(dest, backup_path)
-
-            # Ensure destination directory exists
-            if changed:
-                dest_dir = str(Path(dest).parent)
-                await ssh.run(f"mkdir -p '{dest_dir}'")
-
-            # Write file
-            if changed:
-                await ssh.write_file(dest, file_content)
-
-            # Set mode
-            if mode:
-                mode_str = mode.lstrip("0") if mode.startswith("0") else mode
-                mode_int = int(mode_str, 8)
-                current_stat = await ssh.stat(dest)
-                if current_stat and current_stat["mode"] != mode_int:
-                    await ssh.chmod(dest, mode_int)
-                    changed = True
-
-            # Set ownership (check current owner/group before changing)
-            if owner or group:
-                stdout, _, _ = await ssh.run(f"stat -c '%U %G' {dest}")
-                parts = stdout.strip().split()
-                if len(parts) == 2:
-                    current_owner, current_group = parts
-                    needs_owner = owner and current_owner != owner
-                    needs_group = group and current_group != group
-                    if needs_owner or needs_group:
-                        await ssh.chown(dest, owner if needs_owner else None,
-                                        group if needs_group else None)
-                        changed = True
+                    # Set ownership via sudo
+                    if owner and group:
+                        await ssh.run(become_cfg.become_prefix(f"chown {owner}:{group} {quoted_dest}"))
+                    elif owner:
+                        await ssh.run(become_cfg.become_prefix(f"chown {owner} {quoted_dest}"))
+                    elif group:
+                        await ssh.run(become_cfg.become_prefix(f"chgrp {group} {quoted_dest}"))
                 else:
-                    # Can't determine current ownership, set unconditionally
-                    await ssh.chown(dest, owner, group)
-                    changed = True
+                    # Direct SFTP path (original behavior, no sudo needed)
 
-        result = {
-            "changed": changed,
-            "dest": dest,
-            "src": str(src_path) if src else "<content>",
-        }
-        if backup_path:
-            result["backup"] = backup_path
-        self._track_result("copy", result, start_time)
-        return result
+                    # Check if content matches (idempotency)
+                    remote_content = await ssh.read_file_or_none(dest)
+                    if remote_content == file_content:
+                        changed = False
+
+                    # Create backup if requested
+                    if backup and changed and remote_content is not None:
+                        backup_path = f"{dest}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                        await ssh.rename(dest, backup_path)
+
+                    # Ensure destination directory exists
+                    if changed:
+                        dest_dir = str(Path(dest).parent)
+                        await ssh.run(f"mkdir -p '{dest_dir}'")
+
+                    # Write file
+                    if changed:
+                        await ssh.write_file(dest, file_content)
+
+                    # Set mode
+                    if mode:
+                        mode_str = mode.lstrip("0") if mode.startswith("0") else mode
+                        mode_int = int(mode_str, 8)
+                        current_stat = await ssh.stat(dest)
+                        if current_stat and current_stat["mode"] != mode_int:
+                            await ssh.chmod(dest, mode_int)
+                            changed = True
+
+                    # Set ownership (check current owner/group before changing)
+                    if owner or group:
+                        stdout, _, _ = await ssh.run(f"stat -c '%U %G' {dest}")
+                        parts = stdout.strip().split()
+                        if len(parts) == 2:
+                            current_owner, current_group = parts
+                            needs_owner = owner and current_owner != owner
+                            needs_group = group and current_group != group
+                            if needs_owner or needs_group:
+                                await ssh.chown(dest, owner if needs_owner else None,
+                                                group if needs_group else None)
+                                changed = True
+                        else:
+                            # Can't determine current ownership, set unconditionally
+                            await ssh.chown(dest, owner, group)
+                            changed = True
+
+                result = {
+                    "changed": changed,
+                    "dest": dest,
+                    "src": str(src_path) if src else "<content>",
+                    "host": host_config.name,
+                }
+                if backup_path:
+                    result["backup"] = backup_path
+                return result
+            except Exception as exc:
+                return {
+                    "changed": False,
+                    "failed": True,
+                    "dest": dest,
+                    "src": str(src_path) if src else "<content>",
+                    "host": host_config.name,
+                    "error": str(exc),
+                }
+
+        results = await asyncio.gather(*(_copy_to_host(h) for h in host_configs))
+
+        # Track each result
+        for r in results:
+            self._track_result("copy", r, start_time)
+
+        return results
 
     async def template(
         self,
@@ -526,8 +546,8 @@ class HostScopedProxy:
         become_user: str | None = None,
         _become_overrides: dict[str, Any] | None = None,
         **variables: Any,
-    ) -> dict[str, Any]:
-        """Render a Jinja2 template and copy to remote host.
+    ) -> list[dict[str, Any]]:
+        """Render a Jinja2 template and copy to remote host(s).
 
         This is the FTL2-native implementation that shadows Ansible's template
         module. Renders the template locally using Jinja2, then transfers the
@@ -542,7 +562,7 @@ class HostScopedProxy:
             **variables: Template variables passed to Jinja2
 
         Returns:
-            dict with 'changed', 'dest', 'src'
+            list of dicts, one per host, each with 'changed', 'dest', 'src'
 
         Raises:
             FileNotFoundError: If template doesn't exist
@@ -584,7 +604,7 @@ class HostScopedProxy:
             overrides["become"] = become
         if become_user is not None:
             overrides["become_user"] = become_user
-        result = await self.copy(
+        results = await self.copy(
             content=rendered,
             dest=dest,
             mode=mode,
@@ -593,9 +613,10 @@ class HostScopedProxy:
             _become_overrides=overrides or None,
         )
 
-        # Update result to show template source
-        result["src"] = str(src_path)
-        return result
+        # Update results to show template source
+        for r in results:
+            r["src"] = str(src_path)
+        return results
 
     async def fetch(
         self,
