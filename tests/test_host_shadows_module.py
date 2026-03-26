@@ -364,3 +364,71 @@ class TestEdgeCases:
         shadow_warnings = [x for x in w if "shadows" in str(x.message)]
         # Each proxy warns independently
         assert len(shadow_warnings) == 2
+
+
+# ---------------------------------------------------------------------------
+# 7. Integration through AutomationContext
+# ---------------------------------------------------------------------------
+
+class TestAutomationContextEscapeHatch:
+    """Verify ftl.module.<name>() works through AutomationContext, not just ModuleProxy.
+
+    AutomationContext.__getattr__ has its own _enabled_modules check before
+    delegating to ModuleProxy. A host named 'module' could shadow the escape
+    hatch at the outer layer if the property isn't resolved correctly.
+    """
+
+    def _make_context_obj(self, host_keys=None, groups=None, enabled_modules=None):
+        """Create an AutomationContext with patched internals for testing."""
+        from ftl2.automation.context import AutomationContext
+
+        ctx = object.__new__(AutomationContext)
+        ctx._enabled_modules = enabled_modules
+        ctx._hosts_proxy = _FakeHostsProxy(host_keys=host_keys or [], groups=groups or [])
+        ctx._proxy = ModuleProxy(ctx)
+        return ctx
+
+    def test_escape_hatch_through_context(self):
+        """ftl.module.file works through AutomationContext when host 'file' exists."""
+        ctx = self._make_context_obj(host_keys=["file"])
+        result = ctx.module
+        assert isinstance(result, ModuleAccessProxy)
+        func = result.__getattr__("file")
+        assert callable(func)
+        assert func.__name__ == "file"
+
+    def test_escape_hatch_with_host_named_module(self):
+        """ftl.module still returns ModuleAccessProxy when a host is named 'module'.
+
+        The 'module' @property on ModuleProxy takes precedence over __getattr__,
+        so host-first resolution in __getattr__ never runs for the name 'module'.
+        """
+        ctx = self._make_context_obj(host_keys=["module", "file"])
+        # ftl.module should resolve to ModuleAccessProxy, not HostScopedProxy
+        result = ctx.module
+        assert isinstance(result, ModuleAccessProxy)
+        # And the escape hatch should still work for shadowed modules
+        func = result.__getattr__("file")
+        assert callable(func)
+        assert func.__name__ == "file"
+
+    def test_escape_hatch_with_enabled_modules(self):
+        """ftl.module.<name> respects _enabled_modules through AutomationContext."""
+        ctx = self._make_context_obj(host_keys=["file"], enabled_modules=["hostname"])
+        result = ctx.module
+        assert isinstance(result, ModuleAccessProxy)
+        # 'file' is not enabled, so escape hatch should reject it
+        with pytest.raises(AttributeError, match="not enabled"):
+            result.__getattr__("file")
+
+    def test_shadowed_host_still_returns_host(self):
+        """ftl.file returns HostScopedProxy (not module) through AutomationContext."""
+        from ftl2.automation.proxy import HostScopedProxy
+
+        ctx = self._make_context_obj(host_keys=["file"])
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = getattr(ctx, "file")
+        assert isinstance(result, HostScopedProxy)
+        shadow_warnings = [x for x in w if "shadows" in str(x.message)]
+        assert len(shadow_warnings) == 1
