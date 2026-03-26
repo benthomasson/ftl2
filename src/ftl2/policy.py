@@ -172,10 +172,18 @@ class Policy:
 
         Returns:
             Policy instance with loaded rules
+
+        Raises:
+            IsADirectoryError: If path is a directory (use from_directory() instead)
         """
         import yaml
 
         path = Path(path)
+        if path.is_dir():
+            raise IsADirectoryError(
+                f"{path} is a directory, not a file. "
+                f"Use Policy.from_directory() to load all policy files from a directory."
+            )
         data = yaml.safe_load(path.read_text()) or {}
 
         rules = []
@@ -189,6 +197,70 @@ class Policy:
             )
 
         return cls(rules)
+
+    @classmethod
+    def from_files(cls, paths: list[str | Path]) -> "Policy":
+        """Load and merge policies from multiple YAML files.
+
+        Rules are concatenated in load order — the first file's rules are
+        evaluated first. Since the engine is first-match-wins, earlier files
+        take precedence. Use file ordering to control priority.
+
+        Example::
+
+            # Base rules evaluated first, then environment-specific rules
+            policy = Policy.from_files(["base.yaml", "prod.yaml"])
+
+        Args:
+            paths: Ordered list of YAML policy file paths.
+
+        Returns:
+            Policy instance with concatenated rules from all files.
+        """
+        if not paths:
+            return cls.empty()
+        rules: list[PolicyRule] = []
+        for path in paths:
+            policy = cls.from_file(path)
+            rules.extend(policy.rules)
+        return cls(rules)
+
+    @classmethod
+    def from_directory(cls, directory: str | Path) -> "Policy":
+        """Load all ``*.yaml`` / ``*.yml`` files from a directory.
+
+        Files are sorted alphabetically, so naming conventions like
+        ``00-base.yaml``, ``10-production.yaml`` give deterministic ordering.
+        Only top-level files are loaded (no recursive traversal).
+
+        Example::
+
+            policy = Policy.from_directory("policies/")
+            # Loads 00-base.yaml, 10-production.yaml, etc.
+
+        Args:
+            directory: Path to directory containing YAML policy files.
+
+        Returns:
+            Policy instance with concatenated rules, or an empty policy
+            if the directory contains no YAML files.
+
+        Raises:
+            NotADirectoryError: If the path is not a directory.
+        """
+        directory = Path(directory)
+        if not directory.is_dir():
+            raise NotADirectoryError(
+                f"{directory} is not a directory. "
+                f"Use Policy.from_file() to load a single policy file."
+            )
+        paths = sorted(
+            p for p in directory.iterdir()
+            if p.suffix in (".yaml", ".yml") and p.is_file()
+        )
+        if not paths:
+            return cls.empty()
+        return cls.from_files(paths)
 
     @classmethod
     def empty(cls) -> "Policy":
