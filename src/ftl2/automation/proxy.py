@@ -9,6 +9,7 @@ Supports both simple modules and FQCN (Fully Qualified Collection Name):
 """
 
 import asyncio
+import logging
 import time
 from typing import Any, Callable, TYPE_CHECKING
 
@@ -19,6 +20,8 @@ from ftl2.automation.become import _BECOME_KWARGS, _extract_become_overrides
 
 if TYPE_CHECKING:
     from ftl2.automation.context import AutomationContext
+
+logger = logging.getLogger(__name__)
 
 
 def _check_excluded(module_path: str) -> None:
@@ -1263,8 +1266,13 @@ class ModuleProxy:
                 if normalized in hosts_proxy.groups or normalized in hosts_proxy.keys():
                     return HostScopedProxy(self._context, normalized)
         except Exception:
-            # Inventory not loaded or other issue - continue to module check
-            pass
+            # Inventory not loaded or other issue - continue to module check.
+            # Log at DEBUG so users can diagnose inventory problems with -v.
+            logger.debug(
+                "Inventory lookup failed for '%s', falling back to module check",
+                name,
+                exc_info=True,
+            )
 
         # Check if it's a known simple module
         from ftl2.ftl_modules import get_module, list_modules
