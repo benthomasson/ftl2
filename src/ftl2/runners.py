@@ -23,7 +23,7 @@ from asyncssh.process import SSHClientProcess
 from .arguments import merge_arguments
 from .exceptions import (
     AuthenticationError,
-    ConnectionError,
+    FTL2ConnectionError,
     ErrorContext,
     ErrorTypes,
     ModuleExecutionError,
@@ -141,7 +141,7 @@ async def _gate_reader_loop(
                 for future in gate._pending.values():
                     if not future.done():
                         future.set_exception(
-                            ConnectionError("Gate connection closed")
+                            FTL2ConnectionError("Gate connection closed")
                         )
                 gate._pending.clear()
                 return
@@ -828,7 +828,7 @@ class RemoteModuleRunner(ModuleRunner):
                     await asyncio.sleep(delay)
                 else:
                     # Final attempt failed - raise with full context
-                    raise ConnectionError(
+                    raise FTL2ConnectionError(
                         message=f"Failed to connect after {max_retries} attempts: {python_error_type}",
                         host=ssh_host,
                         host_address=ssh_host,
@@ -840,7 +840,7 @@ class RemoteModuleRunner(ModuleRunner):
                     ) from e
 
         # All retries exhausted (should not reach here, but just in case)
-        raise ConnectionError(
+        raise FTL2ConnectionError(
             message=f"Failed to connect after {max_retries} attempts",
             host=ssh_host,
             host_address=ssh_host,
@@ -1306,7 +1306,7 @@ class RemoteModuleRunner(ModuleRunner):
         # Fail any pending futures
         for future in gate._pending.values():
             if not future.done():
-                future.set_exception(ConnectionError("Gate shutting down"))
+                future.set_exception(FTL2ConnectionError("Gate shutting down"))
         gate._pending.clear()
 
         try:

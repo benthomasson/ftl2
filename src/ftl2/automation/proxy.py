@@ -199,7 +199,7 @@ class HostScopedProxy:
             result = await ftl.minecraft.ping()
             assert result["ping"] == "pong"
         """
-        from ftl2.exceptions import ConnectionError as FTL2ConnectionError
+        from ftl2.exceptions import FTL2ConnectionError
 
         try:
             # For local/localhost, use local execution
