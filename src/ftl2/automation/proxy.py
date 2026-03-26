@@ -1166,6 +1166,9 @@ class NamespaceProxy:
         # Check if module is excluded
         _check_excluded(self._path)
 
+        # Enforce enabled-modules allowlist for FQCN access
+        self._context._check_module_allowed(self._path)
+
         return await self._context.execute(self._path, kwargs)
 
     def __repr__(self) -> str:
@@ -1294,12 +1297,8 @@ class ModuleProxy:
             return wrapper
 
         # Check if it's in the enabled modules list (if restricted)
-        if self._context._enabled_modules is not None:
-            if name in list_modules():
-                raise AttributeError(
-                    f"Module '{name}' is not enabled. "
-                    f"Enabled modules: {', '.join(self._context._enabled_modules)}"
-                )
+        if name in list_modules():
+            self._context._check_module_allowed(name)
 
         # Not a known simple module - treat as namespace for FQCN
         # This enables: ftl.amazon.aws.ec2_instance(...)
@@ -1380,12 +1379,7 @@ class ModuleAccessProxy:
             )
 
         # Enforce the same module allowlist as AutomationContext.__getattr__
-        enabled = self._context._enabled_modules
-        if enabled is not None and name not in enabled:
-            raise AttributeError(
-                f"Module '{name}' is not enabled. "
-                f"Enabled modules: {', '.join(enabled)}"
-            )
+        self._context._check_module_allowed(name)
 
         _check_excluded(name)
 
