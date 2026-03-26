@@ -986,13 +986,32 @@ async def main(args: list[str]) -> int | None:
                     )
                     continue
 
-                await execute_ftl_module(
-                    protocol,
-                    writer,
-                    data.get("module_name", ""),
-                    data.get("module", ""),
-                    data.get("module_args", {}),
-                )
+                try:
+                    await execute_ftl_module(
+                        protocol,
+                        writer,
+                        data.get("module_name", ""),
+                        data.get("module", ""),
+                        data.get("module_args", {}),
+                    )
+
+                except ModuleNotFoundError as e:
+                    await protocol.send_message(
+                        writer,
+                        "ModuleNotFound",
+                        {"message": f"FTLModule not found: {e}"},
+                    )
+
+                except Exception as e:
+                    logger.exception("FTLModule execution failed")
+                    await protocol.send_message(
+                        writer,
+                        "Error",
+                        {
+                            "message": f"FTLModule execution failed: {e}",
+                            "traceback": traceback.format_exc(),
+                        },
+                    )
 
             elif msg_type == "Info":
                 logger.info("Info requested")
@@ -1172,15 +1191,32 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         msg_id, write_lock=write_lock,
                     )
                     return
-                resp_type, resp_data = await run_ftl_module(
-                    data.get("module_name", ""),
-                    data.get("module", ""),
-                    data.get("module_args", {}),
-                )
-                await protocol.send_message_with_id(
-                    writer, resp_type, resp_data,
-                    msg_id, write_lock=write_lock,
-                )
+                try:
+                    resp_type, resp_data = await run_ftl_module(
+                        data.get("module_name", ""),
+                        data.get("module", ""),
+                        data.get("module_args", {}),
+                    )
+                    await protocol.send_message_with_id(
+                        writer, resp_type, resp_data,
+                        msg_id, write_lock=write_lock,
+                    )
+                except ModuleNotFoundError as e:
+                    await protocol.send_message_with_id(
+                        writer, "ModuleNotFound",
+                        {"message": f"FTLModule not found: {e}"},
+                        msg_id, write_lock=write_lock,
+                    )
+                except Exception as e:
+                    logger.exception("FTLModule execution failed")
+                    await protocol.send_message_with_id(
+                        writer, "Error",
+                        {
+                            "message": f"FTLModule execution failed: {e}",
+                            "traceback": traceback.format_exc(),
+                        },
+                        msg_id, write_lock=write_lock,
+                    )
 
             elif msg_type == "Info":
                 await protocol.send_message_with_id(
