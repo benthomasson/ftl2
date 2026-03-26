@@ -70,7 +70,7 @@ await ftl.include_vars(file="vars.yml")
 # Use:
 import yaml
 with open("vars.yml") as f:
-    vars = yaml.safe_load(f)
+    vars = yaml.safe_load(f) or {}
 """,
     ),
     # Variable/fact modules
