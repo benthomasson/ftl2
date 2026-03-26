@@ -26,7 +26,7 @@ SSH_CONFIG = {
     "port": 2222,
     "username": "testuser",
     "password": "testpass",
-    "known_hosts": None,  # Disable host key checking for testing
+    "disable_host_key_checking": True,  # Only for test containers
 }
 
 
