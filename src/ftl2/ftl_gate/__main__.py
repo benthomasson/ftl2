@@ -406,6 +406,7 @@ async def run_module(
             module_output = json.loads(stdout_str)
             if isinstance(module_output, dict):
                 result.update(module_output)
+                result["rc"] = rc  # subprocess exit code takes precedence
         except (json.JSONDecodeError, ValueError):
             pass
 
