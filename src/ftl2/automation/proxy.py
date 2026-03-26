@@ -11,6 +11,7 @@ Supports both simple modules and FQCN (Fully Qualified Collection Name):
 import asyncio
 import logging
 import time
+import warnings
 from typing import Any, Callable, TYPE_CHECKING
 
 from ftl2.module_loading.excluded import get_excluded
@@ -1198,6 +1199,7 @@ class ModuleProxy:
             context: The AutomationContext that handles execution
         """
         self._context = context
+        self._warned_shadows: set[str] = set()
 
     def __getitem__(self, name: str) -> HostScopedProxy:
         """Return a HostScopedProxy for the given host or group name.
@@ -1259,6 +1261,7 @@ class ModuleProxy:
             hosts_proxy = self._context.hosts
             # Try exact match first
             if name in hosts_proxy.groups or name in hosts_proxy.keys():
+                self._warn_shadow(name)
                 return HostScopedProxy(self._context, name)
             # Try underscore→dash normalization (e.g., minecraft_9 → minecraft-9)
             normalized = name.replace("_", "-")
@@ -1301,3 +1304,98 @@ class ModuleProxy:
         # Not a known simple module - treat as namespace for FQCN
         # This enables: ftl.amazon.aws.ec2_instance(...)
         return NamespaceProxy(self._context, name)
+
+    def _warn_shadow(self, name: str) -> None:
+        """Emit a warning if *name* is both a host/group and a known module.
+
+        Only warns once per name to avoid noise on repeated access.
+
+        Args:
+            name: The host or group name that matched.
+        """
+        if name in self._warned_shadows:
+            return
+        from ftl2.ftl_modules import get_module
+        if get_module(name) is not None:
+            self._warned_shadows.add(name)
+            warnings.warn(
+                f"Host/group name '{name}' shadows the '{name}' module. "
+                f"Use ftl.module.{name}() to access the module explicitly.",
+                UserWarning,
+                stacklevel=4,
+            )
+
+    @property
+    def module(self) -> "ModuleAccessProxy":
+        """Access modules directly, bypassing host/group name resolution.
+
+        Use this when a host or group name shadows a module name::
+
+            # 'file' is both a host name and a module name
+            await ftl.module.file(path="/tmp/test", state="touch")
+
+        Returns:
+            ModuleAccessProxy that always resolves to modules.
+        """
+        return ModuleAccessProxy(self._context)
+
+
+class ModuleAccessProxy:
+    """Proxy that always resolves names to modules, bypassing host/group lookup.
+
+    This is the escape hatch for the host-name-shadows-module problem.
+    Access it via ``ftl.module``::
+
+        # If a host named 'file' shadows the file module:
+        await ftl.module.file(path="/tmp/test", state="touch")
+
+    Only known modules are resolved; unknown names raise ``AttributeError``.
+    """
+
+    def __init__(self, context: "AutomationContext") -> None:
+        self._context = context
+
+    def __getattr__(self, name: str) -> Callable[..., Any]:
+        """Return an async wrapper for the named module.
+
+        Args:
+            name: Module short name (e.g. ``file``, ``copy``).
+
+        Returns:
+            Async callable that executes the module.
+
+        Raises:
+            AttributeError: If *name* is not a known module.
+        """
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        from ftl2.ftl_modules import get_module
+
+        module = get_module(name)
+        if module is None:
+            raise AttributeError(
+                f"'{name}' is not a known module. "
+                f"Use ftl.{name} for host/group access."
+            )
+
+        # Enforce the same module allowlist as AutomationContext.__getattr__
+        enabled = self._context._enabled_modules
+        if enabled is not None and name not in enabled:
+            raise AttributeError(
+                f"Module '{name}' is not enabled. "
+                f"Enabled modules: {', '.join(enabled)}"
+            )
+
+        _check_excluded(name)
+
+        async def wrapper(**kwargs: Any) -> dict[str, Any]:
+            """Execute the module with the given parameters."""
+            return await self._context.execute(name, kwargs)
+
+        wrapper.__name__ = name
+        wrapper.__doc__ = f"Execute the '{name}' module."
+        return wrapper
+
+    def __repr__(self) -> str:
+        return "ModuleAccessProxy()"

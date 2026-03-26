@@ -7,6 +7,7 @@ ftl.module_name() syntax for automation scripts.
 import asyncio
 import os
 import time
+import warnings
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Sequence, TYPE_CHECKING
@@ -394,6 +395,7 @@ class AutomationContext:
         self._environment = environment
         self._event_handlers: dict[str, dict[str, list]] = {}  # host -> event_type -> [handlers]
         self._proxy = ModuleProxy(self)
+        self._check_name_collisions()
         self._results: list[ExecuteResult] = []
         self._hosts_proxy: HostsProxy | None = None
         self._ssh_connections: dict[str, SSHHost] = {}
@@ -417,6 +419,30 @@ class AutomationContext:
                 value = os.environ.get(env_var)
                 if value is not None:
                     self._bound_secrets[env_var] = value
+
+    def _check_name_collisions(self) -> None:
+        """Warn if any host or group name collides with a known module name.
+
+        Called once during ``__init__`` so users learn about shadowing
+        before they hit it at runtime.
+        """
+        module_names = set(list_modules())
+        if not module_names:
+            return
+
+        hosts_proxy = self.hosts
+        all_names: set[str] = set()
+        all_names.update(hosts_proxy.groups)
+        all_names.update(hosts_proxy.keys())
+
+        collisions = sorted(all_names & module_names)
+        for name in collisions:
+            warnings.warn(
+                f"Host/group name '{name}' shadows the '{name}' module. "
+                f"Use ftl.module.{name}() to access the module explicitly.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     def _get_secret_bindings_for_module(self, module_name: str) -> dict[str, str]:
         """Get secret bindings that apply to a module.
