@@ -99,13 +99,26 @@ class TestSSHConfig:
         assert "username" not in options
         assert "password" not in options
 
-    def test_known_hosts_none_disables_checking(self):
-        """Test that known_hosts=None disables host key checking."""
-        config = SSHConfig(hostname="server.example.com", known_hosts=None)
+    def test_known_hosts_none_raises_error(self):
+        """Test that known_hosts=None raises ValueError instead of silently disabling."""
+        with pytest.raises(ValueError, match="known_hosts=None is not supported"):
+            SSHConfig(hostname="server.example.com", known_hosts=None)
 
+    def test_disable_host_key_checking_flag(self):
+        """Test that disable_host_key_checking=True sets known_hosts=None in asyncssh."""
+        config = SSHConfig(
+            hostname="server.example.com",
+            disable_host_key_checking=True,
+        )
         options = config.to_asyncssh_options()
-
         assert options["known_hosts"] is None
+
+    def test_disable_host_key_checking_default_false(self):
+        """Test that host key checking is enabled by default."""
+        config = SSHConfig(hostname="server.example.com")
+        assert config.disable_host_key_checking is False
+        options = config.to_asyncssh_options()
+        assert "known_hosts" not in options
 
 
 class TestSSHHost:

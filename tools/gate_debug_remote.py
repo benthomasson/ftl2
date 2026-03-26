@@ -108,11 +108,12 @@ async def run(args: argparse.Namespace) -> None:
             sys.exit(1)
 
     # Build SSH connection options
+    # NOTE: Host key checking disabled for debug tool — not for production use
     connect_kwargs: dict = {
         "host": args.host,
         "port": args.port,
         "username": args.user,
-        "known_hosts": None,
+        "known_hosts": None,  # Direct asyncssh call — debug tool only
     }
     if args.identity:
         connect_kwargs["client_keys"] = [args.identity]
