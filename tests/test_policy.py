@@ -139,3 +139,25 @@ class TestPolicyDeniedError:
         err = PolicyDeniedError("Action denied", rule=rule)
         assert err.rule is rule
         assert str(err) == "Action denied"
+
+    def test_is_ftl2error(self):
+        from ftl2.exceptions import FTL2Error
+
+        err = PolicyDeniedError("denied")
+        assert isinstance(err, FTL2Error)
+
+    def test_caught_by_except_ftl2error(self):
+        from ftl2.exceptions import FTL2Error
+
+        with pytest.raises(FTL2Error):
+            raise PolicyDeniedError("denied")
+
+    def test_has_error_context(self):
+        err = PolicyDeniedError("denied")
+        assert err.context is not None
+        assert err.context.error_type == "PolicyDenied"
+        assert err.context.message == "denied"
+
+    def test_rule_defaults_to_none(self):
+        err = PolicyDeniedError("denied")
+        assert err.rule is None
