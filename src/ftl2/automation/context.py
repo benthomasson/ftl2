@@ -1933,6 +1933,8 @@ class AutomationContext:
 
         Returns an ExecuteResult with cached output if the action matches
         and was successful, or None if the action should execute normally.
+        Compares module name, host, and parameters to avoid replaying stale
+        results when parameters have changed between runs.
         """
         if self._replay_actions is None:
             return None
@@ -1950,6 +1952,16 @@ class AutomationContext:
         # Only replay successes — re-execute failures
         if not action.get("success", False):
             self._replay_actions = None
+            return None
+
+        # Compare parameters — the stored action has redacted params, so
+        # redact the current params the same way before comparing.
+        cached_params = action.get("params", {})
+        current_params = self._redact_params(module_name, params)
+        if cached_params != current_params:
+            if not self.quiet:
+                print(f"  ⚠ {module_name}: params changed, re-executing (not replaying)")
+            self._replay_actions = None  # Stop replaying from here
             return None
 
         # Match — return cached result
