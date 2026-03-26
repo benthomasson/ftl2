@@ -138,7 +138,7 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
         return load_inventory_json(data, require_hosts=require_hosts)
 
     # YAML — existing format
-    data = yaml.safe_load(content)
+    data = yaml.safe_load(content) or {}
     return _load_inventory_yaml(data, require_hosts=require_hosts)
 
 

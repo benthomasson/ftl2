@@ -176,10 +176,10 @@ class Policy:
         import yaml
 
         path = Path(path)
-        data = yaml.safe_load(path.read_text())
+        data = yaml.safe_load(path.read_text()) or {}
 
         rules = []
-        for entry in data.get("rules", []):
+        for entry in data.get("rules") or []:
             rules.append(
                 PolicyRule(
                     decision=entry.get("decision", "deny"),
