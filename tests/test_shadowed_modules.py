@@ -199,8 +199,8 @@ class TestPingImplementation:
 
     @pytest.mark.asyncio
     async def test_ping_fails_on_unreachable_host(self):
-        """Test that ping raises ConnectionError on unreachable host."""
-        from ftl2.exceptions import ConnectionError as FTL2ConnectionError
+        """Test that ping raises FTL2ConnectionError on unreachable host."""
+        from ftl2.exceptions import FTL2ConnectionError
 
         async with automation(
             inventory={"test": {"hosts": {"unreachable": {"ansible_host": "192.0.2.1"}}}},

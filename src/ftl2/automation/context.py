@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence, TYPE_CHECKING
 
 from ftl2.automation.proxy import ModuleProxy
+from ftl2.exceptions import FTL2ConnectionError
 
 if TYPE_CHECKING:
     from ftl2.state import State
@@ -1090,7 +1091,7 @@ class AutomationContext:
                     gate.gate_process.stdout
                 )
                 if response is None:
-                    raise ConnectionError(f"Gate connection closed for {host.name}")
+                    raise FTL2ConnectionError(f"Gate connection closed for {host.name}")
 
                 resp_type, resp_data = response
 
