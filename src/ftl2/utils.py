@@ -104,6 +104,9 @@ def chunk(lst: list[T], n: int) -> Generator[list[T]]:
     Yields:
         Successive chunks of the input list
 
+    Raises:
+        ValueError: If n is less than or equal to 0.
+
     Example:
         >>> list(chunk([1, 2, 3, 4, 5], 2))
         [[1, 2], [3, 4], [5]]
@@ -111,6 +114,8 @@ def chunk(lst: list[T], n: int) -> Generator[list[T]]:
         >>> list(chunk(['a', 'b', 'c'], 10))
         [['a', 'b', 'c']]
     """
+    if n <= 0:
+        raise ValueError(f"Chunk size must be positive, got {n}")
     for i in range(0, len(lst), n):
         yield lst[i : i + n]
 
