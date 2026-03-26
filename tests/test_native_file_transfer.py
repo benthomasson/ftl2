@@ -56,8 +56,11 @@ class TestNativeCopy:
         with tempfile.TemporaryDirectory() as tmpdir:
             dest = Path(tmpdir) / "test.txt"
 
-            result = await proxy.copy(content="Hello World", dest=str(dest))
+            results = await proxy.copy(content="Hello World", dest=str(dest))
 
+            assert isinstance(results, list)
+            assert len(results) == 1
+            result = results[0]
             assert result["changed"] is True
             assert result["dest"] == str(dest)
             assert dest.read_text() == "Hello World"
@@ -71,9 +74,9 @@ class TestNativeCopy:
             dest = Path(tmpdir) / "test.txt"
             dest.write_text("Hello World")
 
-            result = await proxy.copy(content="Hello World", dest=str(dest))
+            results = await proxy.copy(content="Hello World", dest=str(dest))
 
-            assert result["changed"] is False
+            assert results[0]["changed"] is False
 
     @pytest.mark.asyncio
     async def test_copy_localhost_from_file(self, mock_context):
@@ -85,9 +88,9 @@ class TestNativeCopy:
             src.write_text("Source content")
             dest = Path(tmpdir) / "dest.txt"
 
-            result = await proxy.copy(src=str(src), dest=str(dest))
+            results = await proxy.copy(src=str(src), dest=str(dest))
 
-            assert result["changed"] is True
+            assert results[0]["changed"] is True
             assert dest.read_text() == "Source content"
 
     @pytest.mark.asyncio
@@ -106,9 +109,9 @@ class TestNativeCopy:
             original_cwd = os.getcwd()
             try:
                 os.chdir(tmpdir)
-                result = await proxy.copy(src="source.txt", dest=str(dest))
+                results = await proxy.copy(src="source.txt", dest=str(dest))
 
-                assert result["changed"] is True
+                assert results[0]["changed"] is True
                 assert dest.read_text() == "Relative source"
             finally:
                 os.chdir(original_cwd)
@@ -121,9 +124,9 @@ class TestNativeCopy:
         with tempfile.TemporaryDirectory() as tmpdir:
             dest = Path(tmpdir) / "test.txt"
 
-            result = await proxy.copy(content="Hello", dest=str(dest), mode="0600")
+            results = await proxy.copy(content="Hello", dest=str(dest), mode="0600")
 
-            assert result["changed"] is True
+            assert results[0]["changed"] is True
             assert (dest.stat().st_mode & 0o777) == 0o600
 
 
@@ -148,9 +151,9 @@ class TestNativeTemplate:
             src.write_text("Hello {{ name }}!")
             dest = Path(tmpdir) / "output.txt"
 
-            result = await proxy.template(src=str(src), dest=str(dest), name="World")
+            results = await proxy.template(src=str(src), dest=str(dest), name="World")
 
-            assert result["changed"] is True
+            assert results[0]["changed"] is True
             assert dest.read_text() == "Hello World!"
 
     @pytest.mark.asyncio
@@ -167,9 +170,9 @@ class TestNativeTemplate:
             original_cwd = os.getcwd()
             try:
                 os.chdir(tmpdir)
-                result = await proxy.template(src="config.j2", dest=str(dest), port=8080)
+                results = await proxy.template(src="config.j2", dest=str(dest), port=8080)
 
-                assert result["changed"] is True
+                assert results[0]["changed"] is True
                 assert dest.read_text() == "port=8080"
             finally:
                 os.chdir(original_cwd)
@@ -193,9 +196,9 @@ class TestNativeTemplate:
             dest = Path(tmpdir) / "output.txt"
             dest.write_text("Hello World!")
 
-            result = await proxy.template(src=str(src), dest=str(dest), name="World")
+            results = await proxy.template(src=str(src), dest=str(dest), name="World")
 
-            assert result["changed"] is False
+            assert results[0]["changed"] is False
 
 
 class TestNativeFetch:
