@@ -395,9 +395,9 @@ class AutomationContext:
         self._environment = environment
         self._event_handlers: dict[str, dict[str, list]] = {}  # host -> event_type -> [handlers]
         self._proxy = ModuleProxy(self)
+        self._hosts_proxy: HostsProxy | None = None
         self._check_name_collisions()
         self._results: list[ExecuteResult] = []
-        self._hosts_proxy: HostsProxy | None = None
         self._ssh_connections: dict[str, SSHHost] = {}
         self._remote_runner: "RemoteModuleRunner | None" = None
         self._gate_locks: dict[str, asyncio.Lock] = {}
@@ -753,11 +753,74 @@ class AutomationContext:
 
     @property
     def available_modules(self) -> list[str]:
-        """List of available module names."""
+        """List of available module names.
+
+        Handles FQCN entries in the allowlist by matching their short name
+        against known modules. For example, ``"ansible.builtin.file"`` is
+        included if ``"file"`` is a known module.
+        """
         all_modules = list_modules()
         if self._enabled_modules is not None:
-            return [m for m in self._enabled_modules if m in all_modules]
+            result = []
+            for m in self._enabled_modules:
+                if m in all_modules:
+                    result.append(m)
+                elif m.rsplit(".", 1)[-1] in all_modules:
+                    result.append(m)
+            return result
         return all_modules
+
+    def _check_module_allowed(self, module_name: str) -> None:
+        """Check whether *module_name* is permitted by the enabled-modules allowlist.
+
+        Handles both short names (``"shell"``) and FQCNs
+        (``"ansible.builtin.shell"``).  A module is allowed when:
+
+        * ``_enabled_modules`` is ``None`` (no restriction), **or**
+        * the full *module_name* appears in the allowlist, **or**
+        * the short name (last dotted component) appears in the allowlist, **or**
+        * *module_name* is a short name that matches the short name extracted
+          from a FQCN entry in the allowlist (symmetric matching).
+
+        Args:
+            module_name: Short name or FQCN of the module to check.
+
+        Raises:
+            AttributeError: If the module is not in the allowlist.
+
+        Examples:
+            >>> ctx._enabled_modules = ["file", "copy"]
+            >>> ctx._check_module_allowed("file")        # ok
+            >>> ctx._check_module_allowed("ansible.builtin.file")  # ok (short name "file" matches)
+            >>> ctx._check_module_allowed("shell")       # raises AttributeError
+            >>> ctx._check_module_allowed("ansible.builtin.shell")  # raises AttributeError
+            >>> ctx._enabled_modules = ["ansible.builtin.command"]
+            >>> ctx._check_module_allowed("command")     # ok (matches FQCN's short name)
+        """
+        if self._enabled_modules is None:
+            return
+
+        # Allow if the full name is explicitly in the allowlist
+        if module_name in self._enabled_modules:
+            return
+
+        # Extract short name from FQCN input and check against allowlist
+        short_name = module_name.rsplit(".", 1)[-1]
+        if short_name in self._enabled_modules:
+            return
+
+        # Check if the input short name matches any FQCN entry's short name
+        # e.g. modules=["ansible.builtin.command"] should allow "command"
+        allowlist_short_names = {
+            entry.rsplit(".", 1)[-1] for entry in self._enabled_modules
+        }
+        if short_name in allowlist_short_names:
+            return
+
+        raise AttributeError(
+            f"Module '{module_name}' is not enabled. "
+            f"Enabled modules: {', '.join(self._enabled_modules)}"
+        )
 
     @property
     def results(self) -> list[ExecuteResult]:
@@ -799,13 +862,9 @@ class AutomationContext:
         if name.startswith("_"):
             raise AttributeError(name)
 
-        # Check if it's an enabled module
-        if self._enabled_modules is not None and name not in self._enabled_modules:
-            if name in list_modules():
-                raise AttributeError(
-                    f"Module '{name}' is not enabled. "
-                    f"Enabled modules: {', '.join(self._enabled_modules)}"
-                )
+        # Check if it's an enabled module (short name at this level)
+        if name in list_modules():
+            self._check_module_allowed(name)
 
         return getattr(self._proxy, name)
 
@@ -822,6 +881,9 @@ class AutomationContext:
         Returns:
             Module output dictionary
         """
+        # Defense in depth: enforce allowlist even for direct execute() calls
+        self._check_module_allowed(module_name)
+
         from ftl2.ftl_modules import execute
 
         start_time = time.time()
@@ -1129,6 +1191,9 @@ class AutomationContext:
             # Run on host list
             results = await ftl.run_on(ftl.hosts["db-servers"], "command", cmd="pg_dump mydb")
         """
+        # Defense in depth: enforce allowlist for remote execution too
+        self._check_module_allowed(module_name)
+
         # Resolve hosts
         if isinstance(hosts, str):
             host_list = self.hosts[hosts]
