@@ -142,6 +142,16 @@ class TestChunk:
 
         assert result == [[1], [2], [3]]
 
+    def test_chunk_zero_raises_valueerror(self):
+        """Test that chunk size of 0 raises ValueError."""
+        with pytest.raises(ValueError, match="Chunk size must be positive, got 0"):
+            list(chunk([1, 2, 3], 0))
+
+    def test_chunk_negative_raises_valueerror(self):
+        """Test that negative chunk size raises ValueError."""
+        with pytest.raises(ValueError, match="Chunk size must be positive, got -1"):
+            list(chunk([1, 2, 3], -1))
+
 
 class TestEnsureDirectory:
     """Tests for ensure_directory function."""
