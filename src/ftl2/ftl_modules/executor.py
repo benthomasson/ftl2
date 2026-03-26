@@ -75,8 +75,18 @@ class ExecuteResult:
         error: str,
         module: str,
         host: str = "localhost",
+        *,
+        used_ftl: bool = False,
     ) -> "ExecuteResult":
-        """Create a failure result from an error."""
+        """Create a failure result from an error.
+
+        Args:
+            error: Error message describing the failure.
+            module: Name of the module that failed.
+            host: Host name where execution occurred.
+            used_ftl: Whether an FTL module was used (vs Ansible fallback).
+                Defaults to False for backward compatibility.
+        """
         return cls(
             success=False,
             changed=False,
@@ -84,7 +94,7 @@ class ExecuteResult:
             error=error,
             module=module,
             host=host,
-            used_ftl=False,
+            used_ftl=used_ftl,
         )
 
 
@@ -307,7 +317,7 @@ async def execute(
         )
     except Exception as e:
         logger.error(f"Module '{module_name}' failed with unexpected error: {e}")
-        return ExecuteResult.from_error(str(e), module_name, host_name)
+        return ExecuteResult.from_error(str(e), module_name, host_name, used_ftl=ftl_module is not None)
 
 
 async def execute_on_hosts(
