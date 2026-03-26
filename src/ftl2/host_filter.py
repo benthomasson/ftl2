@@ -73,7 +73,7 @@ def match_host(
     """
     # Check exclusions first - if excluded, never include
     for pattern in exclude_patterns:
-        if fnmatch.fnmatch(hostname, pattern):
+        if fnmatch.fnmatchcase(hostname, pattern):
             return False
 
     # If no include criteria, include all (that weren't excluded)
@@ -86,7 +86,7 @@ def match_host(
 
     # Check pattern match
     for pattern in include_patterns:
-        if fnmatch.fnmatch(hostname, pattern):
+        if fnmatch.fnmatchcase(hostname, pattern):
             return True
 
     return False
