@@ -1,0 +1,13 @@
+# Base safety rules — universal, loaded first.
+# Name with 00- prefix so it sorts before environment-specific files.
+rules:
+  - decision: deny
+    match:
+      module: shell
+      param.cmd: "rm -rf /*"
+    reason: "Recursive root deletion is never permitted"
+
+  - decision: deny
+    match:
+      module: "*.raw"
+    reason: "Raw module execution requires an environment-specific override"

@@ -1,0 +1,21 @@
+# Production guardrails — layered on top of base rules.
+# Because rules are evaluated in file order (00-base first, then 10-production),
+# base safety rules fire first. These add production-specific restrictions.
+rules:
+  - decision: deny
+    match:
+      module: shell
+      environment: prod
+    reason: "Use proper modules instead of shell in production"
+
+  - decision: deny
+    match:
+      module: command
+      environment: prod
+    reason: "Use proper modules instead of command in production"
+
+  - decision: deny
+    match:
+      host: "prod-*"
+      param.state: absent
+    reason: "Destructive actions (state=absent) not permitted on production hosts"

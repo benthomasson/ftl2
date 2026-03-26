@@ -131,6 +131,125 @@ rules:
         assert policy.evaluate("anything", {}).permitted is True
 
 
+class TestPolicyFromFiles:
+    """Tests for Policy.from_files()."""
+
+    def test_concatenates_rules_in_order(self, tmp_path):
+        (tmp_path / "base.yaml").write_text(
+            "rules:\n"
+            "  - decision: deny\n"
+            "    match: {module: shell}\n"
+            "    reason: base-shell\n"
+        )
+        (tmp_path / "extra.yaml").write_text(
+            "rules:\n"
+            "  - decision: deny\n"
+            "    match: {module: command}\n"
+            "    reason: extra-command\n"
+        )
+        policy = Policy.from_files([tmp_path / "base.yaml", tmp_path / "extra.yaml"])
+        assert len(policy.rules) == 2
+        assert policy.rules[0].reason == "base-shell"
+        assert policy.rules[1].reason == "extra-command"
+
+    def test_empty_list_returns_empty_policy(self):
+        policy = Policy.from_files([])
+        assert policy.rules == []
+        assert policy.evaluate("anything", {}).permitted is True
+
+    def test_single_file_same_as_from_file(self, tmp_path):
+        (tmp_path / "only.yaml").write_text(
+            "rules:\n"
+            "  - decision: deny\n"
+            "    match: {module: shell}\n"
+            "    reason: only\n"
+        )
+        from_files = Policy.from_files([tmp_path / "only.yaml"])
+        from_file = Policy.from_file(tmp_path / "only.yaml")
+        assert len(from_files.rules) == len(from_file.rules)
+        assert from_files.rules[0].reason == from_file.rules[0].reason
+
+    def test_first_match_wins_across_files(self, tmp_path):
+        """Earlier file's rules are evaluated first (first-match-wins)."""
+        (tmp_path / "first.yaml").write_text(
+            "rules:\n"
+            "  - decision: deny\n"
+            "    match: {module: shell}\n"
+            "    reason: from-first-file\n"
+        )
+        (tmp_path / "second.yaml").write_text(
+            "rules:\n"
+            "  - decision: deny\n"
+            "    match: {module: shell}\n"
+            "    reason: from-second-file\n"
+        )
+        policy = Policy.from_files([tmp_path / "first.yaml", tmp_path / "second.yaml"])
+        result = policy.evaluate("shell", {})
+        assert result.permitted is False
+        assert result.reason == "from-first-file"
+
+
+class TestPolicyFromDirectory:
+    """Tests for Policy.from_directory()."""
+
+    def test_loads_alphabetically(self, tmp_path):
+        (tmp_path / "b.yaml").write_text(
+            "rules:\n"
+            "  - decision: deny\n"
+            "    match: {module: command}\n"
+            "    reason: from-b\n"
+        )
+        (tmp_path / "a.yaml").write_text(
+            "rules:\n"
+            "  - decision: deny\n"
+            "    match: {module: shell}\n"
+            "    reason: from-a\n"
+        )
+        policy = Policy.from_directory(tmp_path)
+        assert len(policy.rules) == 2
+        # a.yaml sorts before b.yaml
+        assert policy.rules[0].reason == "from-a"
+        assert policy.rules[1].reason == "from-b"
+
+    def test_ignores_non_yaml_files(self, tmp_path):
+        (tmp_path / "policy.yaml").write_text(
+            "rules:\n"
+            "  - decision: deny\n"
+            "    match: {module: shell}\n"
+            "    reason: yaml-rule\n"
+        )
+        (tmp_path / "readme.txt").write_text("not a policy")
+        (tmp_path / "notes.md").write_text("also not a policy")
+        policy = Policy.from_directory(tmp_path)
+        assert len(policy.rules) == 1
+
+    def test_loads_yml_extension(self, tmp_path):
+        (tmp_path / "policy.yml").write_text(
+            "rules:\n"
+            "  - decision: deny\n"
+            "    match: {module: shell}\n"
+            "    reason: yml-rule\n"
+        )
+        policy = Policy.from_directory(tmp_path)
+        assert len(policy.rules) == 1
+        assert policy.rules[0].reason == "yml-rule"
+
+    def test_empty_directory_returns_empty_policy(self, tmp_path):
+        policy = Policy.from_directory(tmp_path)
+        assert policy.rules == []
+        assert policy.evaluate("anything", {}).permitted is True
+
+    def test_not_a_directory_raises(self, tmp_path):
+        f = tmp_path / "file.yaml"
+        f.write_text("rules: []\n")
+        with pytest.raises(NotADirectoryError):
+            Policy.from_directory(f)
+
+    def test_from_file_rejects_directory(self, tmp_path):
+        with pytest.raises(IsADirectoryError, match="is a directory"):
+            Policy.from_file(tmp_path)
+
+
 class TestPolicyDeniedError:
     """Tests for PolicyDeniedError."""
 

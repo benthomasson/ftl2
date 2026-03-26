@@ -391,7 +391,14 @@ class AutomationContext:
                 data = json.loads(replay_path.read_text())
                 self._replay_actions = data.get("actions", [])
         from ftl2.policy import Policy
-        self._policy = Policy.from_file(policy) if policy else Policy.empty()
+        if policy:
+            p = Path(policy)
+            if p.is_dir():
+                self._policy = Policy.from_directory(p)
+            else:
+                self._policy = Policy.from_file(p)
+        else:
+            self._policy = Policy.empty()
         self._environment = environment
         self._event_handlers: dict[str, dict[str, list]] = {}  # host -> event_type -> [handlers]
         self._proxy = ModuleProxy(self)
