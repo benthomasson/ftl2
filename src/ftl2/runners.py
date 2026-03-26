@@ -26,6 +26,7 @@ from .exceptions import (
     ConnectionError,
     ErrorContext,
     ErrorTypes,
+    FTL2Error,
     ModuleExecutionError,
     get_suggestions,
 )
@@ -194,10 +195,10 @@ class ModuleRunner(ABC):
             context: Execution context with module and gate config
 
         Returns:
-            ModuleResult containing execution outcome
-
-        Raises:
-            Exception: Various exceptions depending on implementation
+            ModuleResult containing execution outcome.
+            On failure, returns a ModuleResult with success=False
+            and error details populated. Implementations must not
+            raise exceptions — all errors are returned as data.
         """
         pass
 
@@ -293,10 +294,9 @@ class LocalModuleRunner(ModuleRunner):
             context: Execution context
 
         Returns:
-            ModuleResult with execution outcome
-
-        Raises:
-            ModuleExecutionError: If execution fails
+            ModuleResult with execution outcome.
+            On failure, returns a ModuleResult with success=False
+            and error details populated.
         """
         try:
             # Merge module args with host-specific overrides
@@ -565,81 +565,97 @@ class RemoteModuleRunner(ModuleRunner):
             context: Execution context
 
         Returns:
-            ModuleResult with execution outcome
-
-        Raises:
-            ModuleExecutionError: If module execution fails
+            ModuleResult with execution outcome.
+            On failure, returns a ModuleResult with success=False
+            and error details populated.
         """
-        # Merge module args with host-specific overrides
-        merged_args = merge_arguments(
-            host,
-            context.execution_config.module_args,
-            context.execution_config.host_args,
-        )
-
-        # Extract connection parameters from host config
-        ssh_host = host.ansible_host if host.ansible_host else host.name
-        ssh_port = host.ansible_port if host.ansible_port else 22
-        ssh_user = host.ansible_user if host.ansible_user else getuser()
-        ssh_password = host.get_var("ansible_password")  # Optional password auth
-        ssh_key_file = host.get_var("ssh_private_key_file")  # Optional SSH key (without ansible_ prefix)
-        interpreter = host.ansible_python_interpreter if host.ansible_python_interpreter else sys.executable
-
-        # Find module
-        module_dirs = context.execution_config.module_dirs
-        module_path = find_module(module_dirs, context.module_name)
-        if module_path is None:
-            raise ModuleExecutionError(f"Module {context.module_name} not found in {module_dirs}")
-
-        # Handle dry-run mode - return preview without connecting
-        if context.dry_run:
-            return self._dry_run_result(
-                host, context.module_name, merged_args, module_path,
-                ssh_host, ssh_port, ssh_user
-            )
-
-        # Initialize gate builder if needed
-        if self.gate_builder is None:
-            cache_dir = context.gate_config.cache_dir
-            if cache_dir is None:
-                cache_dir = Path.home() / ".ftl2" / "gates"
-            self.gate_builder = GateBuilder(cache_dir)
-
-        # Build composite cache key including become config
-        become = host.become_config
-        cache_key = gate_cache_key(host.name, become)
-
-        # Get or create gate connection
-        gate = await self._get_or_create_gate(
-            cache_key, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context
-        )
-
         try:
-            # Execute module through gate
-            result_data = await self._execute_through_gate(
-                gate, module_path, context.module_name, merged_args
+            # Merge module args with host-specific overrides
+            merged_args = merge_arguments(
+                host,
+                context.execution_config.module_args,
+                context.execution_config.host_args,
             )
 
-            # Cache the gate for reuse
-            self.gate_cache[cache_key] = gate
+            # Extract connection parameters from host config
+            ssh_host = host.ansible_host if host.ansible_host else host.name
+            ssh_port = host.ansible_port if host.ansible_port else 22
+            ssh_user = host.ansible_user if host.ansible_user else getuser()
+            ssh_password = host.get_var("ansible_password")  # Optional password auth
+            ssh_key_file = host.get_var("ssh_private_key_file")  # Optional SSH key (without ansible_ prefix)
+            interpreter = host.ansible_python_interpreter if host.ansible_python_interpreter else sys.executable
 
-            # Convert to ModuleResult
-            success = result_data.get("rc", 0) == 0 and not result_data.get("failed", False)
-            return ModuleResult(
+            # Find module
+            module_dirs = context.execution_config.module_dirs
+            module_path = find_module(module_dirs, context.module_name)
+            if module_path is None:
+                return ModuleResult.error_result(
+                    host_name=host.name,
+                    error=f"Module {context.module_name} not found in {module_dirs}",
+                )
+
+            # Handle dry-run mode - return preview without connecting
+            if context.dry_run:
+                return self._dry_run_result(
+                    host, context.module_name, merged_args, module_path,
+                    ssh_host, ssh_port, ssh_user
+                )
+
+            # Initialize gate builder if needed
+            if self.gate_builder is None:
+                cache_dir = context.gate_config.cache_dir
+                if cache_dir is None:
+                    cache_dir = Path.home() / ".ftl2" / "gates"
+                self.gate_builder = GateBuilder(cache_dir)
+
+            # Build composite cache key including become config
+            become = host.become_config
+            cache_key = gate_cache_key(host.name, become)
+
+            # Get or create gate connection
+            gate = await self._get_or_create_gate(
+                cache_key, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context
+            )
+
+            try:
+                # Execute module through gate
+                result_data = await self._execute_through_gate(
+                    gate, module_path, context.module_name, merged_args
+                )
+
+                # Cache the gate for reuse
+                self.gate_cache[cache_key] = gate
+
+                # Convert to ModuleResult
+                success = result_data.get("rc", 0) == 0 and not result_data.get("failed", False)
+                return ModuleResult(
+                    host_name=host.name,
+                    success=success,
+                    changed=result_data.get("changed", False),
+                    output=result_data,
+                    error=result_data.get("stderr") if not success else None,
+                )
+
+            except Exception as e:
+                # Clean up gate on error — but not multiplexed gates (other requests may be in-flight)
+                if not gate.multiplexed:
+                    await self._close_gate(gate)
+                    if cache_key in self.gate_cache:
+                        del self.gate_cache[cache_key]
+                raise
+
+        except FTL2Error as e:
+            return ModuleResult.error_result(
                 host_name=host.name,
-                success=success,
-                changed=result_data.get("changed", False),
-                output=result_data,
-                error=result_data.get("stderr") if not success else None,
+                error=str(e),
+                error_context=e.context,
             )
-
         except Exception as e:
-            # Clean up gate on error — but not multiplexed gates (other requests may be in-flight)
-            if not gate.multiplexed:
-                await self._close_gate(gate)
-                if cache_key in self.gate_cache:
-                    del self.gate_cache[cache_key]
-            raise ModuleExecutionError(f"Remote execution failed on {host.name}: {e}") from e
+            logger.exception(f"Error executing module {context.module_name}")
+            return ModuleResult.error_result(
+                host_name=host.name,
+                error=f"Remote execution failed: {str(e)}",
+            )
 
     async def _get_or_create_gate(
         self,

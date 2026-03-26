@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .exceptions import FTL2Error, ErrorTypes
+from .exceptions import ErrorTypes
 from .inventory import Inventory
 from .progress import ProgressReporter, NullProgressReporter
 from .retry import (
@@ -308,56 +308,33 @@ class ModuleExecutor:
         await asyncio.gather(*[task for _, _, task in tasks], return_exceptions=True)
 
         # Extract results and report completion
+        # Runners follow the errors-as-data contract: run() always returns
+        # a ModuleResult, never raises. We keep return_exceptions=True above
+        # as a safety net for unexpected failures.
         results: dict[str, ModuleResult] = {}
         for host_name, start_time, task in tasks:
             duration = time.time() - start_time
-            try:
+            exc = task.exception()
+            if exc is not None:
+                # Safety net: should not happen since runners return errors as data,
+                # but handle gracefully if an unexpected exception leaks through.
+                logger.exception(f"Unexpected exception from runner for {host_name}: {exc}")
+                result = ModuleResult.error_result(
+                    host_name=host_name,
+                    error=str(exc),
+                    error_context=getattr(exc, 'context', None),
+                )
+            else:
                 result = task.result()
-                results[host_name] = result
 
-                # Report host complete
-                self.progress_reporter.on_host_complete(
-                    host=host_name,
-                    success=result.success,
-                    changed=result.changed,
-                    duration=duration,
-                    error=result.error,
-                )
-            except FTL2Error as e:
-                # Capture rich error context from FTL2 exceptions
-                logger.error(f"Execution failed on {host_name}: {e}")
-                results[host_name] = ModuleResult(
-                    host_name=host_name,
-                    success=False,
-                    changed=False,
-                    output={},
-                    error=str(e),
-                    error_context=e.context,
-                )
-                self.progress_reporter.on_host_complete(
-                    host=host_name,
-                    success=False,
-                    changed=False,
-                    duration=duration,
-                    error=str(e),
-                )
-            except Exception as e:
-                # Convert other exceptions to error result
-                logger.exception(f"Execution failed on {host_name}: {e}")
-                results[host_name] = ModuleResult(
-                    host_name=host_name,
-                    success=False,
-                    changed=False,
-                    output={},
-                    error=str(e),
-                )
-                self.progress_reporter.on_host_complete(
-                    host=host_name,
-                    success=False,
-                    changed=False,
-                    duration=duration,
-                    error=str(e),
-                )
+            results[host_name] = result
+            self.progress_reporter.on_host_complete(
+                host=host_name,
+                success=result.success,
+                changed=result.changed,
+                duration=duration,
+                error=result.error,
+            )
 
         return results
 
