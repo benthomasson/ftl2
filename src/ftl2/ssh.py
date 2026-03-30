@@ -35,9 +35,24 @@ class SSHConfig:
         username: SSH username (default current user)
         password: Password for authentication (optional)
         client_keys: List of private key paths (optional)
-        known_hosts: Path to known_hosts file (None to disable checking)
+        known_hosts: Path to known_hosts file, or ``()`` to use system
+            defaults.  Passing ``None`` is no longer supported — use
+            ``disable_host_key_checking=True`` instead.
+        disable_host_key_checking: Explicitly disable host key verification.
+            Only set this to ``True`` when you intentionally want to skip
+            host key checking (e.g. throwaway test containers).
         connect_timeout: Connection timeout in seconds
         keepalive_interval: Keepalive interval (0 to disable)
+
+    Examples:
+        # Use system known_hosts (default, secure):
+        SSHConfig(hostname="prod.example.com")
+
+        # Use a custom known_hosts file:
+        SSHConfig(hostname="prod.example.com", known_hosts="/etc/ssh/known_hosts")
+
+        # Explicitly disable checking (test containers only):
+        SSHConfig(hostname="localhost", disable_host_key_checking=True)
     """
 
     hostname: str
@@ -45,9 +60,19 @@ class SSHConfig:
     username: str | None = None
     password: str | None = None
     client_keys: list[str] | None = None
-    known_hosts: str | None = ()  # Empty tuple = use default known_hosts
+    known_hosts: str | tuple = ()  # Empty tuple = use default known_hosts
+    disable_host_key_checking: bool = False
     connect_timeout: float = 30.0
     keepalive_interval: float = 30.0
+
+    def __post_init__(self):
+        if self.known_hosts is None:
+            raise ValueError(
+                "known_hosts=None is not supported because it silently disables "
+                "host key verification. Use disable_host_key_checking=True to "
+                "explicitly disable checking, or use known_hosts=() for system "
+                "defaults."
+            )
 
     def to_asyncssh_options(self) -> dict[str, Any]:
         """Convert to asyncssh.connect() kwargs."""
@@ -64,8 +89,8 @@ class SSHConfig:
             options["password"] = self.password
         if self.client_keys:
             options["client_keys"] = self.client_keys
-        if self.known_hosts is None:
-            options["known_hosts"] = None  # Disable host key checking
+        if self.disable_host_key_checking:
+            options["known_hosts"] = None
         elif self.known_hosts != ():
             options["known_hosts"] = self.known_hosts
 
@@ -92,7 +117,8 @@ class SSHHost:
         username: str | None = None,
         password: str | None = None,
         client_keys: list[str] | None = None,
-        known_hosts: str | None = (),
+        known_hosts: str | tuple = (),
+        disable_host_key_checking: bool = False,
         connect_timeout: float = 30.0,
     ):
         """Initialize SSH host.
@@ -103,7 +129,8 @@ class SSHHost:
             username: SSH username
             password: Password for auth
             client_keys: Private key paths
-            known_hosts: Known hosts file (None to disable checking)
+            known_hosts: Known hosts file path, or ``()`` for system defaults
+            disable_host_key_checking: Set True to skip host key verification
             connect_timeout: Connection timeout
         """
         self.config = SSHConfig(
@@ -113,6 +140,7 @@ class SSHHost:
             password=password,
             client_keys=client_keys,
             known_hosts=known_hosts,
+            disable_host_key_checking=disable_host_key_checking,
             connect_timeout=connect_timeout,
         )
         self._conn: asyncssh.SSHClientConnection | None = None
@@ -490,7 +518,8 @@ class SSHConnectionPool:
         username: str | None = None,
         password: str | None = None,
         client_keys: list[str] | None = None,
-        known_hosts: str | None = (),
+        known_hosts: str | tuple = (),
+        disable_host_key_checking: bool = False,
     ) -> SSHHost:
         """Get or create an SSHHost for the given parameters.
 
@@ -500,14 +529,17 @@ class SSHConnectionPool:
             username: SSH username
             password: Password for auth
             client_keys: Private key paths
-            known_hosts: Known hosts file
+            known_hosts: Known hosts file path, or ``()`` for system defaults
+            disable_host_key_checking: Set True to skip host key verification
 
         Returns:
             SSHHost instance (may be reused)
         """
-        # Include credentials in key so different auth produces different connections
+        # Include credentials and security settings in key so different
+        # configurations produce different connections
         keys_tuple = tuple(client_keys) if client_keys else None
-        key = (hostname, port, username, password, keys_tuple)
+        key = (hostname, port, username, password, keys_tuple,
+               known_hosts, disable_host_key_checking)
 
         async with self._lock:
             if key not in self._hosts:
@@ -518,6 +550,7 @@ class SSHConnectionPool:
                     password=password,
                     client_keys=client_keys,
                     known_hosts=known_hosts,
+                    disable_host_key_checking=disable_host_key_checking,
                 )
                 logger.debug(f"Created new SSH host: {hostname}:{port}")
 

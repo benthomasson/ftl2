@@ -12,14 +12,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ftl2.exceptions import ErrorContext, FTL2Error
+
 logger = logging.getLogger(__name__)
 
 
-class PolicyDeniedError(Exception):
-    """Raised when a policy rule denies an action."""
+class PolicyDeniedError(FTL2Error):
+    """Raised when a policy rule denies an action.
+
+    Extends FTL2Error so it can be caught with ``except FTL2Error``.
+
+    Attributes:
+        rule: The PolicyRule that denied the action, or None.
+    """
 
     def __init__(self, message: str, rule: "PolicyRule | None" = None):
-        super().__init__(message)
+        context = ErrorContext(
+            error_type="PolicyDenied",
+            message=message,
+        )
+        super().__init__(message, context=context)
         self.rule = rule
 
 
@@ -33,7 +45,8 @@ class PolicyRule:
 
     Attributes:
         decision: "deny" (only supported decision; "allow" is not implemented)
-        match: Conditions to match against. Keys can be:
+        match: Conditions to match against (case-sensitive on all platforms).
+            Keys can be:
             - module: fnmatch pattern against module name
             - host: fnmatch pattern against target host
             - environment: match against environment label
@@ -131,23 +144,24 @@ class Policy:
         """Check if a rule matches the given action context.
 
         All conditions in the rule must match for the rule to apply.
+        Uses fnmatch.fnmatchcase for case-sensitive matching on all platforms.
         """
         for key, pattern in rule.match.items():
             pattern = str(pattern)
 
             if key == "module":
-                if not fnmatch.fnmatch(module_name, pattern):
+                if not fnmatch.fnmatchcase(module_name, pattern):
                     return False
             elif key == "host":
-                if not fnmatch.fnmatch(host, pattern):
+                if not fnmatch.fnmatchcase(host, pattern):
                     return False
             elif key == "environment":
-                if not fnmatch.fnmatch(environment, pattern):
+                if not fnmatch.fnmatchcase(environment, pattern):
                     return False
             elif key.startswith("param."):
                 param_name = key[len("param."):]
                 param_value = str(params.get(param_name, ""))
-                if not fnmatch.fnmatch(param_value, pattern):
+                if not fnmatch.fnmatchcase(param_value, pattern):
                     return False
             else:
                 # Unknown condition key — skip (don't match)

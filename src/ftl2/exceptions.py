@@ -256,8 +256,12 @@ class ModuleExecutionError(FTL2Error):
         super().__init__(message, context)
 
 
-class ConnectionError(FTL2Error):
-    """Raised when SSH connection fails."""
+class FTL2ConnectionError(FTL2Error):
+    """Raised when SSH connection fails.
+
+    Named FTL2ConnectionError to avoid shadowing Python's builtin
+    ConnectionError (an OSError subclass).
+    """
 
     def __init__(
         self,
@@ -289,6 +293,11 @@ class ConnectionError(FTL2Error):
             debug_command=f"ftl2 test-ssh -i <inventory> --timeout 30",
         )
         super().__init__(message, context)
+
+
+# Deprecated alias — will be removed in a future release.
+# Avoid importing this name: it shadows Python's builtin ConnectionError.
+ConnectionError = FTL2ConnectionError
 
 
 class AuthenticationError(FTL2Error):

@@ -106,10 +106,10 @@ async def test_replay_with_secret_bindings():
         return True
 
 
-async def test_replay_params_dont_affect_matching():
-    """Verify that parameter changes don't break replay (positional matching)."""
+async def test_replay_params_change_triggers_reexecution():
+    """Verify that parameter changes cause re-execution instead of stale replay."""
     print("\n" + "=" * 70)
-    print("TEST: Replay ignores parameter changes (positional matching)")
+    print("TEST: Replay detects parameter changes and re-executes")
     print("=" * 70)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -121,8 +121,8 @@ async def test_replay_params_dont_affect_matching():
         async with automation(record=str(audit_file), quiet=True) as ftl:
             result = await ftl.command(cmd="echo 'value1'")
 
-        # Second run with different param - should still replay
-        print("\n--- Second run (param=value2, should still replay) ---")
+        # Second run with different param - should NOT replay (params changed)
+        print("\n--- Second run (param=value2, should re-execute) ---")
         async with automation(
             record=str(audit_file),
             replay=str(audit_file),
@@ -130,19 +130,57 @@ async def test_replay_params_dont_affect_matching():
         ) as ftl:
             result = await ftl.command(cmd="echo 'value2'")  # Different param!
 
-            # Check that we got the CACHED output (from first run)
+            # Should get FRESH output (re-executed), not stale cached output
             stdout = result.get('stdout', '')
-            if 'value1' in stdout and 'value2' not in stdout:
-                print(f"✓ Got cached output from replay (not re-executed)")
-                print(f"  Cached stdout: {stdout.strip()!r}")
+            if 'value2' in stdout:
+                print(f"✓ Got fresh output from re-execution (not stale cache)")
+                print(f"  Fresh stdout: {stdout.strip()!r}")
             else:
-                print(f"❌ FAIL: Got fresh output instead of cached")
-                print(f"  Expected 'value1', got: {stdout!r}")
+                print(f"❌ FAIL: Got stale cached output instead of fresh")
+                print(f"  Expected 'value2', got: {stdout!r}")
                 return False
 
-        print("\n✅ TEST PASSED: Positional matching ignores param changes")
-        print("   • Replay matches on (module, host) position only")
-        print("   • Returns cached output even with different params")
+        print("\n✅ TEST PASSED: Parameter changes trigger re-execution")
+        print("   • Replay compares params, not just (module, host) position")
+        print("   • Returns fresh output when params differ")
+        return True
+
+
+async def test_replay_same_params_still_replays():
+    """Verify that identical parameters still replay correctly."""
+    print("\n" + "=" * 70)
+    print("TEST: Replay works when parameters are unchanged")
+    print("=" * 70)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        audit_file = tmpdir / "audit_same_params.json"
+
+        # First run
+        print("\n--- First run ---")
+        async with automation(record=str(audit_file), quiet=True) as ftl:
+            result = await ftl.command(cmd="echo 'same'")
+            original_stdout = result.get('stdout', '')
+
+        # Second run with same param - should replay
+        print("\n--- Second run (same params, should replay) ---")
+        async with automation(
+            record=str(audit_file),
+            replay=str(audit_file),
+            quiet=False
+        ) as ftl:
+            result = await ftl.command(cmd="echo 'same'")
+
+        # Verify it was replayed
+        audit_data = json.loads(audit_file.read_text())
+        replayed = [a for a in audit_data['actions'] if a.get('replayed')]
+        if len(replayed) == 1:
+            print(f"✓ Action was replayed (params matched)")
+        else:
+            print(f"❌ FAIL: Expected 1 replayed action, got {len(replayed)}")
+            return False
+
+        print("\n✅ TEST PASSED: Same params still replay correctly")
         return True
 
 
@@ -162,9 +200,17 @@ async def main():
         results.append(False)
 
     try:
-        results.append(await test_replay_params_dont_affect_matching())
+        results.append(await test_replay_params_change_triggers_reexecution())
     except Exception as e:
         print(f"\n❌ TEST 2 FAILED with exception: {e}")
+        import traceback
+        traceback.print_exc()
+        results.append(False)
+
+    try:
+        results.append(await test_replay_same_params_still_replays())
+    except Exception as e:
+        print(f"\n❌ TEST 3 FAILED with exception: {e}")
         import traceback
         traceback.print_exc()
         results.append(False)

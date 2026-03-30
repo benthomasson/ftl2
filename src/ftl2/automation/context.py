@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence, TYPE_CHECKING
 
 from ftl2.automation.proxy import ModuleProxy
+from ftl2.exceptions import FTL2ConnectionError
 
 if TYPE_CHECKING:
     from ftl2.state import State
@@ -466,7 +467,7 @@ class AutomationContext:
 
         for pattern, bindings in self._secret_bindings.items():
             # Check if pattern matches module name
-            if fnmatch.fnmatch(module_name, pattern) or pattern == module_name:
+            if fnmatch.fnmatchcase(module_name, pattern) or pattern == module_name:
                 for param_name, env_var in bindings.items():
                     if env_var in self._bound_secrets:
                         injections[param_name] = self._bound_secrets[env_var]
@@ -1097,7 +1098,7 @@ class AutomationContext:
                     gate.gate_process.stdout
                 )
                 if response is None:
-                    raise ConnectionError(f"Gate connection closed for {host.name}")
+                    raise FTL2ConnectionError(f"Gate connection closed for {host.name}")
 
                 resp_type, resp_data = response
 
@@ -1940,6 +1941,8 @@ class AutomationContext:
 
         Returns an ExecuteResult with cached output if the action matches
         and was successful, or None if the action should execute normally.
+        Compares module name, host, and parameters to avoid replaying stale
+        results when parameters have changed between runs.
         """
         if self._replay_actions is None:
             return None
@@ -1957,6 +1960,16 @@ class AutomationContext:
         # Only replay successes — re-execute failures
         if not action.get("success", False):
             self._replay_actions = None
+            return None
+
+        # Compare parameters — the stored action has redacted params, so
+        # redact the current params the same way before comparing.
+        cached_params = action.get("params", {})
+        current_params = self._redact_params(module_name, params)
+        if cached_params != current_params:
+            if not self.quiet:
+                print(f"  ⚠ {module_name}: params changed, re-executing (not replaying)")
+            self._replay_actions = None  # Stop replaying from here
             return None
 
         # Match — return cached result

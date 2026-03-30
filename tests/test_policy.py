@@ -250,6 +250,45 @@ class TestPolicyFromDirectory:
             Policy.from_file(tmp_path)
 
 
+class TestPolicyCaseSensitivity:
+    """Tests that pattern matching is case-sensitive on all platforms (issue #42)."""
+
+    def test_host_pattern_is_case_sensitive(self):
+        rule = PolicyRule(decision="deny", match={"host": "PROD-*"}, reason="No prod")
+        policy = Policy([rule])
+        # Exact case matches
+        assert policy.evaluate("ping", {}, host="PROD-web-01").permitted is False
+        # Different case must NOT match (platform-independent)
+        assert policy.evaluate("ping", {}, host="prod-web-01").permitted is True
+        assert policy.evaluate("ping", {}, host="Prod-web-01").permitted is True
+
+    def test_module_pattern_is_case_sensitive(self):
+        rule = PolicyRule(decision="deny", match={"module": "Shell"}, reason="No Shell")
+        policy = Policy([rule])
+        assert policy.evaluate("Shell", {}).permitted is False
+        assert policy.evaluate("shell", {}).permitted is True
+        assert policy.evaluate("SHELL", {}).permitted is True
+
+    def test_environment_pattern_is_case_sensitive(self):
+        rule = PolicyRule(decision="deny", match={"environment": "Prod"}, reason="No prod")
+        policy = Policy([rule])
+        assert policy.evaluate("ping", {}, environment="Prod").permitted is False
+        assert policy.evaluate("ping", {}, environment="prod").permitted is True
+        assert policy.evaluate("ping", {}, environment="PROD").permitted is True
+
+    def test_param_pattern_is_case_sensitive(self):
+        rule = PolicyRule(decision="deny", match={"param.state": "Absent"}, reason="No delete")
+        policy = Policy([rule])
+        assert policy.evaluate("file", {"state": "Absent"}).permitted is False
+        assert policy.evaluate("file", {"state": "absent"}).permitted is True
+
+    def test_wildcard_pattern_is_case_sensitive(self):
+        rule = PolicyRule(decision="deny", match={"host": "DB-*"}, reason="No DB")
+        policy = Policy([rule])
+        assert policy.evaluate("ping", {}, host="DB-primary").permitted is False
+        assert policy.evaluate("ping", {}, host="db-primary").permitted is True
+
+
 class TestPolicyDeniedError:
     """Tests for PolicyDeniedError."""
 
@@ -258,3 +297,25 @@ class TestPolicyDeniedError:
         err = PolicyDeniedError("Action denied", rule=rule)
         assert err.rule is rule
         assert str(err) == "Action denied"
+
+    def test_is_ftl2error(self):
+        from ftl2.exceptions import FTL2Error
+
+        err = PolicyDeniedError("denied")
+        assert isinstance(err, FTL2Error)
+
+    def test_caught_by_except_ftl2error(self):
+        from ftl2.exceptions import FTL2Error
+
+        with pytest.raises(FTL2Error):
+            raise PolicyDeniedError("denied")
+
+    def test_has_error_context(self):
+        err = PolicyDeniedError("denied")
+        assert err.context is not None
+        assert err.context.error_type == "PolicyDenied"
+        assert err.context.message == "denied"
+
+    def test_rule_defaults_to_none(self):
+        err = PolicyDeniedError("denied")
+        assert err.rule is None
