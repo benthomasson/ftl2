@@ -131,6 +131,45 @@ rules:
         assert policy.evaluate("anything", {}).permitted is True
 
 
+class TestPolicyCaseSensitivity:
+    """Tests that pattern matching is case-sensitive on all platforms (issue #42)."""
+
+    def test_host_pattern_is_case_sensitive(self):
+        rule = PolicyRule(decision="deny", match={"host": "PROD-*"}, reason="No prod")
+        policy = Policy([rule])
+        # Exact case matches
+        assert policy.evaluate("ping", {}, host="PROD-web-01").permitted is False
+        # Different case must NOT match (platform-independent)
+        assert policy.evaluate("ping", {}, host="prod-web-01").permitted is True
+        assert policy.evaluate("ping", {}, host="Prod-web-01").permitted is True
+
+    def test_module_pattern_is_case_sensitive(self):
+        rule = PolicyRule(decision="deny", match={"module": "Shell"}, reason="No Shell")
+        policy = Policy([rule])
+        assert policy.evaluate("Shell", {}).permitted is False
+        assert policy.evaluate("shell", {}).permitted is True
+        assert policy.evaluate("SHELL", {}).permitted is True
+
+    def test_environment_pattern_is_case_sensitive(self):
+        rule = PolicyRule(decision="deny", match={"environment": "Prod"}, reason="No prod")
+        policy = Policy([rule])
+        assert policy.evaluate("ping", {}, environment="Prod").permitted is False
+        assert policy.evaluate("ping", {}, environment="prod").permitted is True
+        assert policy.evaluate("ping", {}, environment="PROD").permitted is True
+
+    def test_param_pattern_is_case_sensitive(self):
+        rule = PolicyRule(decision="deny", match={"param.state": "Absent"}, reason="No delete")
+        policy = Policy([rule])
+        assert policy.evaluate("file", {"state": "Absent"}).permitted is False
+        assert policy.evaluate("file", {"state": "absent"}).permitted is True
+
+    def test_wildcard_pattern_is_case_sensitive(self):
+        rule = PolicyRule(decision="deny", match={"host": "DB-*"}, reason="No DB")
+        policy = Policy([rule])
+        assert policy.evaluate("ping", {}, host="DB-primary").permitted is False
+        assert policy.evaluate("ping", {}, host="db-primary").permitted is True
+
+
 class TestPolicyDeniedError:
     """Tests for PolicyDeniedError."""
 

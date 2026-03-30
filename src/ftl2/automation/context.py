@@ -460,7 +460,7 @@ class AutomationContext:
 
         for pattern, bindings in self._secret_bindings.items():
             # Check if pattern matches module name
-            if fnmatch.fnmatch(module_name, pattern) or pattern == module_name:
+            if fnmatch.fnmatchcase(module_name, pattern) or pattern == module_name:
                 for param_name, env_var in bindings.items():
                     if env_var in self._bound_secrets:
                         injections[param_name] = self._bound_secrets[env_var]
