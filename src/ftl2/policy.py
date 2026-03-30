@@ -12,14 +12,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ftl2.exceptions import ErrorContext, FTL2Error
+
 logger = logging.getLogger(__name__)
 
 
-class PolicyDeniedError(Exception):
-    """Raised when a policy rule denies an action."""
+class PolicyDeniedError(FTL2Error):
+    """Raised when a policy rule denies an action.
+
+    Extends FTL2Error so it can be caught with ``except FTL2Error``.
+
+    Attributes:
+        rule: The PolicyRule that denied the action, or None.
+    """
 
     def __init__(self, message: str, rule: "PolicyRule | None" = None):
-        super().__init__(message)
+        context = ErrorContext(
+            error_type="PolicyDenied",
+            message=message,
+        )
+        super().__init__(message, context=context)
         self.rule = rule
 
 
