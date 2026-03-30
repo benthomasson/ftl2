@@ -42,7 +42,7 @@ async def create_ssh_host() -> SSHHost:
         port=SSH_PORT,
         username=SSH_USER,
         password=SSH_PASS,
-        known_hosts=None,  # Disable host key checking for testing
+        disable_host_key_checking=True,  # Only for test containers
     )
 
 

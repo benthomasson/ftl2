@@ -42,7 +42,7 @@ all:
 #
 # SSH Options:
 #   FTL2 automatically sets:
-#   - known_hosts: None (disables host key checking for this example)
+#   - disable_host_key_checking: True (disables host key checking for this example)
 #   - connect_timeout: 3600 seconds
 #
 # Connection Reuse:

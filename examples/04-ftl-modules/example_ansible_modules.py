@@ -281,7 +281,7 @@ async def example_remote_execution():
         "port": 2222,
         "username": "testuser",
         "password": "testpass",
-        "known_hosts": None,
+        "disable_host_key_checking": True,  # Only for test containers
     }
 
     # Check if Docker is running
