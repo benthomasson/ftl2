@@ -383,7 +383,14 @@ def _classify_error_message(error: str) -> str:
         return ErrorTypes.CONNECTION_TIMEOUT
     if "connection refused" in error_lower:
         return ErrorTypes.CONNECTION_REFUSED
-    if "authentication" in error_lower or "auth" in error_lower:
+    if any(phrase in error_lower for phrase in (
+        "authentication failed",
+        "authentication error",
+        "failed to authenticate",
+        "invalid credentials",
+        "login failed",
+        "unauthorized",
+    )):
         return ErrorTypes.AUTHENTICATION_FAILED
     if "permission denied" in error_lower:
         return ErrorTypes.PERMISSION_DENIED
@@ -411,7 +418,7 @@ def _classify_exception(exc: Exception) -> str:
         return ErrorTypes.CONNECTION_TIMEOUT
     if "connection" in exc_name:
         return ErrorTypes.CONNECTION_REFUSED
-    if "auth" in exc_name:
+    if "authentication" in exc_name or "unauthorized" in exc_name:
         return ErrorTypes.AUTHENTICATION_FAILED
     if "permission" in exc_name:
         return ErrorTypes.PERMISSION_DENIED
