@@ -100,6 +100,8 @@ class GateBuildConfig:
                 ftl2_dir / "ftl_gate" / "__main__.py",
                 ftl2_dir / "message.py",
                 ftl2_dir / "ftl_modules" / "exceptions.py",
+                ftl2_dir / "policy.py",
+                ftl2_dir / "exceptions.py",
             ]:
                 if source_file.exists():
                     h.update(source_file.read_bytes())
@@ -227,6 +229,10 @@ class GateBuilder:
 
             # Copy FTL module exceptions (needed by FTL modules sent via FTLModule messages)
             self._copy_ftl_module_exceptions(ftl2_dir)
+
+            # Copy policy engine and its dependency (exceptions.py) for gate-side enforcement
+            self._copy_policy_module(ftl2_dir)
+            self._copy_exceptions_module(ftl2_dir)
 
             # Install modules and their ansible dependencies
             if config.modules:
@@ -462,6 +468,52 @@ class GateBuilder:
 
         except Exception as e:
             logger.warning(f"Failed to copy ftl_modules exceptions: {e}")
+
+    def _copy_policy_module(self, ftl2_dir: Path) -> None:
+        """Copy policy engine module into gate for gate-side enforcement.
+
+        Args:
+            ftl2_dir: ftl2 package directory in gate
+
+        Raises:
+            GateError: If copy fails
+        """
+        try:
+            import ftl2
+
+            ftl2_package_dir = Path(ftl2.__file__).parent
+            policy_path = ftl2_package_dir / "policy.py"
+
+            if not policy_path.exists():
+                raise GateError(f"policy.py not found at {policy_path}")
+
+            shutil.copy(policy_path, ftl2_dir / "policy.py")
+            logger.debug(f"Copied policy module to {ftl2_dir}")
+
+        except Exception as e:
+            raise GateError(f"Failed to copy policy module: {e}") from e
+
+    def _copy_exceptions_module(self, ftl2_dir: Path) -> None:
+        """Copy exceptions module into gate (dependency of policy.py).
+
+        Args:
+            ftl2_dir: ftl2 package directory in gate
+        """
+        try:
+            import ftl2
+
+            ftl2_package_dir = Path(ftl2.__file__).parent
+            exceptions_path = ftl2_package_dir / "exceptions.py"
+
+            if not exceptions_path.exists():
+                logger.warning(f"exceptions.py not found at {exceptions_path}")
+                return
+
+            shutil.copy(exceptions_path, ftl2_dir / "exceptions.py")
+            logger.debug(f"Copied exceptions module to {ftl2_dir}")
+
+        except Exception as e:
+            logger.warning(f"Failed to copy exceptions module: {e}")
 
     def _install_dependencies(self, config: GateBuildConfig, gate_dir: Path, tempdir: Path) -> None:
         """Install Python dependencies into gate using uv pip (with pip fallback).

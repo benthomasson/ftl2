@@ -30,6 +30,7 @@ from .exceptions import (
     ModuleExecutionError,
     get_suggestions,
 )
+from .policy import PolicyDeniedError
 from .gate import GateBuildConfig, GateBuilder
 from .message import GateProtocol
 from .types import BecomeConfig, ExecutionConfig, GateConfig, HostConfig, ModuleResult, gate_cache_key
@@ -552,6 +553,8 @@ class RemoteModuleRunner(ModuleRunner):
         self.gate_cache: dict[str, Gate] = {}
         self.gate_builder: GateBuilder | None = None
         self.protocol = GateProtocol()
+        self.policy_wire: list[dict] = []
+        self.environment: str = ""
 
     async def run(
         self,
@@ -614,7 +617,7 @@ class RemoteModuleRunner(ModuleRunner):
 
             # Get or create gate connection
             gate = await self._get_or_create_gate(
-                cache_key, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context
+                cache_key, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host.name
             )
 
             try:
@@ -667,6 +670,7 @@ class RemoteModuleRunner(ModuleRunner):
         ssh_key_file: str | None,
         interpreter: str,
         context: ExecutionContext,
+        host_name: str = "localhost",
     ) -> Gate:
         """Get cached gate or create new one.
 
@@ -679,6 +683,7 @@ class RemoteModuleRunner(ModuleRunner):
             ssh_key_file: SSH private key file path (optional, for key auth)
             interpreter: Remote Python interpreter path
             context: Execution context with gate config
+            host_name: Logical host name for gate-side policy enforcement
 
         Returns:
             Active Gate connection
@@ -700,7 +705,7 @@ class RemoteModuleRunner(ModuleRunner):
 
         # Create new gate connection
         logger.info(f"Creating new gate for {cache_key}")
-        return await self._connect_gate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context)
+        return await self._connect_gate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host_name)
 
     async def _connect_gate(
         self,
@@ -715,6 +720,7 @@ class RemoteModuleRunner(ModuleRunner):
         register_subsystem: bool = False,
         become: "BecomeConfig | None" = None,
         event_callback: Any = None,
+        host_name: str = "localhost",
     ) -> Gate:
         """Establish SSH connection and create gate.
 
@@ -730,6 +736,7 @@ class RemoteModuleRunner(ModuleRunner):
             register_subsystem: If True, register the gate as an SSH
                 subsystem after connecting (requires root)
             become: Privilege escalation config (starts gate under sudo)
+            host_name: Logical host name for gate-side policy enforcement
 
         Returns:
             Active Gate connection
@@ -791,7 +798,7 @@ class RemoteModuleRunner(ModuleRunner):
                     await self._update_gate_stable_path(conn, gate_local_path)
 
                 # Start gate process (subsystem now uses the updated .pyz)
-                gate_process, remote_gate_hash, used_subsystem, supports_multiplex = await self._open_gate(conn, gate_file, interpreter, become=become)
+                gate_process, remote_gate_hash, used_subsystem, supports_multiplex = await self._open_gate(conn, gate_file, interpreter, become=become, host_name=host_name)
 
                 gate = Gate(conn, gate_process, temp_dir, interpreter,
                             multiplexed=supports_multiplex)
@@ -943,6 +950,7 @@ class RemoteModuleRunner(ModuleRunner):
         gate_file: str,
         interpreter: str,
         become: "BecomeConfig | None" = None,
+        host_name: str = "localhost",
     ) -> tuple["SSHClientProcess[Any]", str, bool]:
         """Start gate process and perform handshake.
 
@@ -954,6 +962,7 @@ class RemoteModuleRunner(ModuleRunner):
             gate_file: Path to gate executable on remote host
             interpreter: Python interpreter path to use
             become: Privilege escalation config (starts gate under sudo)
+            host_name: Logical host name for gate-side policy enforcement
 
         Returns:
             Tuple of (gate process, remote gate hash, used subsystem)
@@ -979,9 +988,14 @@ class RemoteModuleRunner(ModuleRunner):
                 process = await conn.create_process(f"{interpreter} {gate_file}", encoding=None)
                 logger.info("Connected via SSH exec (subsystem not available)")
 
-        # Send Hello with multiplexing capability request
+        # Send Hello with multiplexing capability request and policy rules
+        hello_data: dict[str, Any] = {"capabilities": ["multiplex"]}
+        if self.policy_wire:
+            hello_data["policy_rules"] = self.policy_wire
+            hello_data["environment"] = self.environment
+            hello_data["host"] = host_name
         await self.protocol.send_message(
-            process.stdin, "Hello", {"capabilities": ["multiplex"]}  # type: ignore[arg-type]
+            process.stdin, "Hello", hello_data  # type: ignore[arg-type]
         )
         response = await self.protocol.read_message(process.stdout)  # type: ignore[arg-type]
 
@@ -1043,6 +1057,10 @@ class RemoteModuleRunner(ModuleRunner):
             elif msg_type == "ModuleNotFound":
                 # Module not in gate, upload and retry
                 return await self._execute_with_upload(gate, module_path, module_name, module_args)
+            elif msg_type == "PolicyDenied":
+                raise PolicyDeniedError(
+                    f"Gate policy denied {data.get('module', 'unknown')}: {data.get('reason', '')}"
+                )
             elif msg_type == "Error":
                 raise ModuleExecutionError(f"Gate error: {data.get('message', 'Unknown error')}")
             else:
@@ -1119,6 +1137,10 @@ class RemoteModuleRunner(ModuleRunner):
 
         if msg_type == "ModuleResult":
             return dict(data)  # Ensure it's a dict
+        elif msg_type == "PolicyDenied":
+            raise PolicyDeniedError(
+                f"Gate policy denied {data.get('module', 'unknown')}: {data.get('reason', '')}"
+            )
         elif msg_type == "Error":
             raise ModuleExecutionError(f"Gate error: {data.get('message', 'Unknown error')}")
         else:
@@ -1174,6 +1196,10 @@ class RemoteModuleRunner(ModuleRunner):
             if "result" in result_dict and isinstance(result_dict["result"], dict):
                 return result_dict["result"]
             return result_dict
+        elif msg_type == "PolicyDenied":
+            raise PolicyDeniedError(
+                f"Gate policy denied {data.get('module', 'unknown')}: {data.get('reason', '')}"
+            )
         elif msg_type == "Error":
             raise ModuleExecutionError(f"FTL module error: {data.get('message', 'Unknown error')}")
         else:

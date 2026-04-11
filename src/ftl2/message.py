@@ -62,6 +62,9 @@ class GateProtocol:
         "StopMonitor",  # Stop system metrics streaming
         "MonitorResult",  # Response to Start/StopMonitor
         "SystemMetrics",  # Unsolicited system metrics event
+        "PolicyDenied",  # Gate denied module execution due to policy
+        "SetPolicy",  # Update policy on a running gate
+        "SetPolicyResult",  # Response to SetPolicy request
     }
 
     EVENT_TYPES = {

@@ -1503,6 +1503,8 @@ class AutomationContext:
                             # Gate wraps module output in {"result": ...} — unwrap it
                             if "result" in result_data and isinstance(result_data["result"], dict):
                                 result_data = result_data["result"]
+                        elif response is not None and response[0] == "PolicyDenied":
+                            result_data = {"failed": True, "msg": f"Gate policy denied: {response[1].get('reason', '')}"}
                         elif response is not None and response[0] == "Error":
                             result_data = {"failed": True, "msg": response[1].get("message", "Unknown FTL module error")}
                         else:
@@ -1586,6 +1588,8 @@ class AutomationContext:
                                     "stdout": stdout,
                                     "stderr": stderr,
                                 }
+                        elif msg_type == "PolicyDenied":
+                            result_data = {"failed": True, "msg": f"Gate policy denied: {data.get('reason', '')}"}
                         elif msg_type == "Error":
                             result_data = {"failed": True, "msg": data.get("message", "Unknown error")}
                         else:
@@ -1663,6 +1667,8 @@ class AutomationContext:
                         result_data = dict(resp_data)
                         if "result" in result_data and isinstance(result_data["result"], dict):
                             result_data = result_data["result"]
+                    elif resp_type == "PolicyDenied":
+                        result_data = {"failed": True, "msg": f"Gate policy denied: {resp_data.get('reason', '')}"}
                     elif resp_type == "Error":
                         result_data = {"failed": True, "msg": resp_data.get("message", "Unknown FTL module error")}
                     else:
@@ -1728,6 +1734,8 @@ class AutomationContext:
                             "stdout": stdout,
                             "stderr": stderr,
                         }
+                elif resp_type == "PolicyDenied":
+                    result_data = {"failed": True, "msg": f"Gate policy denied: {resp_data.get('reason', '')}"}
                 elif resp_type == "Error":
                     result_data = {"failed": True, "msg": resp_data.get("message", "Unknown error")}
                 else:
@@ -1820,6 +1828,7 @@ class AutomationContext:
             register_subsystem=self._gate_subsystem,
             become=become,
             event_callback=_event_cb,
+            host_name=host.name,
         )
 
     async def _get_ssh_connection(self, host: HostConfig) -> SSHHost:
@@ -1853,6 +1862,8 @@ class AutomationContext:
 
         self._remote_runner = RemoteModuleRunner()
         self._remote_runner.gate_builder = GateBuilder()
+        self._remote_runner.policy_wire = self._policy.to_wire()
+        self._remote_runner.environment = self._environment
         self._bundle_cache = BundleCache()
         self._resolve_gate_modules()
         self._start_time = time.time()

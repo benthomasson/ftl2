@@ -52,7 +52,46 @@ try:
 except ImportError:
     HAS_FTL_GATE = False
 
+# Try to import policy engine (bundled into gate .pyz for gate-side enforcement)
+try:
+    from ftl2.policy import Policy
+    HAS_POLICY = True
+except ImportError:
+    HAS_POLICY = False
+
 logger = logging.getLogger("ftl_gate")
+
+
+def _check_gate_policy(
+    policy: "Policy | None",
+    module_name: str,
+    module_args: dict[str, Any],
+    environment: str = "",
+    host: str = "localhost",
+) -> tuple[bool, dict[str, Any] | None]:
+    """Evaluate gate-side policy before module execution.
+
+    Args:
+        policy: Active policy instance, or None if no policy is set.
+        module_name: Name of the module to execute.
+        module_args: Module arguments dict.
+        environment: Environment label for environment-scoped rules.
+        host: Logical host name for host-scoped rules.
+
+    Returns:
+        Tuple of (permitted, denial_data). If permitted is False,
+        denial_data contains the structured PolicyDenied response payload.
+    """
+    if policy is None or not policy.rules:
+        return True, None
+    result = policy.evaluate(module_name, module_args, host=host, environment=environment)
+    if result.permitted:
+        return True, None
+    return False, {
+        "module": module_name,
+        "reason": result.reason,
+        "rule": result.rule.to_dict() if result.rule else None,
+    }
 
 
 class ModuleNotFoundError(Exception):
@@ -919,6 +958,11 @@ async def main(args: list[str]) -> int | None:
     watcher = FileWatcher(protocol, writer)
     monitor = SystemMonitor(protocol, writer)
 
+    # Gate-side policy enforcement state
+    gate_policy: "Policy | None" = None
+    gate_environment: str = ""
+    gate_host: str = "localhost"
+
     # Message processing loop
     while True:
         try:
@@ -944,6 +988,15 @@ async def main(args: list[str]) -> int | None:
                 response_data = dict(data) if isinstance(data, dict) else {}
                 response_data["gate_hash"] = gate_hash
 
+                # Extract policy rules and host from Hello data
+                if isinstance(data, dict) and HAS_POLICY:
+                    policy_rules = data.get("policy_rules")
+                    if policy_rules:
+                        gate_policy = Policy.from_wire(policy_rules)
+                        gate_environment = data.get("environment", "")
+                        gate_host = data.get("host", "localhost")
+                        logger.info(f"Policy loaded: {len(gate_policy.rules)} rules, environment={gate_environment!r}, host={gate_host!r}")
+
                 # Check for multiplexing capability
                 capabilities = data.get("capabilities", []) if isinstance(data, dict) else []
                 if "multiplex" in capabilities:
@@ -954,7 +1007,7 @@ async def main(args: list[str]) -> int | None:
                     else:
                         await protocol.send_message(writer, "Hello", response_data)
                     logger.info("Entering multiplexed mode")
-                    return await main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash)
+                    return await main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash, gate_policy, gate_environment, gate_host)
                 else:
                     await protocol.send_message(writer, "Hello", response_data)
 
@@ -965,6 +1018,15 @@ async def main(args: list[str]) -> int | None:
                     await protocol.send_message(
                         writer, "Error", {"message": "Invalid Module data"}
                     )
+                    continue
+
+                # Gate-side policy check
+                permitted, denial = _check_gate_policy(
+                    gate_policy, data.get("module_name", ""), data.get("module_args", {}), gate_environment, gate_host
+                )
+                if not permitted:
+                    logger.info(f"Policy denied Module: {denial}")
+                    await protocol.send_message(writer, "PolicyDenied", denial)
                     continue
 
                 try:
@@ -1001,6 +1063,15 @@ async def main(args: list[str]) -> int | None:
                     await protocol.send_message(
                         writer, "Error", {"message": "Invalid FTLModule data"}
                     )
+                    continue
+
+                # Gate-side policy check
+                permitted, denial = _check_gate_policy(
+                    gate_policy, data.get("module_name", ""), data.get("module_args", {}), gate_environment, gate_host
+                )
+                if not permitted:
+                    logger.info(f"Policy denied FTLModule: {denial}")
+                    await protocol.send_message(writer, "PolicyDenied", denial)
                     continue
 
                 try:
@@ -1119,6 +1190,26 @@ async def main(args: list[str]) -> int | None:
                     writer, "MonitorResult", {"status": "stopped"}
                 )
 
+            elif msg_type == "SetPolicy":
+                logger.info("SetPolicy requested")
+                if isinstance(data, dict) and HAS_POLICY:
+                    policy_rules = data.get("policy_rules", [])
+                    gate_policy = Policy.from_wire(policy_rules)
+                    gate_environment = data.get("environment", gate_environment)
+                    gate_host = data.get("host", gate_host)
+                    logger.info(f"Policy updated: {len(gate_policy.rules)} rules")
+                    await protocol.send_message(
+                        writer, "SetPolicyResult", {"status": "ok"}
+                    )
+                elif not HAS_POLICY:
+                    await protocol.send_message(
+                        writer, "SetPolicyResult", {"status": "error", "message": "Policy module not available"}
+                    )
+                else:
+                    await protocol.send_message(
+                        writer, "SetPolicyResult", {"status": "error", "message": "Invalid SetPolicy data"}
+                    )
+
             elif msg_type == "Shutdown":
                 logger.info("Shutdown requested")
                 watcher.stop()
@@ -1160,7 +1251,7 @@ async def main(args: list[str]) -> int | None:
             return 1
 
 
-async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash):
+async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash, gate_policy=None, gate_environment="", gate_host="localhost"):
     """Concurrent message handling loop for multiplexed mode.
 
     Each incoming request is handled in its own asyncio task.
@@ -1176,6 +1267,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
 
     async def handle_request(msg_type, data, msg_id):
         """Handle a single request and send response with same msg_id."""
+        nonlocal gate_policy, gate_environment, gate_host
         try:
             if msg_type == "Module":
                 if not isinstance(data, dict):
@@ -1184,6 +1276,19 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         msg_id, write_lock=write_lock,
                     )
                     return
+
+                # Gate-side policy check
+                permitted, denial = _check_gate_policy(
+                    gate_policy, data.get("module_name", ""), data.get("module_args", {}), gate_environment, gate_host
+                )
+                if not permitted:
+                    logger.info(f"Policy denied Module (multiplexed): {denial}")
+                    await protocol.send_message_with_id(
+                        writer, "PolicyDenied", denial,
+                        msg_id, write_lock=write_lock,
+                    )
+                    return
+
                 try:
                     result = await run_module(
                         data.get("module_name", ""),
@@ -1208,6 +1313,19 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         msg_id, write_lock=write_lock,
                     )
                     return
+
+                # Gate-side policy check
+                permitted, denial = _check_gate_policy(
+                    gate_policy, data.get("module_name", ""), data.get("module_args", {}), gate_environment, gate_host
+                )
+                if not permitted:
+                    logger.info(f"Policy denied FTLModule (multiplexed): {denial}")
+                    await protocol.send_message_with_id(
+                        writer, "PolicyDenied", denial,
+                        msg_id, write_lock=write_lock,
+                    )
+                    return
+
                 try:
                     resp_type, resp_data = await run_ftl_module(
                         data.get("module_name", ""),
@@ -1316,6 +1434,29 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                     writer, "MonitorResult", {"status": "stopped"},
                     msg_id, write_lock=write_lock,
                 )
+
+            elif msg_type == "SetPolicy":
+                logger.info("SetPolicy requested (multiplexed)")
+                if isinstance(data, dict) and HAS_POLICY:
+                    policy_rules = data.get("policy_rules", [])
+                    gate_policy = Policy.from_wire(policy_rules)
+                    gate_environment = data.get("environment", gate_environment)
+                    gate_host = data.get("host", gate_host)
+                    logger.info(f"Policy updated: {len(gate_policy.rules)} rules")
+                    await protocol.send_message_with_id(
+                        writer, "SetPolicyResult", {"status": "ok"},
+                        msg_id, write_lock=write_lock,
+                    )
+                elif not HAS_POLICY:
+                    await protocol.send_message_with_id(
+                        writer, "SetPolicyResult", {"status": "error", "message": "Policy module not available"},
+                        msg_id, write_lock=write_lock,
+                    )
+                else:
+                    await protocol.send_message_with_id(
+                        writer, "SetPolicyResult", {"status": "error", "message": "Invalid SetPolicy data"},
+                        msg_id, write_lock=write_lock,
+                    )
 
             else:
                 await protocol.send_message_with_id(
