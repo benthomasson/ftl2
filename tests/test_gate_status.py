@@ -416,7 +416,7 @@ class TestGateStatusMultiplexedMode:
         gate_status_monitor = GateStatusMonitor(protocol, writer, "mux_hash")
 
         await main_multiplexed(
-            reader, writer, protocol, watcher, monitor, "mux_hash", gate_status_monitor
+            reader, writer, protocol, watcher, monitor, "mux_hash", gate_status_monitor=gate_status_monitor
         )
 
         responses = parse_responses(writer.buffer)
@@ -448,7 +448,7 @@ class TestGateStatusMultiplexedMode:
         gate_status_monitor = GateStatusMonitor(protocol, writer, "mux_hash")
 
         await main_multiplexed(
-            reader, writer, protocol, watcher, monitor, "mux_hash", gate_status_monitor
+            reader, writer, protocol, watcher, monitor, "mux_hash", gate_status_monitor=gate_status_monitor
         )
 
         responses = parse_responses(writer.buffer)
@@ -480,7 +480,7 @@ class TestGateStatusMultiplexedMode:
         gate_status_monitor = GateStatusMonitor(protocol, writer, "mux_hash")
 
         await main_multiplexed(
-            reader, writer, protocol, watcher, monitor, "mux_hash", gate_status_monitor
+            reader, writer, protocol, watcher, monitor, "mux_hash", gate_status_monitor=gate_status_monitor
         )
 
         responses = parse_responses(writer.buffer)
@@ -509,7 +509,7 @@ class TestGateStatusMultiplexedMode:
 
         assert gate_status_monitor._write_lock is None
         await main_multiplexed(
-            reader, writer, protocol, watcher, monitor, "mux_hash", gate_status_monitor
+            reader, writer, protocol, watcher, monitor, "mux_hash", gate_status_monitor=gate_status_monitor
         )
         # After multiplexed mode, write_lock should have been set
         assert gate_status_monitor._write_lock is not None
@@ -535,7 +535,7 @@ class TestGateStatusMultiplexedMode:
         gate_status_monitor = GateStatusMonitor(protocol, writer, "mux_hash")
 
         await main_multiplexed(
-            reader, writer, protocol, watcher, monitor, "mux_hash", gate_status_monitor
+            reader, writer, protocol, watcher, monitor, "mux_hash", gate_status_monitor=gate_status_monitor
         )
         # After shutdown, the monitor task should be stopped
         assert gate_status_monitor._task is None

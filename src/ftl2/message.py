@@ -69,6 +69,9 @@ class GateProtocol:
         "StopGateStatus",  # Stop gate health status streaming
         "GateStatusResult",  # Response to Start/StopGateStatus
         "GateStatus",  # Unsolicited gate health status event
+        "GateDrain",  # Request gate to stop accepting new work
+        "GateDrainResult",  # Response to GateDrain with completion counts
+        "Goodbye",  # Final acknowledgement before gate exit
     }
 
     EVENT_TYPES = {

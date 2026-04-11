@@ -326,6 +326,7 @@ _error_count: int = 0
 _last_error: str | None = None
 _start_time: float = 0.0
 _active_tasks: set | None = None
+_draining: bool = False
 
 
 def _module_cache_set(name: str, data: bytes) -> None:
@@ -1100,6 +1101,9 @@ async def main(args: list[str]) -> int | None:
     gate_environment: str = ""
     gate_host: str = "localhost"
 
+    global _draining
+    _draining = False
+
     # Message processing loop
     while True:
         try:
@@ -1152,6 +1156,12 @@ async def main(args: list[str]) -> int | None:
             elif msg_type == "Module":
                 logger.info(f"Module execution requested: {data.get('module_name', 'unknown')}")
 
+                if _draining:
+                    await protocol.send_message(
+                        writer, "Error", {"message": "Gate is draining — not accepting new work"}
+                    )
+                    continue
+
                 if not isinstance(data, dict):
                     await protocol.send_message(
                         writer, "Error", {"message": "Invalid Module data"}
@@ -1201,6 +1211,12 @@ async def main(args: list[str]) -> int | None:
 
             elif msg_type == "FTLModule":
                 logger.info(f"FTLModule execution requested: {data.get('module_name', 'unknown')}")
+
+                if _draining:
+                    await protocol.send_message(
+                        writer, "Error", {"message": "Gate is draining — not accepting new work"}
+                    )
+                    continue
 
                 if not isinstance(data, dict):
                     await protocol.send_message(
@@ -1372,6 +1388,15 @@ async def main(args: list[str]) -> int | None:
                     writer, "GateStatusResult", {"status": "stopped"}
                 )
 
+            elif msg_type == "GateDrain":
+                logger.info("GateDrain requested")
+                _draining = True
+                await protocol.send_message(writer, "GateDrainResult", {
+                    "status": "drained",
+                    "completed": 0,
+                    "in_flight": 0,
+                })
+
             elif msg_type == "Shutdown":
                 logger.info("Shutdown requested")
                 watcher.stop()
@@ -1427,7 +1452,8 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
     # messages don't interleave with request responses.
     watcher._write_lock = write_lock
     monitor._write_lock = write_lock
-    gate_status_monitor._write_lock = write_lock
+    if gate_status_monitor is not None:
+        gate_status_monitor._write_lock = write_lock
 
     async def handle_request(msg_type, data, msg_id):
         """Handle a single request and send response with same msg_id."""
@@ -1677,6 +1703,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
     tasks = set()
     global _active_tasks
     _active_tasks = tasks
+    draining = False
     try:
         while True:
             msg = await protocol.read_message(reader)
@@ -1702,6 +1729,37 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                 )
                 break
 
+            # Handle GateDrain synchronously — wait for in-flight tasks
+            if msg_type == "GateDrain":
+                logger.info("GateDrain requested in multiplexed mode")
+                draining = True
+                timeout = data.get("timeout_seconds", 30) if isinstance(data, dict) else 30
+                completed = 0
+                in_flight = 0
+                if tasks:
+                    done, pending = await asyncio.wait(tasks, timeout=timeout)
+                    completed = len(done)
+                    in_flight = len(pending)
+                    for t in pending:
+                        t.cancel()
+                await protocol.send_message_with_id(
+                    writer, "GateDrainResult", {
+                        "status": "drained",
+                        "completed": completed,
+                        "in_flight": in_flight,
+                    }, msg_id, write_lock=write_lock,
+                )
+                continue
+
+            # Reject work messages when draining
+            if draining and msg_type in ("Module", "FTLModule"):
+                await protocol.send_message_with_id(
+                    writer, "Error",
+                    {"message": "Gate is draining — not accepting new work"},
+                    msg_id, write_lock=write_lock,
+                )
+                continue
+
             # Spawn concurrent task for all other message types
             task = asyncio.create_task(handle_request(msg_type, data, msg_id))
             tasks.add(task)
@@ -1719,7 +1777,8 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                 await asyncio.gather(*pending, return_exceptions=True)
         watcher.stop()
         monitor.stop()
-        gate_status_monitor.stop()
+        if gate_status_monitor is not None:
+            gate_status_monitor.stop()
 
     return None
 
