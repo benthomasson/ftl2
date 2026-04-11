@@ -236,6 +236,40 @@ class Policy:
 
         return True
 
+    def to_wire(self) -> list[dict]:
+        """Serialize policy rules for transmission over the gate protocol.
+
+        Returns:
+            List of dicts, one per rule, suitable for JSON serialization.
+
+        Example:
+            >>> policy = Policy([PolicyRule(decision="deny", match={"module": "shell"}, reason="no shells")])
+            >>> policy.to_wire()
+            [{'decision': 'deny', 'match': {'module': 'shell'}, 'reason': 'no shells'}]
+        """
+        return [rule.to_dict() for rule in self.rules]
+
+    @classmethod
+    def from_wire(cls, data: list[dict] | None) -> "Policy":
+        """Reconstruct a Policy from wire-format data.
+
+        Args:
+            data: List of rule dicts as produced by ``to_wire()``,
+                or None for an empty policy.
+
+        Returns:
+            Policy instance with the deserialized rules.
+
+        Example:
+            >>> wire = [{"decision": "deny", "match": {"module": "shell"}, "reason": "no shells"}]
+            >>> policy = Policy.from_wire(wire)
+            >>> policy.evaluate("shell", {}).permitted
+            False
+        """
+        if not data:
+            return cls.empty()
+        return cls([PolicyRule(**entry) for entry in data])
+
     @classmethod
     def from_file(cls, path: str | Path) -> "Policy":
         """Load policy from a YAML file.
