@@ -130,6 +130,8 @@ class ErrorTypes:
     PERMISSION_DENIED = "PermissionDenied"
     INVENTORY_ERROR = "InventoryError"
     GATE_ERROR = "GateError"
+    GATE_TIMEOUT = "GateTimeout"
+    GATE_UNRESPONSIVE = "GateUnresponsive"
     UNKNOWN = "Unknown"
 
 
@@ -351,6 +353,49 @@ class InventoryError(FTL2Error):
             message=message,
         )
         super().__init__(message, context)
+
+
+class GateRequestTimeoutError(ModuleExecutionError):
+    """Raised when a gate request exceeds the per-request timeout.
+
+    Extends ModuleExecutionError so callers catching the parent type
+    still handle it. Indicates an individual request hung — the gate
+    may still be healthy for other requests.
+    """
+
+    def __init__(self, message: str, host: str = "", module: str = ""):
+        super().__init__(
+            message, host=host, module=module,
+            error_type=ErrorTypes.GATE_TIMEOUT,
+        )
+
+
+class GateHandshakeTimeoutError(FTL2ConnectionError):
+    """Raised when the initial Hello handshake with a gate times out.
+
+    Indicates the gate process failed to start or respond.
+    """
+
+    def __init__(self, message: str, host: str = ""):
+        super().__init__(
+            message, host=host,
+            error_type=ErrorTypes.GATE_TIMEOUT,
+        )
+
+
+class GateUnresponsiveError(FTL2ConnectionError):
+    """Raised when a gate fails periodic keepalive health checks.
+
+    Indicates the gate process is wedged (deadlock, hang, resource
+    exhaustion). All pending futures on the connection are failed
+    with this error.
+    """
+
+    def __init__(self, message: str, host: str = ""):
+        super().__init__(
+            message, host=host,
+            error_type=ErrorTypes.GATE_UNRESPONSIVE,
+        )
 
 
 class ExcludedModuleError(FTL2Error):

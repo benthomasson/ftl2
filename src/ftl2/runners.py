@@ -27,6 +27,9 @@ from .exceptions import (
     ErrorContext,
     ErrorTypes,
     FTL2Error,
+    GateHandshakeTimeoutError,
+    GateRequestTimeoutError,
+    GateUnresponsiveError,
     ModuleExecutionError,
     get_suggestions,
 )
@@ -106,9 +109,11 @@ class Gate:
     temp_dir: str
     interpreter: str = "python3"
     multiplexed: bool = False
+    healthy: bool = True
     _msg_counter: int = field(default=0, repr=False)
     _pending: dict[int, asyncio.Future] = field(default_factory=dict, repr=False)
     _reader_task: asyncio.Task | None = field(default=None, repr=False)
+    _keepalive_task: asyncio.Task | None = field(default=None, repr=False)
     _write_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def next_msg_id(self) -> int:
@@ -548,6 +553,12 @@ class RemoteModuleRunner(ModuleRunner):
         >>> result = await runner.run(host, context)
     """
 
+    # Timeout constants (seconds)
+    REQUEST_TIMEOUT: float = 300.0       # Per-request timeout for _send_and_wait
+    HANDSHAKE_TIMEOUT: float = 30.0      # Hello handshake timeout during gate startup
+    KEEPALIVE_INTERVAL: float = 30.0     # Seconds between keepalive pings
+    KEEPALIVE_TIMEOUT: float = 15.0      # Max wait for keepalive response
+
     def __init__(self) -> None:
         """Initialize the remote runner with empty gate cache."""
         self.gate_cache: dict[str, Gate] = {}
@@ -691,7 +702,11 @@ class RemoteModuleRunner(ModuleRunner):
         # Check cache first
         if cache_key in self.gate_cache:
             gate = self.gate_cache[cache_key]
-            if gate.interpreter == interpreter:
+            if not gate.healthy:
+                logger.info(f"Evicting unhealthy gate for {cache_key}")
+                del self.gate_cache[cache_key]
+                await self._close_gate(gate)
+            elif gate.interpreter == interpreter:
                 logger.debug(f"Reusing cached gate for {cache_key}")
                 # Multiplexed gates stay in cache (shared access).
                 # Serial gates are popped (exclusive access).
@@ -705,7 +720,7 @@ class RemoteModuleRunner(ModuleRunner):
 
         # Create new gate connection
         logger.info(f"Creating new gate for {cache_key}")
-        return await self._connect_gate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host_name)
+        return await self._connect_gate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host_name, cache_key=cache_key)
 
     async def _connect_gate(
         self,
@@ -721,6 +736,7 @@ class RemoteModuleRunner(ModuleRunner):
         become: "BecomeConfig | None" = None,
         event_callback: Any = None,
         host_name: str = "localhost",
+        cache_key: str = "",
     ) -> Gate:
         """Establish SSH connection and create gate.
 
@@ -806,6 +822,9 @@ class RemoteModuleRunner(ModuleRunner):
                 if supports_multiplex:
                     gate._reader_task = asyncio.create_task(
                         _gate_reader_loop(gate, self.protocol, event_callback)
+                    )
+                    gate._keepalive_task = asyncio.create_task(
+                        self._keepalive_loop(gate, cache_key)
                     )
                     logger.info(f"Multiplexed gate for {ssh_host}:{ssh_port}")
 
@@ -997,7 +1016,23 @@ class RemoteModuleRunner(ModuleRunner):
         await self.protocol.send_message(
             process.stdin, "Hello", hello_data  # type: ignore[arg-type]
         )
-        response = await self.protocol.read_message(process.stdout)  # type: ignore[arg-type]
+        try:
+            response = await asyncio.wait_for(
+                self.protocol.read_message(process.stdout),  # type: ignore[arg-type]
+                timeout=self.HANDSHAKE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            stderr_output = ""
+            try:
+                stderr_output = (await asyncio.wait_for(
+                    process.stderr.read(), timeout=5,  # type: ignore[arg-type]
+                )).decode(errors="replace")
+            except (asyncio.TimeoutError, Exception):
+                pass
+            raise GateHandshakeTimeoutError(
+                f"Gate handshake timed out after {self.HANDSHAKE_TIMEOUT}s"
+                + (f": {stderr_output}" if stderr_output else "")
+            )
 
         if response is None or response[0] != "Hello":
             error = await process.stderr.read()
@@ -1075,6 +1110,7 @@ class RemoteModuleRunner(ModuleRunner):
         gate: Gate,
         msg_type: str,
         data: dict[str, Any],
+        timeout: float | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Send a multiplexed message and wait for the response via future.
 
@@ -1082,17 +1118,81 @@ class RemoteModuleRunner(ModuleRunner):
             gate: Multiplexed gate connection
             msg_type: Message type string
             data: Message data
+            timeout: Per-request timeout in seconds. None (the default)
+                uses REQUEST_TIMEOUT (300s).
 
         Returns:
             Tuple of (response_type, response_data)
+
+        Raises:
+            GateRequestTimeoutError: If the gate doesn't respond within timeout.
         """
+        if timeout is None:
+            timeout = self.REQUEST_TIMEOUT
         msg_id = gate.next_msg_id()
         future = gate.create_future(msg_id)
         await self.protocol.send_message_with_id(
             gate.gate_process.stdin, msg_type, data,
             msg_id, write_lock=gate._write_lock,
         )
-        return await future
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except asyncio.TimeoutError:
+            gate._pending.pop(msg_id, None)
+            raise GateRequestTimeoutError(
+                f"Gate request timed out after {timeout}s "
+                f"(msg_type={msg_type}, msg_id={msg_id})"
+            ) from None
+
+    async def _keepalive_loop(self, gate: Gate, cache_key: str) -> None:
+        """Periodic Hello keepalive for multiplexed gates.
+
+        Sends Hello every KEEPALIVE_INTERVAL seconds. If the gate doesn't
+        respond within KEEPALIVE_TIMEOUT, declares it unhealthy: fails all
+        pending futures, evicts from cache, and closes the connection.
+
+        Args:
+            gate: Multiplexed gate connection to monitor.
+            cache_key: Cache key for evicting unhealthy gates.
+        """
+        try:
+            while gate.healthy:
+                await asyncio.sleep(self.KEEPALIVE_INTERVAL)
+                if not gate.healthy:
+                    break
+                try:
+                    t0 = asyncio.get_event_loop().time()
+                    await self._send_and_wait(
+                        gate, "Hello", {}, timeout=self.KEEPALIVE_TIMEOUT,
+                    )
+                    latency = asyncio.get_event_loop().time() - t0
+                    logger.debug(
+                        f"Keepalive OK for {cache_key} (latency={latency:.3f}s)"
+                    )
+                except (GateRequestTimeoutError, asyncio.TimeoutError):
+                    logger.error(
+                        f"Keepalive timeout for {cache_key} — gate unresponsive"
+                    )
+                    gate.healthy = False
+                    for future in gate._pending.values():
+                        if not future.done():
+                            future.set_exception(
+                                GateUnresponsiveError(
+                                    f"Gate {cache_key} failed keepalive"
+                                )
+                            )
+                    gate._pending.clear()
+                    self.gate_cache.pop(cache_key, None)
+                    try:
+                        gate.gate_process.stdin.close()
+                    except Exception:
+                        pass
+                    break
+                except (ConnectionError, BrokenPipeError, OSError):
+                    # Connection already dead, reader loop will handle cleanup
+                    break
+        except asyncio.CancelledError:
+            return
 
     async def _execute_with_upload(
         self,
@@ -1337,11 +1437,22 @@ class RemoteModuleRunner(ModuleRunner):
         Args:
             gate: Gate connection to close
         """
+        # Mark unhealthy to stop keepalive loop promptly
+        gate.healthy = False
+
         # Cancel background reader task
         if gate._reader_task:
             gate._reader_task.cancel()
             try:
                 await gate._reader_task
+            except asyncio.CancelledError:
+                pass
+
+        # Cancel keepalive task
+        if gate._keepalive_task:
+            gate._keepalive_task.cancel()
+            try:
+                await gate._keepalive_task
             except asyncio.CancelledError:
                 pass
 

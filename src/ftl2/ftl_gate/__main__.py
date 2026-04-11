@@ -1433,6 +1433,13 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
         """Handle a single request and send response with same msg_id."""
         nonlocal gate_policy, gate_environment, gate_host
         try:
+            if msg_type == "Hello":
+                await protocol.send_message_with_id(
+                    writer, "Hello", {"gate_hash": gate_hash},
+                    msg_id, write_lock=write_lock,
+                )
+                return
+
             if msg_type == "Module":
                 if not isinstance(data, dict):
                     await protocol.send_message_with_id(
