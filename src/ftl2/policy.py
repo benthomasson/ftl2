@@ -86,6 +86,18 @@ class PolicyRule:
                     f"Unknown match key {key!r}; must be one of {sorted(VALID_MATCH_KEYS)} or 'param.<name>'"
                 )
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this rule to a dictionary for audit events.
+
+        Returns:
+            Dict with decision, match, and reason fields.
+        """
+        return {
+            "decision": self.decision,
+            "match": self.match,
+            "reason": self.reason,
+        }
+
 
 @dataclass
 class PolicyResult:
