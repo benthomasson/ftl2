@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "created_at": "2026-04-11T17:27:47.488125+00:00",
+  "updated_at": "2026-04-11T17:40:52.496684+00:00",
+  "hosts": {
+    "web01": {
+      "ansible_host": "192.168.1.10",
+      "ansible_port": 22,
+      "groups": [
+        "ungrouped"
+      ],
+      "added_at": "2026-04-11T17:40:52.474593+00:00"
+    },
+    "db01": {
+      "ansible_host": "192.168.1.20",
+      "ansible_port": 2222,
+      "groups": [
+        "databases",
+        "production"
+      ],
+      "added_at": "2026-04-11T17:40:52.475232+00:00",
+      "ansible_user": "admin",
+      "db_type": "postgres"
+    },
+    "myhost.example.com": {
+      "ansible_host": "myhost.example.com",
+      "ansible_port": 22,
+      "groups": [
+        "ungrouped"
+      ],
+      "added_at": "2026-04-11T17:40:52.475880+00:00"
+    },
+    "web02": {
+      "ansible_host": "192.168.1.11",
+      "ansible_port": 22,
+      "groups": [
+        "webservers"
+      ],
+      "added_at": "2026-04-11T17:40:52.476715+00:00"
+    },
+    "lonely": {
+      "ansible_host": "10.0.0.1",
+      "ansible_port": 22,
+      "groups": [
+        "ungrouped"
+      ],
+      "added_at": "2026-04-11T17:40:52.477254+00:00"
+    },
+    "newhost": {
+      "ansible_host": "10.0.0.5",
+      "ansible_port": 22,
+      "groups": [
+        "ungrouped"
+      ],
+      "added_at": "2026-04-11T17:40:52.477771+00:00"
+    },
+    "localtest": {
+      "ansible_host": "localhost",
+      "ansible_port": 22,
+      "groups": [
+        "testgroup"
+      ],
+      "added_at": "2026-04-11T17:40:52.496677+00:00"
+    }
+  },
+  "resources": {}
+}

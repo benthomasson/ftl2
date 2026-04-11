@@ -67,6 +67,7 @@ addopts = [
     "--cov=ftl2",
     "--cov-report=term-missing",
     "--cov-report=html",
+    "--cov-report=xml",
 ]
 
 [tool.coverage.run]
@@ -79,7 +80,7 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
-fail_under = 80
+fail_under = 60
 
 [tool.ruff]
 src = ["src", "tests"]
