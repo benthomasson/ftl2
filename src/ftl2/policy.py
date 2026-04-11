@@ -38,6 +38,19 @@ class PolicyDeniedError(FTL2Error):
 VALID_DECISIONS = frozenset({"allow", "deny"})
 VALID_MATCH_KEYS = frozenset({"module", "host", "environment"})
 
+# Modules that can execute arbitrary commands.  A deny rule targeting any
+# member of a group automatically applies to every other member, so policy
+# authors don't need to remember to list all three.
+_MODULE_EQUIVALENCE_GROUPS: list[frozenset[str]] = [
+    frozenset({"shell", "command", "raw"}),
+]
+
+# Pre-computed lookup: module short name -> set of equivalent short names
+_MODULE_EQUIVALENTS: dict[str, frozenset[str]] = {}
+for _group in _MODULE_EQUIVALENCE_GROUPS:
+    for _member in _group:
+        _MODULE_EQUIVALENTS[_member] = _group
+
 
 @dataclass
 class PolicyRule:
@@ -89,6 +102,35 @@ class PolicyResult:
     reason: str = ""
 
 
+def _module_matches(module_name: str, pattern: str) -> bool:
+    """Check whether *module_name* matches *pattern*, expanding equivalence groups.
+
+    If *pattern* is a plain name (no glob characters) that belongs to an
+    equivalence group, the check succeeds when *module_name* is any member
+    of that group.  For FQCN names like ``ansible.builtin.raw``, the short
+    name (last component) is extracted before checking equivalence.
+
+    Glob patterns (containing ``*``, ``?``, or ``[``) bypass equivalence
+    expansion and match via fnmatch as before.
+    """
+    # Fast path: direct fnmatch (covers globs and exact matches)
+    if fnmatch.fnmatchcase(module_name, pattern):
+        return True
+
+    # Equivalence expansion: only for plain names (no glob chars)
+    if any(c in pattern for c in ("*", "?", "[")):
+        return False
+
+    # Check if the pattern is in an equivalence group
+    equivalents = _MODULE_EQUIVALENTS.get(pattern)
+    if equivalents is None:
+        return False
+
+    # Extract short name from FQCN (e.g. "ansible.builtin.raw" -> "raw")
+    short_name = module_name.rsplit(".", 1)[-1] if "." in module_name else module_name
+    return short_name in equivalents
+
+
 class Policy:
     """Policy engine that evaluates rules against proposed actions.
 
@@ -96,13 +138,10 @@ class Policy:
     causes the action to be denied. If no deny rule matches, the
     action is permitted.
 
-    .. warning:: Equivalent modules
-
-       The ``shell``, ``command``, and ``raw`` modules can all execute
-       arbitrary commands.  A rule that denies only ``shell`` does **not**
-       block ``command`` or ``raw``.  Always deny all three together when
-       restricting arbitrary execution.  See ``examples/policies/`` for
-       reference patterns.
+    Module equivalence groups ensure that deny rules for functionally
+    equivalent modules (e.g. ``shell``, ``command``, ``raw``) apply
+    across the entire group automatically.  A rule denying ``shell``
+    also blocks ``command`` and ``raw``.
     """
 
     def __init__(self, rules: list[PolicyRule]):
@@ -153,12 +192,17 @@ class Policy:
 
         All conditions in the rule must match for the rule to apply.
         Uses fnmatch.fnmatchcase for case-sensitive matching on all platforms.
+
+        Module equivalence: if the rule's module pattern is a plain name
+        (no glob characters) that belongs to an equivalence group (e.g.
+        shell/command/raw), the rule also matches every other member of
+        the group.  This prevents bypass via equivalent modules.
         """
         for key, pattern in rule.match.items():
             pattern = str(pattern)
 
             if key == "module":
-                if not fnmatch.fnmatchcase(module_name, pattern):
+                if not _module_matches(module_name, pattern):
                     return False
             elif key == "host":
                 if not fnmatch.fnmatchcase(host, pattern):
