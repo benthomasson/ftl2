@@ -289,6 +289,119 @@ class TestPolicyCaseSensitivity:
         assert policy.evaluate("ping", {}, host="db-primary").permitted is True
 
 
+class TestModuleEquivalenceGroups:
+    """Tests for module equivalence groups (GH-72).
+
+    Denying shell must also deny command and raw, since all three
+    can execute arbitrary commands.
+    """
+
+    def test_deny_shell_blocks_command(self):
+        rule = PolicyRule(decision="deny", match={"module": "shell"}, reason="no shell")
+        policy = Policy([rule])
+        assert policy.evaluate("command", {}).permitted is False
+
+    def test_deny_shell_blocks_raw(self):
+        rule = PolicyRule(decision="deny", match={"module": "shell"}, reason="no shell")
+        policy = Policy([rule])
+        assert policy.evaluate("raw", {}).permitted is False
+
+    def test_deny_command_blocks_shell(self):
+        rule = PolicyRule(decision="deny", match={"module": "command"}, reason="no cmd")
+        policy = Policy([rule])
+        assert policy.evaluate("shell", {}).permitted is False
+
+    def test_deny_command_blocks_raw(self):
+        rule = PolicyRule(decision="deny", match={"module": "command"}, reason="no cmd")
+        policy = Policy([rule])
+        assert policy.evaluate("raw", {}).permitted is False
+
+    def test_deny_raw_blocks_shell_and_command(self):
+        rule = PolicyRule(decision="deny", match={"module": "raw"}, reason="no raw")
+        policy = Policy([rule])
+        assert policy.evaluate("shell", {}).permitted is False
+        assert policy.evaluate("command", {}).permitted is False
+
+    def test_deny_shell_blocks_fqcn_raw(self):
+        """ansible.builtin.raw should be blocked when shell is denied."""
+        rule = PolicyRule(decision="deny", match={"module": "shell"}, reason="no shell")
+        policy = Policy([rule])
+        assert policy.evaluate("ansible.builtin.raw", {}).permitted is False
+
+    def test_deny_shell_blocks_fqcn_command(self):
+        """ansible.builtin.command should be blocked when shell is denied."""
+        rule = PolicyRule(decision="deny", match={"module": "shell"}, reason="no shell")
+        policy = Policy([rule])
+        assert policy.evaluate("ansible.builtin.command", {}).permitted is False
+
+    def test_equivalence_with_environment(self):
+        """Equivalence works with additional match conditions."""
+        rule = PolicyRule(
+            decision="deny",
+            match={"module": "shell", "environment": "prod"},
+            reason="no shell in prod",
+        )
+        policy = Policy([rule])
+        # command in prod -> denied (equivalence + env match)
+        assert policy.evaluate("command", {}, environment="prod").permitted is False
+        # command in dev -> permitted (env doesn't match)
+        assert policy.evaluate("command", {}, environment="dev").permitted is True
+
+    def test_equivalence_does_not_affect_unrelated_modules(self):
+        """Modules not in an equivalence group are unaffected."""
+        rule = PolicyRule(decision="deny", match={"module": "shell"}, reason="no shell")
+        policy = Policy([rule])
+        assert policy.evaluate("file", {}).permitted is True
+        assert policy.evaluate("copy", {}).permitted is True
+        assert policy.evaluate("ping", {}).permitted is True
+
+    def test_glob_pattern_bypasses_equivalence(self):
+        """Glob patterns like *.raw match via fnmatch, not equivalence."""
+        rule = PolicyRule(decision="deny", match={"module": "*.raw"}, reason="no raw")
+        policy = Policy([rule])
+        assert policy.evaluate("ansible.builtin.raw", {}).permitted is False
+        # Glob *.raw does NOT trigger equivalence to shell/command
+        assert policy.evaluate("shell", {}).permitted is True
+
+    def test_deny_shell_still_matches_shell(self):
+        """Direct match still works (equivalence doesn't break exact match)."""
+        rule = PolicyRule(decision="deny", match={"module": "shell"}, reason="no shell")
+        policy = Policy([rule])
+        assert policy.evaluate("shell", {}).permitted is False
+
+    def test_fqcn_pattern_blocks_short_name_equivalents(self):
+        """A FQCN rule pattern like ansible.builtin.shell blocks command and raw."""
+        rule = PolicyRule(
+            decision="deny",
+            match={"module": "ansible.builtin.shell"},
+            reason="no shell",
+        )
+        policy = Policy([rule])
+        assert policy.evaluate("command", {}).permitted is False
+        assert policy.evaluate("raw", {}).permitted is False
+
+    def test_fqcn_pattern_blocks_fqcn_equivalents(self):
+        """FQCN pattern blocks FQCN equivalents across namespaces."""
+        rule = PolicyRule(
+            decision="deny",
+            match={"module": "ansible.builtin.shell"},
+            reason="no shell",
+        )
+        policy = Policy([rule])
+        assert policy.evaluate("ansible.builtin.command", {}).permitted is False
+        assert policy.evaluate("ansible.builtin.raw", {}).permitted is False
+
+    def test_fqcn_pattern_still_matches_itself(self):
+        """FQCN pattern still matches its own exact name."""
+        rule = PolicyRule(
+            decision="deny",
+            match={"module": "ansible.builtin.shell"},
+            reason="no shell",
+        )
+        policy = Policy([rule])
+        assert policy.evaluate("ansible.builtin.shell", {}).permitted is False
+
+
 class TestPolicyDeniedError:
     """Tests for PolicyDeniedError."""
 

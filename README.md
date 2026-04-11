@@ -100,6 +100,10 @@ rules:
     reason: "No destructive actions on production hosts"
 ```
 
+> **Note:** The `shell`, `command`, and `raw` modules are treated as equivalent by the
+> policy engine.  A rule denying `shell` automatically blocks `command` and `raw` too,
+> including FQCN variants like `ansible.builtin.raw`.
+
 ```python
 async with automation(policy="policy.yml", environment="prod") as ftl:
     await ftl.file(path="/tmp/test", state="absent")

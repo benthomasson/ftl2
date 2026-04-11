@@ -1,4 +1,7 @@
 # Development — minimal restrictions, mostly a safety net.
+#
+# The policy engine treats shell, command, and raw as equivalent.
+# Denying any one automatically blocks the others.
 rules:
   - decision: deny
     match:

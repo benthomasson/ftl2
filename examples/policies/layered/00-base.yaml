@@ -1,5 +1,8 @@
 # Base safety rules — universal, loaded first.
 # Name with 00- prefix so it sorts before environment-specific files.
+#
+# The policy engine treats shell, command, and raw as equivalent.
+# Denying any one automatically blocks the others.
 rules:
   - decision: deny
     match:
