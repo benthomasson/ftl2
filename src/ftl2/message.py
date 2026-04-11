@@ -62,11 +62,16 @@ class GateProtocol:
         "StopMonitor",  # Stop system metrics streaming
         "MonitorResult",  # Response to Start/StopMonitor
         "SystemMetrics",  # Unsolicited system metrics event
+        "StartGateStatus",  # Start gate self-health streaming
+        "StopGateStatus",  # Stop gate self-health streaming
+        "GateStatusResult",  # Response to Start/StopGateStatus
+        "GateStatus",  # Unsolicited gate health event
     }
 
     EVENT_TYPES = {
         "FileChanged",
         "SystemMetrics",
+        "GateStatus",
     }
 
     async def send_message(

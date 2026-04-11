@@ -266,7 +266,7 @@ class TestMainMultiplexed:
     @pytest.mark.asyncio
     async def test_shutdown_sends_goodbye(self):
         """Shutdown message gets a Goodbye response."""
-        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor
+        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor, GateStatusReporter
 
         protocol = GateProtocol()
         reader = make_reader_from_messages([
@@ -275,8 +275,9 @@ class TestMainMultiplexed:
         writer = MemoryWriter()
         watcher = FileWatcher(protocol, writer)
         monitor = SystemMonitor(protocol, writer)
+        status_reporter = GateStatusReporter(protocol, writer, "abc123")
 
-        result = await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123")
+        result = await main_multiplexed(reader, writer, protocol, watcher, monitor, status_reporter, "abc123")
 
         assert result is None
         # Parse the response from writer buffer
@@ -287,7 +288,7 @@ class TestMainMultiplexed:
     @pytest.mark.asyncio
     async def test_module_execution(self):
         """Module request gets a response with the correct msg_id."""
-        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor
+        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor, GateStatusReporter
 
         protocol = GateProtocol()
         # Send a Module request for a module that won't be found (no gate bundle)
@@ -299,8 +300,9 @@ class TestMainMultiplexed:
         writer = MemoryWriter()
         watcher = FileWatcher(protocol, writer)
         monitor = SystemMonitor(protocol, writer)
+        status_reporter = GateStatusReporter(protocol, writer, "abc123")
 
-        await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123")
+        await main_multiplexed(reader, writer, protocol, watcher, monitor, status_reporter, "abc123")
 
         # Parse all responses from writer buffer
         responses = self._parse_responses(writer.buffer)
@@ -316,7 +318,7 @@ class TestMainMultiplexed:
     @pytest.mark.asyncio
     async def test_info_request(self):
         """Info request returns gate info with correct msg_id."""
-        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor
+        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor, GateStatusReporter
 
         protocol = GateProtocol()
         reader = make_reader_from_messages([
@@ -326,14 +328,50 @@ class TestMainMultiplexed:
         writer = MemoryWriter()
         watcher = FileWatcher(protocol, writer)
         monitor = SystemMonitor(protocol, writer)
+        status_reporter = GateStatusReporter(protocol, writer, "abc123")
 
-        await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123")
+        await main_multiplexed(reader, writer, protocol, watcher, monitor, status_reporter, "abc123")
 
         responses = self._parse_responses(writer.buffer)
         info_resp = [r for r in responses if r[0] == "InfoResult"]
         assert len(info_resp) == 1
         assert info_resp[0][2] == 10
         assert "python_version" in info_resp[0][1]
+
+    @pytest.mark.asyncio
+    async def test_gate_status_start_stop(self):
+        """StartGateStatus and StopGateStatus get GateStatusResult responses."""
+        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor, GateStatusReporter
+
+        protocol = GateProtocol()
+        reader = make_reader_from_messages([
+            ["StartGateStatus", {"interval": 10.0}, 20],
+            ["StopGateStatus", {}, 21],
+            ["Shutdown", {}, 22],
+        ])
+        writer = MemoryWriter()
+        watcher = FileWatcher(protocol, writer)
+        monitor = SystemMonitor(protocol, writer)
+        status_reporter = GateStatusReporter(protocol, writer, "abc123")
+
+        await main_multiplexed(reader, writer, protocol, watcher, monitor, status_reporter, "abc123")
+
+        responses = self._parse_responses(writer.buffer)
+        by_id = {r[2]: r for r in responses if len(r) == 3}
+
+        # StartGateStatus should return ok
+        assert 20 in by_id, f"No response for msg_id=20 in {responses}"
+        assert by_id[20][0] == "GateStatusResult"
+        assert by_id[20][1]["status"] == "ok"
+
+        # StopGateStatus should return stopped
+        assert 21 in by_id, f"No response for msg_id=21 in {responses}"
+        assert by_id[21][0] == "GateStatusResult"
+        assert by_id[21][1]["status"] == "stopped"
+
+        # Shutdown should return Goodbye
+        assert 22 in by_id
+        assert by_id[22][0] == "Goodbye"
 
     @staticmethod
     def _parse_responses(buf: bytearray) -> list:

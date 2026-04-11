@@ -282,6 +282,13 @@ async def check_output(
 _MODULE_CACHE_MAX_SIZE = 128
 _module_cache: dict[str, bytes] = {}
 
+# Gate self-health state (updated at module execution entry/exit points)
+_gate_start_time: float = time.time()
+_gate_active_tasks: int = 0
+_gate_error_count: int = 0
+_gate_last_error: str | None = None
+_gate_current_tasks: set[str] = set()  # tracks all concurrently executing module names
+
 
 def _module_cache_set(name: str, data: bytes) -> None:
     """Store a module in the bounded cache, evicting the oldest entry if full."""
@@ -861,6 +868,135 @@ class SystemMonitor:
 
 
 # =============================================================================
+# Gate Status Reporter
+# =============================================================================
+
+
+class GateStatusReporter:
+    """Streams gate self-health metrics as GateStatus events.
+
+    Unlike SystemMonitor (which requires psutil), this uses only stdlib
+    (resource.getrusage + os.times) so it always works — it's the most
+    basic gate liveness signal.
+
+    Example:
+        reporter = GateStatusReporter(protocol, writer, gate_hash)
+        reporter.start(interval=5.0)
+        # ... later ...
+        reporter.stop()
+    """
+
+    def __init__(self, protocol: GateProtocol, writer: Any, gate_hash: str):
+        self._protocol = protocol
+        self._writer = writer
+        self._gate_hash = gate_hash
+        self._task: asyncio.Task | None = None
+        self._interval = 5.0
+        self._write_lock: asyncio.Lock | None = None
+        self._active_tasks_ref: set | None = None
+        self._prev_times = os.times()
+        self._prev_sample_time = time.time()
+
+    def start(self, interval: float = 5.0) -> None:
+        """Start the status reporting loop."""
+        if self._task is not None:
+            return
+        self._interval = interval
+        self._task = asyncio.create_task(self._status_loop())
+        logger.info(f"Gate status reporter started (interval={interval}s)")
+
+    async def _status_loop(self) -> None:
+        """Background task that samples gate status and emits GateStatus events."""
+        try:
+            while True:
+                await asyncio.sleep(self._interval)
+                status = self._collect_status()
+                try:
+                    if self._write_lock:
+                        async with self._write_lock:
+                            await self._protocol.send_message(
+                                self._writer, "GateStatus", status
+                            )
+                    else:
+                        await self._protocol.send_message(
+                            self._writer, "GateStatus", status
+                        )
+                except BrokenPipeError:
+                    return
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.error(f"GateStatusReporter error: {e}")
+
+    def _collect_status(self) -> dict:
+        """Collect gate self-health metrics using only stdlib.
+
+        Note: ``memory_rss_peak`` reports peak (high-water-mark) RSS via
+        ``resource.getrusage(RUSAGE_SELF).ru_maxrss``, not current RSS.
+        Current RSS requires ``/proc/self/status`` (Linux) or ``psutil``.
+        """
+        import resource as _resource
+
+        hostname = os.uname().nodename
+        pid = os.getpid()
+        now = time.time()
+
+        # CPU: delta os.times() since last sample
+        times = os.times()
+        elapsed = now - self._prev_sample_time
+        if elapsed > 0:
+            user_delta = times.user - self._prev_times.user
+            sys_delta = times.system - self._prev_times.system
+            cpu_percent = round(((user_delta + sys_delta) / elapsed) * 100, 1)
+        else:
+            cpu_percent = 0.0
+        self._prev_times = times
+        self._prev_sample_time = now
+
+        # Memory RSS via resource module
+        rusage = _resource.getrusage(_resource.RUSAGE_SELF)
+        memory_rss = rusage.ru_maxrss
+        if sys.platform != "darwin":
+            memory_rss *= 1024  # Linux reports KB, macOS reports bytes
+
+        # Active channels from multiplexed tasks set
+        if self._active_tasks_ref is not None:
+            active_channels = len(self._active_tasks_ref)
+        else:
+            active_channels = 1 if _gate_active_tasks > 0 else 0
+
+        # State derived from counters
+        if _gate_active_tasks > 0:
+            state = "executing"
+        else:
+            state = "idle"
+
+        return {
+            "gate_id": f"{hostname}-{pid}",
+            "host": hostname,
+            "version": self._gate_hash,
+            "uptime_seconds": int(now - _gate_start_time),
+            "state": state,
+            "current_task": sorted(_gate_current_tasks) if _gate_current_tasks else None,
+            "cpu_percent": cpu_percent,
+            "memory_rss_peak": memory_rss,
+            "active_channels": active_channels,
+            "queue_depth": 0,
+            "error_count": _gate_error_count,
+            "last_error": _gate_last_error,
+            "module_cache_size": len(_module_cache),
+            "module_cache_bytes": sum(len(v) for v in _module_cache.values()),
+        }
+
+    def stop(self) -> None:
+        """Cancel the background task."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+            logger.info("Gate status reporter stopped")
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
@@ -915,9 +1051,10 @@ async def main(args: list[str]) -> int | None:
     # Initialize protocol
     protocol = GateProtocol()
 
-    # Initialize file watcher and system monitor (events are emitted concurrently)
+    # Initialize file watcher, system monitor, and gate status reporter
     watcher = FileWatcher(protocol, writer)
     monitor = SystemMonitor(protocol, writer)
+    status_reporter = GateStatusReporter(protocol, writer, gate_hash)
 
     # Message processing loop
     while True:
@@ -929,6 +1066,7 @@ async def main(args: list[str]) -> int | None:
                 logger.info("EOF received, shutting down")
                 watcher.stop()
                 monitor.stop()
+                status_reporter.stop()
                 try:
                     await protocol.send_message(writer, "Goodbye", {})
                 except Exception:
@@ -954,7 +1092,7 @@ async def main(args: list[str]) -> int | None:
                     else:
                         await protocol.send_message(writer, "Hello", response_data)
                     logger.info("Entering multiplexed mode")
-                    return await main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash)
+                    return await main_multiplexed(reader, writer, protocol, watcher, monitor, status_reporter, gate_hash)
                 else:
                     await protocol.send_message(writer, "Hello", response_data)
 
@@ -967,16 +1105,22 @@ async def main(args: list[str]) -> int | None:
                     )
                     continue
 
+                global _gate_active_tasks, _gate_error_count, _gate_last_error, _gate_current_tasks
+                _module_name = data.get("module_name", "")
+                _gate_active_tasks += 1
+                _gate_current_tasks.add(_module_name)
                 try:
                     await execute_module(
                         protocol,
                         writer,
-                        data.get("module_name", ""),
+                        _module_name,
                         data.get("module"),
                         data.get("module_args", {}),
                     )
 
                 except ModuleNotFoundError as e:
+                    _gate_error_count += 1
+                    _gate_last_error = str(e)
                     await protocol.send_message(
                         writer,
                         "ModuleNotFound",
@@ -984,6 +1128,8 @@ async def main(args: list[str]) -> int | None:
                     )
 
                 except Exception as e:
+                    _gate_error_count += 1
+                    _gate_last_error = str(e)
                     logger.exception("Module execution failed")
                     await protocol.send_message(
                         writer,
@@ -993,6 +1139,9 @@ async def main(args: list[str]) -> int | None:
                             "traceback": traceback.format_exc(),
                         },
                     )
+                finally:
+                    _gate_active_tasks -= 1
+                    _gate_current_tasks.discard(_module_name)
 
             elif msg_type == "FTLModule":
                 logger.info(f"FTLModule execution requested: {data.get('module_name', 'unknown')}")
@@ -1003,16 +1152,21 @@ async def main(args: list[str]) -> int | None:
                     )
                     continue
 
+                _module_name = data.get("module_name", "")
+                _gate_active_tasks += 1
+                _gate_current_tasks.add(_module_name)
                 try:
                     await execute_ftl_module(
                         protocol,
                         writer,
-                        data.get("module_name", ""),
+                        _module_name,
                         data.get("module", ""),
                         data.get("module_args", {}),
                     )
 
                 except ModuleNotFoundError as e:
+                    _gate_error_count += 1
+                    _gate_last_error = str(e)
                     await protocol.send_message(
                         writer,
                         "ModuleNotFound",
@@ -1020,6 +1174,8 @@ async def main(args: list[str]) -> int | None:
                     )
 
                 except Exception as e:
+                    _gate_error_count += 1
+                    _gate_last_error = str(e)
                     logger.exception("FTLModule execution failed")
                     await protocol.send_message(
                         writer,
@@ -1029,6 +1185,9 @@ async def main(args: list[str]) -> int | None:
                             "traceback": traceback.format_exc(),
                         },
                     )
+                finally:
+                    _gate_active_tasks -= 1
+                    _gate_current_tasks.discard(_module_name)
 
             elif msg_type == "Info":
                 logger.info("Info requested")
@@ -1119,10 +1278,26 @@ async def main(args: list[str]) -> int | None:
                     writer, "MonitorResult", {"status": "stopped"}
                 )
 
+            elif msg_type == "StartGateStatus":
+                interval = data.get("interval", 5.0) if isinstance(data, dict) else 5.0
+                logger.info(f"StartGateStatus requested (interval={interval}s)")
+                status_reporter.start(interval=interval)
+                await protocol.send_message(
+                    writer, "GateStatusResult", {"status": "ok"}
+                )
+
+            elif msg_type == "StopGateStatus":
+                logger.info("StopGateStatus requested")
+                status_reporter.stop()
+                await protocol.send_message(
+                    writer, "GateStatusResult", {"status": "stopped"}
+                )
+
             elif msg_type == "Shutdown":
                 logger.info("Shutdown requested")
                 watcher.stop()
                 monitor.stop()
+                status_reporter.stop()
                 await protocol.send_message(writer, "Goodbye", {})
                 return None
 
@@ -1160,7 +1335,7 @@ async def main(args: list[str]) -> int | None:
             return 1
 
 
-async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash):
+async def main_multiplexed(reader, writer, protocol, watcher, monitor, status_reporter, gate_hash):
     """Concurrent message handling loop for multiplexed mode.
 
     Each incoming request is handled in its own asyncio task.
@@ -1173,6 +1348,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
     # messages don't interleave with request responses.
     watcher._write_lock = write_lock
     monitor._write_lock = write_lock
+    status_reporter._write_lock = write_lock
 
     async def handle_request(msg_type, data, msg_id):
         """Handle a single request and send response with same msg_id."""
@@ -1184,9 +1360,13 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         msg_id, write_lock=write_lock,
                     )
                     return
+                global _gate_active_tasks, _gate_error_count, _gate_last_error, _gate_current_tasks
+                _module_name = data.get("module_name", "")
+                _gate_active_tasks += 1
+                _gate_current_tasks.add(_module_name)
                 try:
                     result = await run_module(
-                        data.get("module_name", ""),
+                        _module_name,
                         data.get("module"),
                         data.get("module_args", {}),
                     )
@@ -1195,11 +1375,16 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         msg_id, write_lock=write_lock,
                     )
                 except ModuleNotFoundError as e:
+                    _gate_error_count += 1
+                    _gate_last_error = str(e)
                     await protocol.send_message_with_id(
                         writer, "ModuleNotFound",
                         {"message": f"Module not found: {e}"},
                         msg_id, write_lock=write_lock,
                     )
+                finally:
+                    _gate_active_tasks -= 1
+                    _gate_current_tasks.discard(_module_name)
 
             elif msg_type == "FTLModule":
                 if not isinstance(data, dict):
@@ -1208,9 +1393,12 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         msg_id, write_lock=write_lock,
                     )
                     return
+                _module_name = data.get("module_name", "")
+                _gate_active_tasks += 1
+                _gate_current_tasks.add(_module_name)
                 try:
                     resp_type, resp_data = await run_ftl_module(
-                        data.get("module_name", ""),
+                        _module_name,
                         data.get("module", ""),
                         data.get("module_args", {}),
                     )
@@ -1219,12 +1407,16 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         msg_id, write_lock=write_lock,
                     )
                 except ModuleNotFoundError as e:
+                    _gate_error_count += 1
+                    _gate_last_error = str(e)
                     await protocol.send_message_with_id(
                         writer, "ModuleNotFound",
                         {"message": f"FTLModule not found: {e}"},
                         msg_id, write_lock=write_lock,
                     )
                 except Exception as e:
+                    _gate_error_count += 1
+                    _gate_last_error = str(e)
                     logger.exception("FTLModule execution failed")
                     await protocol.send_message_with_id(
                         writer, "Error",
@@ -1234,6 +1426,9 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         },
                         msg_id, write_lock=write_lock,
                     )
+                finally:
+                    _gate_active_tasks -= 1
+                    _gate_current_tasks.discard(_module_name)
 
             elif msg_type == "Info":
                 await protocol.send_message_with_id(
@@ -1317,6 +1512,21 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                     msg_id, write_lock=write_lock,
                 )
 
+            elif msg_type == "StartGateStatus":
+                interval = data.get("interval", 5.0) if isinstance(data, dict) else 5.0
+                status_reporter.start(interval=interval)
+                await protocol.send_message_with_id(
+                    writer, "GateStatusResult", {"status": "ok"},
+                    msg_id, write_lock=write_lock,
+                )
+
+            elif msg_type == "StopGateStatus":
+                status_reporter.stop()
+                await protocol.send_message_with_id(
+                    writer, "GateStatusResult", {"status": "stopped"},
+                    msg_id, write_lock=write_lock,
+                )
+
             else:
                 await protocol.send_message_with_id(
                     writer, "Error",
@@ -1339,6 +1549,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
 
     # Main reader loop
     tasks = set()
+    status_reporter._active_tasks_ref = tasks
     try:
         while True:
             msg = await protocol.read_message(reader)
@@ -1381,6 +1592,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                 await asyncio.gather(*pending, return_exceptions=True)
         watcher.stop()
         monitor.stop()
+        status_reporter.stop()
 
     return None
 
