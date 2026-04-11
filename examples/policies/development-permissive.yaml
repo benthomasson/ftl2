@@ -1,17 +1,10 @@
 # Development — minimal restrictions, mostly a safety net.
 #
-# IMPORTANT: shell, command, and raw can all execute arbitrary commands.
-# Denying only "shell" leaves "command" and "raw" as bypass routes.
-# Always deny all three together when restricting arbitrary execution.
+# The policy engine treats shell, command, and raw as equivalent.
+# Denying any one automatically blocks the others.
 rules:
   - decision: deny
     match:
       module: shell
-      param.cmd: "rm -rf /*"
-    reason: "Recursive root deletion is never permitted"
-
-  - decision: deny
-    match:
-      module: command
       param.cmd: "rm -rf /*"
     reason: "Recursive root deletion is never permitted"

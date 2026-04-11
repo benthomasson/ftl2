@@ -86,25 +86,11 @@ Restrict what actions are permitted based on module, host, environment, and para
 ```yaml
 # policy.yml
 rules:
-  # IMPORTANT: shell, command, and raw can all execute arbitrary commands.
-  # Denying only one leaves the others as bypass routes.
   - decision: deny
     match:
       module: "shell"
       environment: "prod"
     reason: "Use proper modules in production"
-
-  - decision: deny
-    match:
-      module: "command"
-      environment: "prod"
-    reason: "Use proper modules in production"
-
-  - decision: deny
-    match:
-      module: "*.raw"
-      environment: "prod"
-    reason: "Raw module execution not permitted in production"
 
   - decision: deny
     match:
@@ -114,9 +100,9 @@ rules:
     reason: "No destructive actions on production hosts"
 ```
 
-> **Note:** The `shell`, `command`, and `raw` modules can all execute arbitrary commands.
-> A policy that denies only `shell` does not block `command` or `raw` — always deny all three
-> together when restricting arbitrary execution. See `examples/policies/` for reference.
+> **Note:** The `shell`, `command`, and `raw` modules are treated as equivalent by the
+> policy engine.  A rule denying `shell` automatically blocks `command` and `raw` too,
+> including FQCN variants like `ansible.builtin.raw`.
 
 ```python
 async with automation(policy="policy.yml", environment="prod") as ftl:

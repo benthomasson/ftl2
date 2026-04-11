@@ -105,13 +105,14 @@ class PolicyResult:
 def _module_matches(module_name: str, pattern: str) -> bool:
     """Check whether *module_name* matches *pattern*, expanding equivalence groups.
 
-    If *pattern* is a plain name (no glob characters) that belongs to an
-    equivalence group, the check succeeds when *module_name* is any member
-    of that group.  For FQCN names like ``ansible.builtin.raw``, the short
-    name (last component) is extracted before checking equivalence.
+    If *pattern* resolves to a name that belongs to an equivalence group,
+    the check succeeds when *module_name* is any member of that group.
+    Both the pattern and the module_name are normalized to short names
+    (last dotted component) before checking equivalence, so FQCN patterns
+    like ``ansible.builtin.shell`` correctly block ``command`` and ``raw``.
 
     Glob patterns (containing ``*``, ``?``, or ``[``) bypass equivalence
-    expansion and match via fnmatch as before.
+    expansion and match via fnmatch only.
     """
     # Fast path: direct fnmatch (covers globs and exact matches)
     if fnmatch.fnmatchcase(module_name, pattern):
@@ -121,14 +122,16 @@ def _module_matches(module_name: str, pattern: str) -> bool:
     if any(c in pattern for c in ("*", "?", "[")):
         return False
 
-    # Check if the pattern is in an equivalence group
-    equivalents = _MODULE_EQUIVALENTS.get(pattern)
+    # Extract short names from both pattern and module_name for equivalence
+    pattern_short = pattern.rsplit(".", 1)[-1] if "." in pattern else pattern
+    module_short = module_name.rsplit(".", 1)[-1] if "." in module_name else module_name
+
+    # Check if the pattern's short name is in an equivalence group
+    equivalents = _MODULE_EQUIVALENTS.get(pattern_short)
     if equivalents is None:
         return False
 
-    # Extract short name from FQCN (e.g. "ansible.builtin.raw" -> "raw")
-    short_name = module_name.rsplit(".", 1)[-1] if "." in module_name else module_name
-    return short_name in equivalents
+    return module_short in equivalents
 
 
 class Policy:

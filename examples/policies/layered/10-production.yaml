@@ -1,24 +1,15 @@
 # Production guardrails — layered on top of base rules.
 # Because rules are evaluated in file order (00-base first, then 10-production),
 # base safety rules fire first. These add production-specific restrictions.
+#
+# The policy engine treats shell, command, and raw as equivalent.
+# The single shell deny rule below also blocks command and raw in prod.
 rules:
   - decision: deny
     match:
       module: shell
       environment: prod
     reason: "Use proper modules instead of shell in production"
-
-  - decision: deny
-    match:
-      module: command
-      environment: prod
-    reason: "Use proper modules instead of command in production"
-
-  - decision: deny
-    match:
-      module: "*.raw"
-      environment: prod
-    reason: "Raw module execution not permitted in production"
 
   - decision: deny
     match:

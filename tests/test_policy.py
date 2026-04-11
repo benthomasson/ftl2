@@ -369,6 +369,38 @@ class TestModuleEquivalenceGroups:
         policy = Policy([rule])
         assert policy.evaluate("shell", {}).permitted is False
 
+    def test_fqcn_pattern_blocks_short_name_equivalents(self):
+        """A FQCN rule pattern like ansible.builtin.shell blocks command and raw."""
+        rule = PolicyRule(
+            decision="deny",
+            match={"module": "ansible.builtin.shell"},
+            reason="no shell",
+        )
+        policy = Policy([rule])
+        assert policy.evaluate("command", {}).permitted is False
+        assert policy.evaluate("raw", {}).permitted is False
+
+    def test_fqcn_pattern_blocks_fqcn_equivalents(self):
+        """FQCN pattern blocks FQCN equivalents across namespaces."""
+        rule = PolicyRule(
+            decision="deny",
+            match={"module": "ansible.builtin.shell"},
+            reason="no shell",
+        )
+        policy = Policy([rule])
+        assert policy.evaluate("ansible.builtin.command", {}).permitted is False
+        assert policy.evaluate("ansible.builtin.raw", {}).permitted is False
+
+    def test_fqcn_pattern_still_matches_itself(self):
+        """FQCN pattern still matches its own exact name."""
+        rule = PolicyRule(
+            decision="deny",
+            match={"module": "ansible.builtin.shell"},
+            reason="no shell",
+        )
+        policy = Policy([rule])
+        assert policy.evaluate("ansible.builtin.shell", {}).permitted is False
+
 
 class TestPolicyDeniedError:
     """Tests for PolicyDeniedError."""
