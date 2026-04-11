@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from ftl2.message import GateProtocol, ProtocolError
+from ftl2.message import GateProtocol, MAX_MESSAGE_SIZE, ProtocolError
 
 
 class TestGateProtocol:
@@ -180,6 +180,67 @@ class TestGateProtocol:
             await protocol.read_message(reader)
 
         assert "Incomplete message" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_read_message_exceeds_max_size(self):
+        """Test that oversized messages are rejected before reading the body."""
+        protocol = GateProtocol()
+
+        # Encode a length just over the limit
+        oversized_length = MAX_MESSAGE_SIZE + 1
+        length_prefix = f"{oversized_length:08x}".encode("ascii")
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(length_prefix)
+        reader.feed_eof()
+
+        with pytest.raises(ProtocolError) as exc_info:
+            await protocol.read_message(reader)
+
+        assert "exceeds maximum" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_read_message_at_max_size_is_allowed(self):
+        """Test that a message exactly at the limit is not rejected by the size check."""
+        protocol = GateProtocol()
+
+        # Build a valid message whose body is small but whose declared
+        # length equals MAX_MESSAGE_SIZE.  We only verify the size check
+        # passes — the read will fail with incomplete body (we don't feed
+        # 64 MB of data), which is the expected next error.
+        length_prefix = f"{MAX_MESSAGE_SIZE:08x}".encode("ascii")
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(length_prefix)
+        reader.feed_data(b"short")
+        reader.feed_eof()
+
+        with pytest.raises(ProtocolError) as exc_info:
+            await protocol.read_message(reader)
+
+        # Should fail on incomplete body, NOT on size limit
+        assert "Incomplete message" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_read_message_max_hex_prefix_rejected(self):
+        """Test that the maximum possible hex prefix (4 GB) is rejected."""
+        protocol = GateProtocol()
+
+        # 0xFFFFFFFF = 4,294,967,295 bytes
+        length_prefix = b"ffffffff"
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(length_prefix)
+        reader.feed_eof()
+
+        with pytest.raises(ProtocolError) as exc_info:
+            await protocol.read_message(reader)
+
+        assert "exceeds maximum" in str(exc_info.value)
+
+    def test_max_message_size_is_64mb(self):
+        """Verify the constant is 64 MB as documented."""
+        assert MAX_MESSAGE_SIZE == 64 * 1024 * 1024
 
     @pytest.mark.asyncio
     async def test_read_message_invalid_json(self):
