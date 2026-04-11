@@ -401,8 +401,10 @@ class AutomationContext:
                 data = json.loads(replay_path.read_text())
                 self._replay_actions = data.get("actions", [])
         from ftl2.policy import Policy
+        self._policy_source: Path | None = None
         if policy:
             p = Path(policy)
+            self._policy_source = p
             if p.is_dir():
                 self._policy = Policy.from_directory(p)
             else:
@@ -413,6 +415,7 @@ class AutomationContext:
         self._policy_audit_file = Path(policy_audit) if policy_audit else None
         self._policy_decisions: list[dict[str, Any]] = []
         self._session_id = str(uuid.uuid4())
+        self._policy_watch_task: asyncio.Task | None = None
         self._event_handlers: dict[str, dict[str, list]] = {}  # host -> event_type -> [handlers]
         self._proxy = ModuleProxy(self)
         self._hosts_proxy: HostsProxy | None = None
@@ -567,6 +570,126 @@ class AutomationContext:
         this ID, allowing correlation across the JSON-lines audit file.
         """
         return self._session_id
+
+    async def reload_policy(self, path: str | Path | None = None) -> None:
+        """Reload policy rules from disk.
+
+        Loads and validates the new policy fully before swapping. If the
+        new policy file is invalid, the old policy remains in effect and
+        an exception is raised.
+
+        Args:
+            path: Optional new policy path. If None, reloads from the
+                  original path passed to automation(). If no original
+                  path exists and no path is given, raises ValueError.
+
+        Raises:
+            ValueError: If no policy source is available.
+            FileNotFoundError: If the policy file doesn't exist.
+
+        Example::
+
+            async with automation(policy="rules.yaml") as ftl:
+                # ... rules.yaml updated on disk ...
+                await ftl.reload_policy()
+
+                # Switch to a different policy source
+                await ftl.reload_policy(path="emergency-rules.yaml")
+        """
+        from ftl2.policy import Policy
+
+        source = Path(path) if path else self._policy_source
+        if source is None:
+            raise ValueError(
+                "No policy source to reload from. "
+                "Pass a path or use automation(policy=...) to set the source."
+            )
+
+        # Load and validate — if this raises, old policy stays
+        if source.is_dir():
+            new_policy = Policy.from_directory(source)
+        else:
+            new_policy = Policy.from_file(source)
+
+        # Atomic swap — Python attribute assignment is atomic in asyncio
+        self._policy = new_policy
+        if path:
+            self._policy_source = source
+
+        logger.info("Policy reloaded from %s (%d rules)", source, len(new_policy.rules))
+
+    @property
+    def policy(self) -> "Policy":
+        """The currently active policy."""
+        return self._policy
+
+    async def watch_policy(self, interval: float = 1.0) -> None:
+        """Start watching policy files for changes and auto-reload.
+
+        Polls the policy source path for mtime changes at the given
+        interval. When a change is detected, reloads the policy.
+        Invalid policy files are logged and skipped (old policy stays).
+
+        Args:
+            interval: Polling interval in seconds. Default 1.0.
+
+        Raises:
+            ValueError: If no policy source is configured.
+
+        Example::
+
+            async with automation(policy="rules.yaml") as ftl:
+                await ftl.watch_policy(interval=5.0)
+                # Policy auto-reloads when rules.yaml changes on disk
+                ...
+                ftl.unwatch_policy()
+        """
+        if self._policy_source is None:
+            raise ValueError("No policy source to watch.")
+        if self._policy_watch_task is not None:
+            return  # already watching
+
+        self._policy_mtimes: dict[str, float] = self._snapshot_mtimes()
+
+        async def _watch_loop() -> None:
+            while True:
+                await asyncio.sleep(interval)
+                current = self._snapshot_mtimes()
+                if current != self._policy_mtimes:
+                    try:
+                        await self.reload_policy()
+                    except Exception:
+                        logger.warning(
+                            "Policy auto-reload failed, keeping current policy",
+                            exc_info=True,
+                        )
+                    # Always update mtimes to avoid infinite retry on bad files
+                    self._policy_mtimes = current
+
+        self._policy_watch_task = asyncio.create_task(_watch_loop())
+
+    def unwatch_policy(self) -> None:
+        """Stop watching policy files for changes."""
+        if self._policy_watch_task is not None:
+            self._policy_watch_task.cancel()
+            self._policy_watch_task = None
+
+    def _snapshot_mtimes(self) -> dict[str, float]:
+        """Snapshot modification times of policy source files."""
+        source = self._policy_source
+        if source is None:
+            return {}
+        if source.is_dir():
+            return {
+                str(p): p.stat().st_mtime
+                for p in sorted(source.iterdir())
+                if p.suffix in (".yaml", ".yml") and p.is_file()
+            }
+        else:
+            try:
+                return {str(source): source.stat().st_mtime}
+            except FileNotFoundError:
+                return {}
 
     @property
     def output_mode(self) -> OutputMode:
@@ -1912,6 +2035,8 @@ class AutomationContext:
         Performs cleanup including closing SSH connections and
         optionally printing summary and errors.
         """
+        self.unwatch_policy()
+
         # Print summary if enabled and there are results
         if self._print_summary and self._results and not self.quiet:
             self._print_host_summary()
