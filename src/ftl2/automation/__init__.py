@@ -77,6 +77,7 @@ async def automation(
     vault_secrets: dict[str, str] | None = None,
     policy: str | None = None,
     environment: str = "",
+    policy_audit: str | None = None,
     ignore_missing_inventory: bool = True,
 ) -> AsyncGenerator[AutomationContext, None]:
     """Create an automation context for running FTL modules.
@@ -157,6 +158,10 @@ async def automation(
                 A matching deny rule raises PolicyDeniedError.
         environment: Environment label for policy matching (e.g., "prod",
                 "staging"). Used by policy rules with environment conditions.
+        policy_audit: Path to JSON-lines file for streaming policy audit events.
+                Each policy evaluation (permitted or denied) is appended as a
+                JSON line immediately after evaluation. Crash-safe — survives
+                process termination. Default is None.
 
     Yields:
         AutomationContext with ftl.module_name() access to all modules
@@ -266,6 +271,7 @@ async def automation(
         vault_secrets=vault_secrets,
         policy=policy,
         environment=environment,
+        policy_audit=policy_audit,
         ignore_missing_inventory=ignore_missing_inventory,
     )
 

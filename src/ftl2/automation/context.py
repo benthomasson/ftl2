@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import time
+import uuid
 import warnings
 from enum import Enum
 from pathlib import Path
@@ -276,6 +277,7 @@ class AutomationContext:
         vault_secrets: dict[str, str] | None = None,
         policy: str | Path | None = None,
         environment: str = "",
+        policy_audit: str | Path | None = None,
         ignore_missing_inventory: bool = False,
     ):
         """Initialize the automation context.
@@ -357,6 +359,10 @@ class AutomationContext:
             environment: Environment label for policy matching (e.g., "prod",
                 "staging"). Passed to the policy engine for environment-based
                 rules. Default is "" (empty string).
+            policy_audit: Path to a JSON-lines file for streaming policy audit
+                events. Each policy evaluation (permitted or denied) is appended
+                as a JSON line immediately after evaluation. Crash-safe — survives
+                process termination. Default is None (no policy audit file).
         """
         self._enabled_modules = modules
         self._inventory = self._load_inventory(inventory, ignore_missing=ignore_missing_inventory)
@@ -404,6 +410,9 @@ class AutomationContext:
         else:
             self._policy = Policy.empty()
         self._environment = environment
+        self._policy_audit_file = Path(policy_audit) if policy_audit else None
+        self._policy_decisions: list[dict[str, Any]] = []
+        self._session_id = str(uuid.uuid4())
         self._event_handlers: dict[str, dict[str, list]] = {}  # host -> event_type -> [handlers]
         self._proxy = ModuleProxy(self)
         self._hosts_proxy: HostsProxy | None = None
@@ -477,24 +486,87 @@ class AutomationContext:
 
         return injections
 
-    def _check_policy(self, module_name: str, params: dict[str, Any], host: str = "localhost") -> None:
-        """Check policy before module execution.
+    def _check_policy(
+        self,
+        module_name: str,
+        params: dict[str, Any],
+        host: str = "localhost",
+        audit_params: dict[str, Any] | None = None,
+    ) -> None:
+        """Check policy before module execution and emit audit event.
+
+        Every policy evaluation — permitted or denied — produces a structured
+        audit event that is:
+        1. Appended to ``_policy_decisions`` (included in record file on exit)
+        2. Emitted via ``on_event`` callback for real-time consumption
+        3. Written to ``_policy_audit_file`` as a JSON line (crash-safe)
 
         Args:
-            module_name: Name of the module to execute
-            params: Module parameters
-            host: Target host name
+            module_name: Name of the module to execute.
+            params: Module parameters (post-injection, used for policy evaluation).
+            host: Target host name.
+            audit_params: Pre-injection parameters for the audit event. If None,
+                ``params`` is used. Pass ``original_params`` to avoid leaking
+                injected secrets into the audit trail.
 
         Raises:
-            PolicyDeniedError: If a policy rule denies the action
+            PolicyDeniedError: If a policy rule denies the action.
         """
         from ftl2.policy import PolicyDeniedError
+
         result = self._policy.evaluate(module_name, params, host, self._environment)
+        decision = "permitted" if result.permitted else "denied"
+
+        event = {
+            "event": "policy_evaluation",
+            "timestamp": time.time(),
+            "session_id": self._session_id,
+            "module": module_name,
+            "host": host,
+            "environment": self._environment,
+            "params": self._redact_params(module_name, audit_params if audit_params is not None else params),
+            "decision": decision,
+            "rule": result.rule.to_dict() if result.rule else None,
+            "reason": result.reason,
+        }
+
+        self._policy_decisions.append(event)
+        self._emit_event(event)
+        self._write_policy_audit_line(event)
+
         if not result.permitted:
             raise PolicyDeniedError(
                 f"Policy denied {module_name} on {host}: {result.reason}",
                 rule=result.rule,
             )
+
+    def _write_policy_audit_line(self, event: dict[str, Any]) -> None:
+        """Append a policy audit event as a JSON line to the audit file.
+
+        Each event is written immediately (append mode) so the audit trail
+        survives process crashes. Timestamps are converted to ISO-8601.
+        """
+        if self._policy_audit_file is None:
+            return
+
+        import json
+        from datetime import datetime, timezone
+
+        line = dict(event)
+        line["timestamp"] = datetime.fromtimestamp(
+            event["timestamp"], tz=timezone.utc
+        ).isoformat()
+        with open(self._policy_audit_file, "a") as f:
+            f.write(json.dumps(line) + "\n")
+
+    @property
+    def session_id(self) -> str:
+        """Unique identifier for this automation session.
+
+        All policy audit events from one ``automation()`` invocation share
+        this ID, allowing correlation across the JSON-lines audit file.
+        """
+        return self._session_id
 
     @property
     def output_mode(self) -> OutputMode:
@@ -926,7 +998,7 @@ class AutomationContext:
             params = {**secret_injections, **params}  # params can override if explicitly set
 
         # Check policy before execution
-        self._check_policy(module_name, params)
+        self._check_policy(module_name, params, audit_params=original_params)
 
         # Emit start event
         self._emit_event({
@@ -1281,7 +1353,7 @@ class AutomationContext:
             params = {**secret_injections, **params}
 
         # Check policy before execution
-        self._check_policy(module_name, params, host.name)
+        self._check_policy(module_name, params, host.name, audit_params=original_params)
 
         # Emit start event
         self._emit_event({
@@ -1846,7 +1918,7 @@ class AutomationContext:
             self._write_recorded_modules()
 
         # Write audit recording if enabled
-        if self._record_file and self._results:
+        if self._record_file and (self._results or self._policy_decisions):
             self._write_recording()
 
         # Close gate connections
@@ -2034,12 +2106,20 @@ class AutomationContext:
             actions.append(action)
 
         now = time.time()
+        policy_decisions = []
+        for pd in self._policy_decisions:
+            decision_copy = dict(pd)
+            decision_copy["timestamp"] = epoch_to_iso(pd["timestamp"])
+            policy_decisions.append(decision_copy)
+
         recording = {
             "started": epoch_to_iso(self._start_time) if self._start_time else None,
             "completed": epoch_to_iso(now),
+            "session_id": self._session_id,
             "check_mode": self.check_mode,
             "success": not self.failed,
             "actions": actions,
+            "policy_decisions": policy_decisions,
             "errors": [
                 {"module": e.module, "host": e.host, "error": e.error}
                 for e in self.errors
