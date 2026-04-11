@@ -1,5 +1,6 @@
 """Tests for FTL modules Phase 2 - Core module implementations."""
 
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -133,6 +134,120 @@ class TestFtlFile:
         with pytest.raises(FTLModuleError) as exc_info:
             ftl_file(path="/tmp/test", state="invalid")
         assert "Invalid state" in str(exc_info.value)
+
+    # --- state=link tests (GH-14) ---
+
+    def test_link_creates_symlink(self):
+        """Test state=link creates a new symlink."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "target.txt"
+            target.write_text("hello")
+            link = Path(tmpdir) / "mylink"
+
+            result = ftl_file(path=str(link), state="link", src=str(target))
+
+            assert result["changed"] is True
+            assert link.is_symlink()
+            assert os.readlink(link) == str(target)
+
+    def test_link_creates_parent_dirs(self):
+        """Test state=link creates parent directories if needed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "target.txt"
+            target.write_text("hello")
+            link = Path(tmpdir) / "sub" / "dir" / "mylink"
+
+            result = ftl_file(path=str(link), state="link", src=str(target))
+
+            assert result["changed"] is True
+            assert link.is_symlink()
+
+    def test_link_idempotent_same_target(self):
+        """Test state=link is idempotent when symlink already points to same target."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "target.txt"
+            target.write_text("hello")
+            link = Path(tmpdir) / "mylink"
+            os.symlink(str(target), str(link))
+
+            result = ftl_file(path=str(link), state="link", src=str(target))
+
+            assert result["changed"] is False
+            assert os.readlink(link) == str(target)
+
+    def test_link_different_target_with_force(self):
+        """Test state=link replaces symlink when target differs and force=True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_target = Path(tmpdir) / "old.txt"
+            new_target = Path(tmpdir) / "new.txt"
+            old_target.write_text("old")
+            new_target.write_text("new")
+            link = Path(tmpdir) / "mylink"
+            os.symlink(str(old_target), str(link))
+
+            result = ftl_file(path=str(link), state="link", src=str(new_target), force=True)
+
+            assert result["changed"] is True
+            assert os.readlink(link) == str(new_target)
+
+    def test_link_different_target_without_force_raises(self):
+        """Test state=link raises error when target differs and force=False."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_target = Path(tmpdir) / "old.txt"
+            new_target = Path(tmpdir) / "new.txt"
+            old_target.write_text("old")
+            new_target.write_text("new")
+            link = Path(tmpdir) / "mylink"
+            os.symlink(str(old_target), str(link))
+
+            with pytest.raises(FTLModuleError) as exc_info:
+                ftl_file(path=str(link), state="link", src=str(new_target))
+            assert "different target" in str(exc_info.value)
+
+    def test_link_over_existing_file_with_force(self):
+        """Test state=link replaces existing file when force=True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "target.txt"
+            target.write_text("target")
+            existing = Path(tmpdir) / "existing.txt"
+            existing.write_text("blocker")
+
+            result = ftl_file(path=str(existing), state="link", src=str(target), force=True)
+
+            assert result["changed"] is True
+            assert existing.is_symlink()
+            assert os.readlink(existing) == str(target)
+
+    def test_link_over_existing_file_without_force_raises(self):
+        """Test state=link raises error when path exists as file and force=False."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "target.txt"
+            target.write_text("target")
+            existing = Path(tmpdir) / "existing.txt"
+            existing.write_text("blocker")
+
+            with pytest.raises(FTLModuleError) as exc_info:
+                ftl_file(path=str(existing), state="link", src=str(target))
+            assert "not a symlink" in str(exc_info.value)
+
+    def test_link_over_existing_dir_with_force(self):
+        """Test state=link replaces existing directory when force=True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "target.txt"
+            target.write_text("target")
+            existing_dir = Path(tmpdir) / "mydir"
+            existing_dir.mkdir()
+
+            result = ftl_file(path=str(existing_dir), state="link", src=str(target), force=True)
+
+            assert result["changed"] is True
+            assert existing_dir.is_symlink()
+
+    def test_link_requires_src(self):
+        """Test state=link raises error when src is not provided."""
+        with pytest.raises(FTLModuleError) as exc_info:
+            ftl_file(path="/tmp/mylink", state="link")
+        assert "src" in str(exc_info.value).lower()
 
 
 class TestFtlCopy:
