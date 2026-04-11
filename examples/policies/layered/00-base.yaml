@@ -1,9 +1,19 @@
 # Base safety rules — universal, loaded first.
 # Name with 00- prefix so it sorts before environment-specific files.
+#
+# IMPORTANT: shell, command, and raw can all execute arbitrary commands.
+# Denying only "shell" leaves "command" and "raw" as bypass routes.
+# Always deny all three together when restricting arbitrary execution.
 rules:
   - decision: deny
     match:
       module: shell
+      param.cmd: "rm -rf /*"
+    reason: "Recursive root deletion is never permitted"
+
+  - decision: deny
+    match:
+      module: command
       param.cmd: "rm -rf /*"
     reason: "Recursive root deletion is never permitted"
 

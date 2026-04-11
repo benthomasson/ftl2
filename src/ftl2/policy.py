@@ -95,6 +95,14 @@ class Policy:
     Rules are evaluated top-to-bottom. The first matching deny rule
     causes the action to be denied. If no deny rule matches, the
     action is permitted.
+
+    .. warning:: Equivalent modules
+
+       The ``shell``, ``command``, and ``raw`` modules can all execute
+       arbitrary commands.  A rule that denies only ``shell`` does **not**
+       block ``command`` or ``raw``.  Always deny all three together when
+       restricting arbitrary execution.  See ``examples/policies/`` for
+       reference patterns.
     """
 
     def __init__(self, rules: list[PolicyRule]):

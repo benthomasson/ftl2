@@ -16,6 +16,12 @@ rules:
 
   - decision: deny
     match:
+      module: "*.raw"
+      environment: prod
+    reason: "Raw module execution not permitted in production"
+
+  - decision: deny
+    match:
       host: "prod-*"
       param.state: absent
     reason: "Destructive actions (state=absent) not permitted on production hosts"
