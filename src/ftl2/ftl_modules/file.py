@@ -145,9 +145,11 @@ def ftl_file(
                     os.symlink(src, p)
                     changed = True
                 else:
-                    p.unlink()
-                    os.symlink(src, p)
-                    changed = True
+                    raise FTLModuleError(
+                        f"Symlink exists with different target: {current_target}",
+                        path=path,
+                        src=src,
+                    )
             elif p.exists():
                 if force:
                     if p.is_dir():

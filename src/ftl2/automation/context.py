@@ -1405,8 +1405,6 @@ class AutomationContext:
             if is_ftl_module(module_name):
                 # FTL module - try name-only first (gate may have it baked in)
                 try:
-                    gate = await self._get_or_create_gate(host, become=become)
-
                     # Send name-only FTLModule message
                     await self._remote_runner.protocol.send_message(
                         gate.gate_process.stdin,
@@ -1448,9 +1446,6 @@ class AutomationContext:
             if not ftl_attempted:
                 # Ansible module - build bundle and send through gate
                 import json
-
-                # Get gate connection
-                gate = await self._get_or_create_gate(host, become=become)
 
                 # Try name-only first (gate may have module baked in)
                 await self._remote_runner.protocol.send_message(
