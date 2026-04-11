@@ -26,6 +26,12 @@ class ProtocolError(Exception):
     pass
 
 
+# Maximum allowed message size (64 MB).  Large enough for any legitimate
+# payload (base64-encoded module bundles, SystemMetrics, etc.) but small
+# enough to prevent memory exhaustion from a malformed length prefix.
+MAX_MESSAGE_SIZE = 64 * 1024 * 1024
+
+
 class GateProtocol:
     """Protocol handler for gate communication.
 
@@ -245,6 +251,12 @@ class GateProtocol:
                 length = int(length_hex, 16)
             except (ValueError, UnicodeDecodeError) as e:
                 raise ProtocolError(f"Invalid hex length: {length_bytes!r}") from e
+
+            if length > MAX_MESSAGE_SIZE:
+                raise ProtocolError(
+                    f"Message size {length} bytes exceeds maximum "
+                    f"({MAX_MESSAGE_SIZE} bytes)"
+                )
 
             # Read message body, skipping leading whitespace
             # (newline between length and body in interactive mode)
