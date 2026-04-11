@@ -65,11 +65,16 @@ class GateProtocol:
         "PolicyDenied",  # Gate denied module execution due to policy
         "SetPolicy",  # Update policy on a running gate
         "SetPolicyResult",  # Response to SetPolicy request
+        "StartGateStatus",  # Start gate health status streaming
+        "StopGateStatus",  # Stop gate health status streaming
+        "GateStatusResult",  # Response to Start/StopGateStatus
+        "GateStatus",  # Unsolicited gate health status event
     }
 
     EVENT_TYPES = {
         "FileChanged",
         "SystemMetrics",
+        "GateStatus",
     }
 
     async def send_message(

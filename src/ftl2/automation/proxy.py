@@ -999,6 +999,72 @@ class HostScopedProxy:
         results = await asyncio.gather(*(_unmonitor_one(h) for h in host_configs))
         return results[0]
 
+    async def gate_status(self, interval: float = 5.0) -> dict[str, Any]:
+        """Start gate health status streaming from the remote host.
+
+        No external dependencies required -- uses only Python stdlib.
+        Status is delivered through handlers registered with
+        ``on("GateStatus", handler)`` and received during
+        ``ftl.listen()``.
+
+        Args:
+            interval: Seconds between status reports (default 5.0)
+
+        Returns:
+            dict with 'status' ("ok" or "error")
+
+        Example:
+            await ftl.webserver.gate_status(interval=5)
+            ftl.webserver.on("GateStatus", lambda s: print(s["state"]))
+            await ftl.listen(timeout=30)
+        """
+        host_configs = await self._get_host_configs()
+        if not host_configs:
+            raise ValueError(f"No hosts found for target: {self._target}")
+
+        async def _gate_status_one(host_config):
+            resp_type, resp_data = await self._context._send_gate_command(
+                host_config, "StartGateStatus", {"interval": interval},
+            )
+            if resp_type == "GateStatusResult":
+                if resp_data.get("status") == "error":
+                    raise RuntimeError(
+                        f"GateStatus failed on {host_config.name}: "
+                        f"{resp_data.get('message', 'unknown error')}"
+                    )
+                return resp_data
+            elif resp_type == "Error":
+                raise RuntimeError(resp_data.get("message", "GateStatus failed"))
+            else:
+                raise RuntimeError(f"Unexpected response to StartGateStatus: {resp_type}")
+
+        results = await asyncio.gather(*(_gate_status_one(h) for h in host_configs))
+        return results[0]
+
+    async def ungate_status(self) -> dict[str, Any]:
+        """Stop gate health status streaming from the remote host.
+
+        Returns:
+            dict with 'status' ("stopped")
+        """
+        host_configs = await self._get_host_configs()
+        if not host_configs:
+            raise ValueError(f"No hosts found for target: {self._target}")
+
+        async def _ungate_status_one(host_config):
+            resp_type, resp_data = await self._context._send_gate_command(
+                host_config, "StopGateStatus", {}
+            )
+            if resp_type == "GateStatusResult":
+                return resp_data
+            elif resp_type == "Error":
+                raise RuntimeError(resp_data.get("message", "StopGateStatus failed"))
+            else:
+                raise RuntimeError(f"Unexpected response to StopGateStatus: {resp_type}")
+
+        results = await asyncio.gather(*(_ungate_status_one(h) for h in host_configs))
+        return results[0]
+
     def on(self, event_type: str, handler: Any) -> None:
         """Register an event handler for this host/group.
 
