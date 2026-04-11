@@ -1536,10 +1536,8 @@ class AutomationContext:
 
         except Exception as e:
             logger.exception(f"Remote execution failed for {module_name} on {host.name}")
-            return ExecuteResult(
-                success=False,
-                error=f"Remote execution failed: {e}",
-                output={"failed": True, "msg": f"Remote execution failed: {e}"},
+            return ExecuteResult.from_error(
+                f"Remote execution failed: {e}",
                 module=module_name,
                 host=host.name,
             )
@@ -1676,10 +1674,8 @@ class AutomationContext:
 
         except Exception as e:
             logger.exception(f"Multiplexed execution failed for {module_name} on {host.name}")
-            return ExecuteResult(
-                success=False,
-                error=f"Remote execution failed: {e}",
-                output={"failed": True, "msg": f"Remote execution failed: {e}"},
+            return ExecuteResult.from_error(
+                f"Remote execution failed: {e}",
                 module=module_name,
                 host=host.name,
             )

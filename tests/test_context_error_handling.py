@@ -219,7 +219,7 @@ class TestMultiplexedPathErrorHandling:
         gate.next_msg_id.return_value = 1
 
         # Make create_future return a future that raises
-        future = asyncio.get_event_loop().create_future()
+        future = asyncio.get_running_loop().create_future()
         future.set_exception(ProtocolError("Connection dropped"))
         gate.create_future.return_value = future
 
@@ -246,7 +246,7 @@ class TestMultiplexedPathErrorHandling:
         gate._write_lock = asyncio.Lock()
         gate.next_msg_id.return_value = 1
 
-        future = asyncio.get_event_loop().create_future()
+        future = asyncio.get_running_loop().create_future()
         future.set_result(("Error", {"message": "Import failed"}))
         gate.create_future.return_value = future
 
@@ -278,7 +278,7 @@ class TestMultiplexedPathErrorHandling:
         gate.gate_process.stdin = MagicMock()
         gate._write_lock = asyncio.Lock()
         gate.next_msg_id.return_value = 1
-        gate.create_future.return_value = asyncio.get_event_loop().create_future()
+        gate.create_future.return_value = asyncio.get_running_loop().create_future()
 
         with patch.object(
             ctx._remote_runner.protocol, 'send_message_with_id',
