@@ -156,6 +156,17 @@ class SSHHost:
         """Whether this is localhost (always False for SSH)."""
         return False
 
+    @property
+    def connection(self) -> asyncssh.SSHClientConnection:
+        """The underlying SSH connection.
+
+        Raises:
+            RuntimeError: If not connected.
+        """
+        if self._conn is None:
+            raise RuntimeError("Not connected")
+        return self._conn
+
     async def connect(self) -> asyncssh.SSHClientConnection:
         """Establish SSH connection.
 

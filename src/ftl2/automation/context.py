@@ -1887,12 +1887,15 @@ class AutomationContext:
         self,
         host: HostConfig,
         become: "BecomeConfig | None" = None,
+        register_subsystem: bool | None = None,
     ) -> "Gate":
         """Get or create a gate connection for a host.
 
         Args:
             host: Target host configuration
             become: Privilege escalation config (gate starts under sudo)
+            register_subsystem: Override for subsystem registration.
+                If None, uses ``self._gate_subsystem``.
 
         Returns:
             Active Gate connection
@@ -1946,9 +1949,10 @@ class AutomationContext:
         async def _event_cb(event_type: str, data: dict) -> None:
             await self._dispatch_event(host.name, event_type, data)
 
+        use_subsystem = register_subsystem if register_subsystem is not None else self._gate_subsystem
         return await self._remote_runner._connect_gate(
             ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context,
-            register_subsystem=self._gate_subsystem,
+            register_subsystem=use_subsystem,
             become=become,
             event_callback=_event_cb,
             host_name=host.name,
@@ -1976,6 +1980,202 @@ class AutomationContext:
         for ssh_host in self._ssh_connections.values():
             await ssh_host.disconnect()
         self._ssh_connections.clear()
+
+    # -----------------------------------------------------------------
+    # Gate lifecycle management
+    # -----------------------------------------------------------------
+
+    def _resolve_hosts(self, target: str) -> list[HostConfig]:
+        """Resolve a target string to a list of hosts.
+
+        Args:
+            target: Host name or group name from the inventory.
+
+        Returns:
+            List of HostConfig instances.
+
+        Raises:
+            RuntimeError: If called outside an active context manager.
+            ValueError: If the target doesn't match any host or group.
+        """
+        if self._remote_runner is None:
+            raise RuntimeError("Requires an active context manager")
+
+        group = self._inventory.get_group(target)
+        if group is not None:
+            return group.list_hosts()
+
+        all_hosts = self._inventory.get_all_hosts()
+        if target in all_hosts:
+            return [all_hosts[target]]
+
+        raise ValueError(f"Unknown host or group: {target!r}")
+
+    async def gate_deploy(self, target: str, **kwargs) -> list[dict]:
+        """Deploy permanent gates to target hosts.
+
+        Builds and installs the gate as an SSH subsystem on each host.
+
+        Args:
+            target: Host name or group name.
+
+        Returns:
+            Per-host status dicts with 'host', 'status', and 'message' keys.
+        """
+        hosts = self._resolve_hosts(target)
+        results = []
+        for host in hosts:
+            try:
+                await self._get_or_create_gate(host, register_subsystem=True)
+                results.append({"host": host.name, "status": "ok", "message": "Gate deployed"})
+            except Exception as e:
+                results.append({"host": host.name, "status": "error", "message": str(e)})
+        return results
+
+    async def gate_drain(self, target: str, timeout_seconds: int = 300) -> list[dict]:
+        """Drain active gates, completing in-flight work.
+
+        Args:
+            target: Host name or group name.
+            timeout_seconds: How long to wait for in-flight tasks.
+
+        Returns:
+            Per-host status dicts.
+        """
+        hosts = self._resolve_hosts(target)
+        results = []
+        for host in hosts:
+            cache_key = gate_cache_key(host.name, host.become_config)
+            gate = self._remote_runner.gate_cache.get(cache_key)
+            if gate is None:
+                results.append({
+                    "host": host.name,
+                    "status": "error",
+                    "message": "No active gate connection",
+                })
+                continue
+            try:
+                resp = await self._remote_runner._drain_gate(gate, timeout_seconds)
+                results.append({"host": host.name, **resp})
+            except Exception as e:
+                results.append({"host": host.name, "status": "error", "message": str(e)})
+        return results
+
+    async def gate_upgrade(
+        self,
+        target: str,
+        strategy: str = "rolling",
+        drain_timeout: int = 300,
+    ) -> list[dict]:
+        """Upgrade gates by draining, replacing, and reconnecting.
+
+        Args:
+            target: Host name or group name.
+            strategy: ``"rolling"`` (sequential, stop on first failure) or
+                ``"parallel"`` (all hosts concurrently).
+            drain_timeout: Timeout for draining each gate.
+
+        Returns:
+            Per-host status dicts.
+        """
+        hosts = self._resolve_hosts(target)
+
+        async def _upgrade_one(host: HostConfig) -> dict:
+            cache_key = gate_cache_key(host.name, host.become_config)
+            gate = self._remote_runner.gate_cache.get(cache_key)
+            try:
+                if gate is not None:
+                    await self._remote_runner._drain_gate(gate, drain_timeout)
+                    await self._remote_runner._close_gate(gate)
+                    self._remote_runner.gate_cache.pop(cache_key, None)
+                await self._get_or_create_gate(host)
+                return {"host": host.name, "status": "ok", "message": "Gate upgraded"}
+            except Exception as e:
+                return {"host": host.name, "status": "error", "message": str(e)}
+
+        if strategy == "parallel":
+            return list(await asyncio.gather(*[_upgrade_one(h) for h in hosts]))
+
+        # Rolling: sequential, stop on first failure
+        results = []
+        for host in hosts:
+            result = await _upgrade_one(host)
+            results.append(result)
+            if result["status"] == "error":
+                break
+        return results
+
+    async def gate_restart(
+        self,
+        target: str,
+        force: bool = False,
+        drain_timeout: int = 300,
+    ) -> list[dict]:
+        """Restart gates, optionally draining first.
+
+        Args:
+            target: Host name or group name.
+            force: If True, skip draining and close immediately.
+            drain_timeout: Timeout for draining each gate.
+
+        Returns:
+            Per-host status dicts.
+        """
+        hosts = self._resolve_hosts(target)
+        results = []
+        for host in hosts:
+            cache_key = gate_cache_key(host.name, host.become_config)
+            gate = self._remote_runner.gate_cache.get(cache_key)
+            try:
+                if gate is not None:
+                    if not force:
+                        await self._remote_runner._drain_gate(gate, drain_timeout)
+                    await self._remote_runner._close_gate(gate)
+                    self._remote_runner.gate_cache.pop(cache_key, None)
+                await self._get_or_create_gate(host)
+                results.append({"host": host.name, "status": "ok", "message": "Gate restarted"})
+            except Exception as e:
+                results.append({"host": host.name, "status": "error", "message": str(e)})
+        return results
+
+    async def gate_decommission(
+        self,
+        target: str,
+        cleanup: bool = True,
+        drain_timeout: int = 300,
+    ) -> list[dict]:
+        """Decommission permanent gates from target hosts.
+
+        Drains and closes cached gates, then removes the SSH subsystem
+        registration and optionally deletes the gate binary.
+
+        Args:
+            target: Host name or group name.
+            cleanup: If True, also delete the gate binary.
+            drain_timeout: Timeout for draining each gate.
+
+        Returns:
+            Per-host status dicts.
+        """
+        hosts = self._resolve_hosts(target)
+        results = []
+        for host in hosts:
+            try:
+                cache_key = gate_cache_key(host.name, host.become_config)
+                gate = self._remote_runner.gate_cache.get(cache_key)
+                if gate is not None:
+                    await self._remote_runner._drain_gate(gate, drain_timeout)
+                    await self._remote_runner._close_gate(gate)
+                    self._remote_runner.gate_cache.pop(cache_key, None)
+
+                ssh = await self._get_ssh_connection(host)
+                resp = await self._remote_runner._decommission_gate_subsystem(
+                    ssh.connection, cleanup=cleanup
+                )
+                results.append({"host": host.name, **resp})
+            except Exception as e:
+                results.append({"host": host.name, "status": "error", "message": str(e)})
+        return results
 
     async def __aenter__(self) -> "AutomationContext":
         """Enter the async context manager."""

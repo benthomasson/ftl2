@@ -1053,14 +1053,15 @@ class TestOutputModes:
             async with automation(on_event=events.append) as ftl:
                 await ftl.file(path=str(test_file), state="touch")
 
-        # Should have start and complete events
-        assert len(events) == 2
-        assert events[0]["event"] == "module_start"
-        assert events[1]["event"] == "module_complete"
-        assert events[1]["module"] == "file"
-        assert events[1]["success"] is True
-        assert "duration" in events[1]
-        assert "timestamp" in events[1]
+        # Should have policy_evaluation, start, and complete events
+        assert len(events) == 3
+        assert events[0]["event"] == "policy_evaluation"
+        assert events[1]["event"] == "module_start"
+        assert events[2]["event"] == "module_complete"
+        assert events[2]["module"] == "file"
+        assert events[2]["success"] is True
+        assert "duration" in events[2]
+        assert "timestamp" in events[2]
 
     @pytest.mark.asyncio
     async def test_event_callback_with_run_on(self):
@@ -1071,10 +1072,11 @@ class TestOutputModes:
             async with automation(on_event=events.append) as ftl:
                 await ftl.run_on("localhost", "command", cmd="echo hello")
 
-        # Should have start and complete for the host
-        assert len(events) == 2
-        assert events[0]["host"] == "localhost"
+        # Should have policy_evaluation, start, and complete for the host
+        assert len(events) == 3
+        assert events[0]["event"] == "policy_evaluation"
         assert events[1]["host"] == "localhost"
+        assert events[2]["host"] == "localhost"
 
     @pytest.mark.asyncio
     async def test_output_mode_property(self):
@@ -1120,8 +1122,9 @@ class TestOutputModes:
             async with automation(check_mode=True, on_event=events.append) as ftl:
                 await ftl.file(path=str(test_file), state="touch")
 
-        assert events[0]["check_mode"] is True
+        # events[0] is policy_evaluation, events[1] is module_start, events[2] is module_complete
         assert events[1]["check_mode"] is True
+        assert events[2]["check_mode"] is True
 
 
 class TestSecretBindings:

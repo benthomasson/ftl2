@@ -277,7 +277,7 @@ class TestMainMultiplexed:
         monitor = SystemMonitor(protocol, writer)
         gate_status_monitor = GateStatusMonitor(protocol, writer, "abc123")
 
-        result = await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123", gate_status_monitor)
+        result = await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123", gate_status_monitor=gate_status_monitor)
 
         assert result is None
         # Parse the response from writer buffer
@@ -302,7 +302,7 @@ class TestMainMultiplexed:
         monitor = SystemMonitor(protocol, writer)
         gate_status_monitor = GateStatusMonitor(protocol, writer, "abc123")
 
-        await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123", gate_status_monitor)
+        await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123", gate_status_monitor=gate_status_monitor)
 
         # Parse all responses from writer buffer
         responses = self._parse_responses(writer.buffer)
@@ -330,7 +330,7 @@ class TestMainMultiplexed:
         monitor = SystemMonitor(protocol, writer)
         gate_status_monitor = GateStatusMonitor(protocol, writer, "abc123")
 
-        await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123", gate_status_monitor)
+        await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123", gate_status_monitor=gate_status_monitor)
 
         responses = self._parse_responses(writer.buffer)
         info_resp = [r for r in responses if r[0] == "InfoResult"]

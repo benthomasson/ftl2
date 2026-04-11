@@ -1489,6 +1489,75 @@ class RemoteModuleRunner(ModuleRunner):
             gate = self.gate_cache.pop(host_name)
             await self._close_gate(gate)
 
+    async def _drain_gate(self, gate: Gate, timeout_seconds: int = 300) -> dict[str, Any]:
+        """Send GateDrain and wait for completion.
+
+        Args:
+            gate: Active gate connection to drain.
+            timeout_seconds: How long the gate should wait for in-flight
+                tasks before cancelling them.
+
+        Returns:
+            Response data dict with status, completed, and in_flight counts.
+        """
+        drain_data = {"timeout_seconds": timeout_seconds}
+        if gate.multiplexed:
+            _resp_type, resp_data = await self._send_and_wait(
+                gate, "GateDrain", drain_data,
+            )
+        else:
+            await self.protocol.send_message(
+                gate.gate_process.stdin, "GateDrain", drain_data,  # type: ignore[arg-type]
+            )
+            response = await self.protocol.read_message(
+                gate.gate_process.stdout,  # type: ignore[arg-type]
+            )
+            if response is None:
+                return {"status": "error", "message": "No response from gate"}
+            _resp_type, resp_data = response
+        return resp_data
+
+    async def _decommission_gate_subsystem(
+        self,
+        conn: SSHClientConnection,
+        cleanup: bool = True,
+    ) -> dict[str, str]:
+        """Remove the gate SSH subsystem from a remote host.
+
+        Removes the Subsystem line from sshd_config, reloads sshd, and
+        optionally deletes the gate binary.
+
+        Args:
+            conn: Active SSH connection (must be root).
+            cleanup: If True, also delete the gate binary.
+
+        Returns:
+            Status dict with 'status' and 'message' keys.
+        """
+        # Check if we're root
+        result = await conn.run("id -u")
+        if result.stdout.strip() != "0":
+            return {"status": "error", "message": "Root access required to decommission gate subsystem"}
+
+        # Check if subsystem is registered
+        result = await conn.run(
+            f"grep -q '^Subsystem {self.GATE_SUBSYSTEM_NAME}' /etc/ssh/sshd_config"
+        )
+        if result.exit_status != 0:
+            return {"status": "ok", "message": "Subsystem not registered (already decommissioned)"}
+
+        # Remove the subsystem line
+        await conn.run(
+            f"sed -i '/^Subsystem {self.GATE_SUBSYSTEM_NAME}/d' /etc/ssh/sshd_config",
+        )
+        await conn.run("systemctl reload sshd")
+
+        # Optionally remove the gate binary
+        if cleanup:
+            await conn.run(f"rm -f {self.GATE_SUBSYSTEM_PATH}")
+
+        return {"status": "ok", "message": "Gate subsystem decommissioned"}
+
     def _dry_run_result(
         self,
         host: HostConfig,
