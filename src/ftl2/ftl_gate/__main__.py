@@ -278,7 +278,21 @@ async def check_output(
 
 # Cache modules after first transfer so subsequent name-only requests
 # for the same module succeed without a ModuleNotFound round trip.
+# Use an LRU cache to bound memory in long-lived gate processes (GH-13).
+_MODULE_CACHE_MAX_SIZE = 128
 _module_cache: dict[str, bytes] = {}
+
+
+def _module_cache_set(name: str, data: bytes) -> None:
+    """Store a module in the bounded cache, evicting the oldest entry if full."""
+    if name in _module_cache:
+        # Delete and re-insert to move to end (most recently used)
+        del _module_cache[name]
+    elif len(_module_cache) >= _MODULE_CACHE_MAX_SIZE:
+        # Evict oldest entry (first key in insertion-ordered dict)
+        oldest = next(iter(_module_cache))
+        del _module_cache[oldest]
+    _module_cache[name] = data
 
 
 async def run_module(
@@ -302,12 +316,15 @@ async def run_module(
         if module is not None:
             logger.info("Loading module from message")
             module_bytes = base64.b64decode(module)
-            _module_cache[module_name] = module_bytes
+            _module_cache_set(module_name, module_bytes)
             with open(module_file, "wb") as f:
                 f.write(module_bytes)
         elif module_name in _module_cache:
             logger.info("Loading module from cache")
             module_bytes = _module_cache[module_name]
+            # Touch LRU order: move to end so frequently used modules aren't evicted
+            del _module_cache[module_name]
+            _module_cache[module_name] = module_bytes
             with open(module_file, "wb") as f:
                 f.write(module_bytes)
         elif HAS_FTL_GATE:

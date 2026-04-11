@@ -46,6 +46,20 @@ class _FakeContext:
     def hosts(self):
         return self._hosts_proxy
 
+    def _check_module_allowed(self, module_name: str) -> None:
+        if self._enabled_modules is None:
+            return
+        short_name = module_name.rsplit(".", 1)[-1]
+        if module_name in self._enabled_modules or short_name in self._enabled_modules:
+            return
+        allowlist_short = {e.rsplit(".", 1)[-1] for e in self._enabled_modules}
+        if short_name in allowlist_short:
+            return
+        raise AttributeError(
+            f"Module '{module_name}' is not enabled. "
+            f"Enabled modules: {', '.join(self._enabled_modules)}"
+        )
+
     async def execute(self, module_name, kwargs):
         return {"module": module_name, **kwargs}
 
