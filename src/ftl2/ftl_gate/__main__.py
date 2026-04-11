@@ -321,6 +321,12 @@ async def check_output(
 _MODULE_CACHE_MAX_SIZE = 128
 _module_cache: dict[str, bytes] = {}
 
+# Gate-level state for GateStatus self-reporting
+_error_count: int = 0
+_last_error: str | None = None
+_start_time: float = 0.0
+_active_tasks: set | None = None
+
 
 def _module_cache_set(name: str, data: bytes) -> None:
     """Store a module in the bounded cache, evicting the oldest entry if full."""
@@ -900,6 +906,132 @@ class SystemMonitor:
 
 
 # =============================================================================
+# Gate Status Monitor
+# =============================================================================
+
+
+class GateStatusMonitor:
+    """Streams gate health metrics via GateStatus events.
+
+    Unlike SystemMonitor (which requires psutil for host metrics),
+    this uses only stdlib to report the gate's own state:
+    uptime, error count, active tasks, module cache size, and
+    memory RSS via ``resource.getrusage()``.
+
+    CPU percent is optional — uses psutil if already available
+    (e.g. when SystemMonitor is also running), omits the field otherwise.
+
+    Args:
+        protocol: GateProtocol instance for sending messages
+        writer: Async stream writer for stdout
+        gate_hash: SHA256 prefix identifying the gate binary
+
+    Example:
+        monitor = GateStatusMonitor(protocol, writer, gate_hash)
+        monitor.start(interval=5.0)
+        # ... GateStatus events are pushed every 5 seconds ...
+        monitor.stop()
+    """
+
+    def __init__(self, protocol: GateProtocol, writer: Any, gate_hash: str):
+        self._protocol = protocol
+        self._writer = writer
+        self._gate_hash = gate_hash
+        self._task: asyncio.Task | None = None
+        self._interval = 5.0
+        self._write_lock: asyncio.Lock | None = None
+
+    def start(self, interval: float = 5.0) -> None:
+        """Start the gate status monitoring loop.
+
+        Args:
+            interval: Seconds between status reports (default 5.0)
+        """
+        if self._task is not None:
+            return
+        self._interval = interval
+        self._task = asyncio.create_task(self._status_loop())
+        logger.info(f"Gate status monitor started (interval={interval}s)")
+
+    async def _status_loop(self) -> None:
+        """Background task that collects and sends gate status."""
+        try:
+            while True:
+                await asyncio.sleep(self._interval)
+                status = self._collect_status()
+                try:
+                    if self._write_lock:
+                        async with self._write_lock:
+                            await self._protocol.send_message(
+                                self._writer, "GateStatus", status
+                            )
+                    else:
+                        await self._protocol.send_message(
+                            self._writer, "GateStatus", status
+                        )
+                except BrokenPipeError:
+                    return
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.error(f"GateStatusMonitor error: {e}")
+
+    def _collect_status(self) -> dict:
+        """Collect gate-introspective metrics using stdlib."""
+        import resource as _resource
+
+        hostname = os.uname().nodename
+
+        # RSS from stdlib (no psutil needed)
+        rusage = _resource.getrusage(_resource.RUSAGE_SELF)
+        # ru_maxrss is KB on Linux, bytes on macOS
+        rss = rusage.ru_maxrss
+        if sys.platform == "darwin":
+            memory_rss = rss  # already bytes
+        else:
+            memory_rss = rss * 1024  # KB -> bytes
+
+        # CPU percent: try psutil for own process, omit if unavailable
+        cpu_percent = None
+        try:
+            import psutil
+            cpu_percent = psutil.Process(os.getpid()).cpu_percent(interval=0)
+        except Exception:
+            pass
+
+        # Active tasks from multiplexed mode
+        active = len(_active_tasks) if _active_tasks is not None else 0
+
+        status: dict[str, Any] = {
+            "gate_id": f"{hostname}-{os.getpid()}",
+            "host": hostname,
+            "version": "0.1.0",
+            "gate_hash": self._gate_hash,
+            "uptime_seconds": round(time.time() - _start_time, 1),
+            "state": "executing" if active > 0 else "idle",
+            "active_tasks": active,
+            "queue_depth": 0,
+            "error_count": _error_count,
+            "last_error": _last_error,
+            "module_cache_size": len(_module_cache),
+            "module_cache_bytes": sum(len(v) for v in _module_cache.values()),
+            "memory_rss": memory_rss,
+            "pid": os.getpid(),
+        }
+        if cpu_percent is not None:
+            status["cpu_percent"] = cpu_percent
+
+        return status
+
+    def stop(self) -> None:
+        """Cancel the background task."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+            logger.info("Gate status monitor stopped")
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
@@ -932,6 +1064,10 @@ async def main(args: list[str]) -> int | None:
     logger.info(f"Path: {sys.path[:3]}...")
     logger.info("=" * 60)
 
+    # Record gate start time for uptime tracking
+    global _start_time
+    _start_time = time.time()
+
     # Compute gate file hash for version checking
     gate_hash = ""
     try:
@@ -954,9 +1090,10 @@ async def main(args: list[str]) -> int | None:
     # Initialize protocol
     protocol = GateProtocol()
 
-    # Initialize file watcher and system monitor (events are emitted concurrently)
+    # Initialize file watcher, system monitor, and gate status monitor
     watcher = FileWatcher(protocol, writer)
     monitor = SystemMonitor(protocol, writer)
+    gate_status_monitor = GateStatusMonitor(protocol, writer, gate_hash)
 
     # Gate-side policy enforcement state
     gate_policy: "Policy | None" = None
@@ -973,6 +1110,7 @@ async def main(args: list[str]) -> int | None:
                 logger.info("EOF received, shutting down")
                 watcher.stop()
                 monitor.stop()
+                gate_status_monitor.stop()
                 try:
                     await protocol.send_message(writer, "Goodbye", {})
                 except Exception:
@@ -1007,7 +1145,7 @@ async def main(args: list[str]) -> int | None:
                     else:
                         await protocol.send_message(writer, "Hello", response_data)
                     logger.info("Entering multiplexed mode")
-                    return await main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash, gate_policy, gate_environment, gate_host)
+                    return await main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash, gate_policy, gate_environment, gate_host, gate_status_monitor)
                 else:
                     await protocol.send_message(writer, "Hello", response_data)
 
@@ -1039,6 +1177,9 @@ async def main(args: list[str]) -> int | None:
                     )
 
                 except ModuleNotFoundError as e:
+                    global _error_count, _last_error
+                    _error_count += 1
+                    _last_error = str(e)
                     await protocol.send_message(
                         writer,
                         "ModuleNotFound",
@@ -1046,6 +1187,8 @@ async def main(args: list[str]) -> int | None:
                     )
 
                 except Exception as e:
+                    _error_count += 1
+                    _last_error = str(e)
                     logger.exception("Module execution failed")
                     await protocol.send_message(
                         writer,
@@ -1084,6 +1227,8 @@ async def main(args: list[str]) -> int | None:
                     )
 
                 except ModuleNotFoundError as e:
+                    _error_count += 1
+                    _last_error = str(e)
                     await protocol.send_message(
                         writer,
                         "ModuleNotFound",
@@ -1091,6 +1236,8 @@ async def main(args: list[str]) -> int | None:
                     )
 
                 except Exception as e:
+                    _error_count += 1
+                    _last_error = str(e)
                     logger.exception("FTLModule execution failed")
                     await protocol.send_message(
                         writer,
@@ -1210,10 +1357,26 @@ async def main(args: list[str]) -> int | None:
                         writer, "SetPolicyResult", {"status": "error", "message": "Invalid SetPolicy data"}
                     )
 
+            elif msg_type == "StartGateStatus":
+                interval = data.get("interval", 5.0) if isinstance(data, dict) else 5.0
+                logger.info(f"StartGateStatus requested (interval={interval}s)")
+                gate_status_monitor.start(interval=interval)
+                await protocol.send_message(
+                    writer, "GateStatusResult", {"status": "ok"}
+                )
+
+            elif msg_type == "StopGateStatus":
+                logger.info("StopGateStatus requested")
+                gate_status_monitor.stop()
+                await protocol.send_message(
+                    writer, "GateStatusResult", {"status": "stopped"}
+                )
+
             elif msg_type == "Shutdown":
                 logger.info("Shutdown requested")
                 watcher.stop()
                 monitor.stop()
+                gate_status_monitor.stop()
                 await protocol.send_message(writer, "Goodbye", {})
                 return None
 
@@ -1251,7 +1414,7 @@ async def main(args: list[str]) -> int | None:
             return 1
 
 
-async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash, gate_policy=None, gate_environment="", gate_host="localhost"):
+async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash, gate_policy=None, gate_environment="", gate_host="localhost", gate_status_monitor=None):
     """Concurrent message handling loop for multiplexed mode.
 
     Each incoming request is handled in its own asyncio task.
@@ -1264,6 +1427,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
     # messages don't interleave with request responses.
     watcher._write_lock = write_lock
     monitor._write_lock = write_lock
+    gate_status_monitor._write_lock = write_lock
 
     async def handle_request(msg_type, data, msg_id):
         """Handle a single request and send response with same msg_id."""
@@ -1300,6 +1464,9 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         msg_id, write_lock=write_lock,
                     )
                 except ModuleNotFoundError as e:
+                    global _error_count, _last_error
+                    _error_count += 1
+                    _last_error = str(e)
                     await protocol.send_message_with_id(
                         writer, "ModuleNotFound",
                         {"message": f"Module not found: {e}"},
@@ -1337,12 +1504,16 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         msg_id, write_lock=write_lock,
                     )
                 except ModuleNotFoundError as e:
+                    _error_count += 1
+                    _last_error = str(e)
                     await protocol.send_message_with_id(
                         writer, "ModuleNotFound",
                         {"message": f"FTLModule not found: {e}"},
                         msg_id, write_lock=write_lock,
                     )
                 except Exception as e:
+                    _error_count += 1
+                    _last_error = str(e)
                     logger.exception("FTLModule execution failed")
                     await protocol.send_message_with_id(
                         writer, "Error",
@@ -1458,6 +1629,21 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                         msg_id, write_lock=write_lock,
                     )
 
+            elif msg_type == "StartGateStatus":
+                interval = data.get("interval", 5.0) if isinstance(data, dict) else 5.0
+                gate_status_monitor.start(interval=interval)
+                await protocol.send_message_with_id(
+                    writer, "GateStatusResult", {"status": "ok"},
+                    msg_id, write_lock=write_lock,
+                )
+
+            elif msg_type == "StopGateStatus":
+                gate_status_monitor.stop()
+                await protocol.send_message_with_id(
+                    writer, "GateStatusResult", {"status": "stopped"},
+                    msg_id, write_lock=write_lock,
+                )
+
             else:
                 await protocol.send_message_with_id(
                     writer, "Error",
@@ -1466,6 +1652,8 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                 )
 
         except Exception as e:
+            _error_count += 1
+            _last_error = str(e)
             logger.exception(f"Request handler error for msg_id={msg_id}: {e}")
             try:
                 await protocol.send_message_with_id(
@@ -1480,6 +1668,8 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
 
     # Main reader loop
     tasks = set()
+    global _active_tasks
+    _active_tasks = tasks
     try:
         while True:
             msg = await protocol.read_message(reader)
@@ -1522,6 +1712,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
                 await asyncio.gather(*pending, return_exceptions=True)
         watcher.stop()
         monitor.stop()
+        gate_status_monitor.stop()
 
     return None
 

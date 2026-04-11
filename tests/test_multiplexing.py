@@ -266,7 +266,7 @@ class TestMainMultiplexed:
     @pytest.mark.asyncio
     async def test_shutdown_sends_goodbye(self):
         """Shutdown message gets a Goodbye response."""
-        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor
+        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor, GateStatusMonitor
 
         protocol = GateProtocol()
         reader = make_reader_from_messages([
@@ -275,8 +275,9 @@ class TestMainMultiplexed:
         writer = MemoryWriter()
         watcher = FileWatcher(protocol, writer)
         monitor = SystemMonitor(protocol, writer)
+        gate_status_monitor = GateStatusMonitor(protocol, writer, "abc123")
 
-        result = await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123")
+        result = await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123", gate_status_monitor)
 
         assert result is None
         # Parse the response from writer buffer
@@ -287,7 +288,7 @@ class TestMainMultiplexed:
     @pytest.mark.asyncio
     async def test_module_execution(self):
         """Module request gets a response with the correct msg_id."""
-        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor
+        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor, GateStatusMonitor
 
         protocol = GateProtocol()
         # Send a Module request for a module that won't be found (no gate bundle)
@@ -299,8 +300,9 @@ class TestMainMultiplexed:
         writer = MemoryWriter()
         watcher = FileWatcher(protocol, writer)
         monitor = SystemMonitor(protocol, writer)
+        gate_status_monitor = GateStatusMonitor(protocol, writer, "abc123")
 
-        await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123")
+        await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123", gate_status_monitor)
 
         # Parse all responses from writer buffer
         responses = self._parse_responses(writer.buffer)
@@ -316,7 +318,7 @@ class TestMainMultiplexed:
     @pytest.mark.asyncio
     async def test_info_request(self):
         """Info request returns gate info with correct msg_id."""
-        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor
+        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor, GateStatusMonitor
 
         protocol = GateProtocol()
         reader = make_reader_from_messages([
@@ -326,8 +328,9 @@ class TestMainMultiplexed:
         writer = MemoryWriter()
         watcher = FileWatcher(protocol, writer)
         monitor = SystemMonitor(protocol, writer)
+        gate_status_monitor = GateStatusMonitor(protocol, writer, "abc123")
 
-        await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123")
+        await main_multiplexed(reader, writer, protocol, watcher, monitor, "abc123", gate_status_monitor)
 
         responses = self._parse_responses(writer.buffer)
         info_resp = [r for r in responses if r[0] == "InfoResult"]
