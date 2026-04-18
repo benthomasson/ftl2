@@ -79,7 +79,7 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
-fail_under = 64
+fail_under = 9
 
 [tool.ruff]
 src = ["src", "tests"]

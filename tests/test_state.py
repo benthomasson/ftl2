@@ -438,7 +438,6 @@ class TestStateToInventoryRoundTrip:
     def test_yaml_output_is_parseable_yaml(self):
         """Exported YAML is valid YAML that parses to the expected structure."""
         import yaml as pyyaml
-
         from tools.ftl2_state_to_inventory import state_to_inventory
 
         state = {
