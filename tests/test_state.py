@@ -225,6 +225,8 @@ class TestStateToInventoryRoundTrip:
 
         yaml_out = state_to_inventory(state)
 
+        assert yaml_out.startswith("all:\n  children:\n")
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
             f.write(yaml_out)
             f.flush()
@@ -314,6 +316,167 @@ class TestStateToInventoryRoundTrip:
             inventory = load_inventory(f.name, require_hosts=False)
 
         assert len(inventory.get_all_hosts()) == 0
+
+    def test_host_in_multiple_groups_round_trip(self):
+        """Host appearing in multiple groups is present in all after roundtrip."""
+        from tools.ftl2_state_to_inventory import state_to_inventory
+
+        from ftl2.inventory import load_inventory
+
+        state = {
+            "hosts": {
+                "app01": {
+                    "ansible_host": "10.0.0.1",
+                    "ansible_user": "deploy",
+                    "groups": ["webservers", "monitoring", "production"],
+                },
+            },
+        }
+
+        yaml_out = state_to_inventory(state)
+        assert "all:" in yaml_out
+        assert "children:" in yaml_out
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_out)
+            f.flush()
+            inventory = load_inventory(f.name)
+
+        hosts = inventory.get_all_hosts()
+        assert "app01" in hosts
+        assert hosts["app01"].ansible_host == "10.0.0.1"
+        assert hosts["app01"].ansible_user == "deploy"
+
+        for group_name in ("webservers", "monitoring", "production"):
+            group = inventory.get_group(group_name)
+            assert group is not None, f"Group {group_name} missing"
+            assert "app01" in group.hosts
+
+    def test_host_with_custom_port_round_trip(self):
+        """Non-default ansible_port survives roundtrip."""
+        from tools.ftl2_state_to_inventory import state_to_inventory
+
+        from ftl2.inventory import load_inventory
+
+        state = {
+            "hosts": {
+                "bastion": {
+                    "ansible_host": "203.0.113.1",
+                    "ansible_port": 2222,
+                    "groups": ["jump"],
+                },
+            },
+        }
+
+        yaml_out = state_to_inventory(state)
+        assert "2222" in yaml_out
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_out)
+            f.flush()
+            inventory = load_inventory(f.name)
+
+        hosts = inventory.get_all_hosts()
+        assert hosts["bastion"].ansible_port == 2222
+
+    def test_host_with_python_interpreter_round_trip(self):
+        """Custom ansible_python_interpreter survives roundtrip."""
+        from tools.ftl2_state_to_inventory import state_to_inventory
+
+        from ftl2.inventory import load_inventory
+
+        state = {
+            "hosts": {
+                "legacy": {
+                    "ansible_host": "10.0.0.99",
+                    "ansible_python_interpreter": "/usr/bin/python3.9",
+                    "groups": ["old"],
+                },
+            },
+        }
+
+        yaml_out = state_to_inventory(state)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_out)
+            f.flush()
+            inventory = load_inventory(f.name)
+
+        hosts = inventory.get_all_hosts()
+        assert hosts["legacy"].ansible_python_interpreter == "/usr/bin/python3.9"
+
+    def test_many_hosts_many_groups_round_trip(self):
+        """Larger inventory with many hosts and groups roundtrips correctly."""
+        from tools.ftl2_state_to_inventory import state_to_inventory
+
+        from ftl2.inventory import load_inventory
+
+        state = {
+            "hosts": {
+                f"node{i:02d}": {
+                    "ansible_host": f"10.0.0.{i}",
+                    "groups": [f"tier{i % 3}"],
+                }
+                for i in range(1, 11)
+            },
+        }
+
+        yaml_out = state_to_inventory(state)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_out)
+            f.flush()
+            inventory = load_inventory(f.name)
+
+        hosts = inventory.get_all_hosts()
+        assert len(hosts) == 10
+        for i in range(1, 11):
+            name = f"node{i:02d}"
+            assert name in hosts
+            assert hosts[name].ansible_host == f"10.0.0.{i}"
+
+    def test_yaml_output_is_parseable_yaml(self):
+        """Exported YAML is valid YAML that parses to the expected structure."""
+        import yaml as pyyaml
+
+        from tools.ftl2_state_to_inventory import state_to_inventory
+
+        state = {
+            "hosts": {
+                "web01": {
+                    "ansible_host": "1.2.3.4",
+                    "groups": ["webservers"],
+                },
+            },
+        }
+
+        yaml_out = state_to_inventory(state)
+        parsed = pyyaml.safe_load(yaml_out)
+
+        assert "all" in parsed
+        assert "children" in parsed["all"]
+        assert "webservers" in parsed["all"]["children"]
+        assert "hosts" in parsed["all"]["children"]["webservers"]
+        assert "web01" in parsed["all"]["children"]["webservers"]["hosts"]
+
+    def test_default_port_and_connection_omitted(self):
+        """Default ansible_port=22 and ansible_connection=ssh are not in output."""
+        from tools.ftl2_state_to_inventory import state_to_inventory
+
+        state = {
+            "hosts": {
+                "srv01": {
+                    "ansible_host": "10.0.0.1",
+                    "ansible_port": 22,
+                    "ansible_connection": "ssh",
+                    "groups": ["servers"],
+                },
+            },
+        }
+
+        yaml_out = state_to_inventory(state)
+        assert "ansible_port" not in yaml_out
+        assert "ansible_connection" not in yaml_out
 
 
 class TestMergeStateIntoInventory:
