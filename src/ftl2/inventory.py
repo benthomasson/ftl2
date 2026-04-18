@@ -99,6 +99,61 @@ class Inventory:
         return result
 
 
+_VALID_VARS_EXTENSIONS = {".yml", ".yaml", ".json", ""}
+
+
+def _load_vars_file(path: Path) -> dict[str, Any]:
+    content = path.read_text()
+    if path.suffix == ".json":
+        return json.loads(content) or {}
+    return yaml.safe_load(content) or {}
+
+
+def _load_vars_dir(dirpath: Path) -> dict[str, Any]:
+    if dirpath.is_file():
+        if dirpath.suffix not in _VALID_VARS_EXTENSIONS:
+            return {}
+        return _load_vars_file(dirpath)
+    result: dict[str, Any] = {}
+    for entry in sorted(dirpath.iterdir()):
+        result.update(_load_vars_dir(entry))
+    return result
+
+
+def _apply_external_vars(inventory: Inventory, inventory_path: Path) -> None:
+    base = inventory_path.parent
+    standard_fields = {
+        "ansible_host", "ansible_port", "ansible_user",
+        "ansible_connection", "ansible_python_interpreter",
+    }
+
+    group_vars_dir = base / "group_vars"
+    if group_vars_dir.is_dir():
+        for entry in sorted(group_vars_dir.iterdir()):
+            group_name = entry.stem
+            group = inventory.get_group(group_name)
+            if group is None and group_name == "all":
+                group = HostGroup(name="all")
+                inventory.add_group(group)
+            if group is None:
+                continue
+            group.vars.update(_load_vars_dir(entry))
+
+    host_vars_dir = base / "host_vars"
+    if host_vars_dir.is_dir():
+        all_hosts = inventory.get_all_hosts()
+        for entry in sorted(host_vars_dir.iterdir()):
+            host_name = entry.stem
+            host = all_hosts.get(host_name)
+            if host is None:
+                continue
+            loaded = _load_vars_dir(entry)
+            for field in standard_fields:
+                if field in loaded:
+                    setattr(host, field, loaded.pop(field))
+            host.vars.update(loaded)
+
+
 def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> Inventory:
     """Load inventory from a file, auto-detecting the format.
 
@@ -132,7 +187,9 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
 
     # Executable script — run with --list
     if os.access(path, os.X_OK) and path.suffix not in (".yml", ".yaml", ".json", ".ini", ".cfg"):
-        return load_inventory_script(path, require_hosts=require_hosts)
+        inv = load_inventory_script(path, require_hosts=require_hosts)
+        _apply_external_vars(inv, path)
+        return inv
 
     content = path.read_text()
 
@@ -140,17 +197,23 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
     stripped = content.lstrip()
     if stripped.startswith("{"):
         data = json.loads(content)
-        return load_inventory_json(data, require_hosts=require_hosts)
+        inv = load_inventory_json(data, require_hosts=require_hosts)
+        _apply_external_vars(inv, path)
+        return inv
 
     # INI — detect by extension or content heuristic (skip YAML extensions)
     if path.suffix in (".ini", ".cfg") or (
         path.suffix not in (".yml", ".yaml") and _is_ini_content(stripped)
     ):
-        return load_inventory_ini(content, require_hosts=require_hosts)
+        inv = load_inventory_ini(content, require_hosts=require_hosts)
+        _apply_external_vars(inv, path)
+        return inv
 
     # YAML — existing format
     data = yaml.safe_load(content) or {}
-    return _load_inventory_yaml(data, require_hosts=require_hosts)
+    inv = _load_inventory_yaml(data, require_hosts=require_hosts)
+    _apply_external_vars(inv, path)
+    return inv
 
 
 def _process_group(
