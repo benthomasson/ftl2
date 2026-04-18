@@ -4,10 +4,12 @@ This module provides typed inventory management with dataclasses, replacing
 dictionary-based inventory structures with strongly-typed classes.
 """
 
+import ast
 import itertools
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -128,7 +130,7 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
         raise FileNotFoundError(f"Inventory file not found: {path}")
 
     # Executable script — run with --list
-    if os.access(path, os.X_OK) and path.suffix not in (".yml", ".yaml", ".json"):
+    if os.access(path, os.X_OK) and path.suffix not in (".yml", ".yaml", ".json", ".ini", ".cfg"):
         return load_inventory_script(path, require_hosts=require_hosts)
 
     content = path.read_text()
@@ -138,6 +140,10 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
     if stripped.startswith("{"):
         data = json.loads(content)
         return load_inventory_json(data, require_hosts=require_hosts)
+
+    # INI — detect by extension or content heuristic
+    if path.suffix in (".ini", ".cfg") or _is_ini_content(stripped):
+        return load_inventory_ini(content, require_hosts=require_hosts)
 
     # YAML — existing format
     data = yaml.safe_load(content) or {}
@@ -209,6 +215,84 @@ def _load_inventory_yaml(
     if data:
         for group_name, group_data in data.items():
             _process_group(group_name, group_data, inventory)
+
+    if require_hosts and not inventory.get_all_hosts():
+        raise ValueError("No hosts loaded from inventory")
+
+    return inventory
+
+
+def _is_ini_content(content: str) -> bool:
+    section_re = re.compile(r"^\[[\w.:_ -]+\]$")
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+        if section_re.match(line):
+            return True
+    return False
+
+
+def _parse_ini_host_value(value: str) -> Any:
+    try:
+        return ast.literal_eval(value)
+    except (ValueError, SyntaxError):
+        return value
+
+
+def load_inventory_ini(content: str, require_hosts: bool = True) -> Inventory:
+    inventory = Inventory()
+    current_group_name: str | None = None
+    section_type = "hosts"
+
+    section_re = re.compile(r"^\[([\w.:_ -]+)\]$")
+
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+
+        m = section_re.match(line)
+        if m:
+            header = m.group(1)
+            if header.endswith(":vars"):
+                current_group_name = header[: -len(":vars")]
+                section_type = "vars"
+            elif header.endswith(":children"):
+                current_group_name = header[: -len(":children")]
+                section_type = "children"
+            else:
+                current_group_name = header
+                section_type = "hosts"
+            if current_group_name not in (g.name for g in inventory.list_groups()):
+                inventory.add_group(HostGroup(name=current_group_name))
+            continue
+
+        group_name = current_group_name or "ungrouped"
+        group = inventory.get_group(group_name)
+        if group is None:
+            group = HostGroup(name=group_name)
+            inventory.add_group(group)
+
+        if section_type == "vars":
+            key, _, value = line.partition("=")
+            group.vars[key.strip()] = value.strip()
+        elif section_type == "children":
+            child_name = line.strip()
+            if child_name not in group.children:
+                group.children.append(child_name)
+            if inventory.get_group(child_name) is None:
+                inventory.add_group(HostGroup(name=child_name))
+        else:
+            tokens = shlex.split(line)
+            hostname = tokens[0]
+            host_vars: dict[str, Any] = {}
+            for token in tokens[1:]:
+                if "=" in token:
+                    k, _, v = token.partition("=")
+                    host_vars[k] = _parse_ini_host_value(v)
+            for expanded in expand_host_range(hostname):
+                group.add_host(_host_from_vars(expanded, host_vars))
 
     if require_hosts and not inventory.get_all_hosts():
         raise ValueError("No hosts loaded from inventory")
