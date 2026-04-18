@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import functools
 import importlib
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class FTLModuleError(Exception):
@@ -98,7 +101,7 @@ def requires_extra(extra: str, package: str) -> Callable:
                 module_name = func.__name__
                 if module_name.startswith("ftl_"):
                     module_name = module_name[4:]
-                raise FTLModuleMissingDependencyError(module_name, extra, package)
+                raise FTLModuleMissingDependencyError(module_name, extra, package) from None
             return await func(*args, **kwargs)
         return wrapper
     return decorator

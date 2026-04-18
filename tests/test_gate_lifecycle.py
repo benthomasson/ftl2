@@ -10,12 +10,11 @@ Tests cover:
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from ftl2.message import GateProtocol
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -248,7 +247,7 @@ class TestDrainGateClient:
             # Give it a moment to send the message and create the future
             await asyncio.sleep(0.01)
             # Resolve the pending future
-            for msg_id, future in gate._pending.items():
+            for _msg_id, future in gate._pending.items():
                 if not future.done():
                     future.set_result(("GateDrainResult", {
                         "status": "drained", "completed": 2, "in_flight": 0,

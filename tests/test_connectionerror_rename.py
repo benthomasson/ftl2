@@ -10,7 +10,6 @@ Validates that:
 
 import builtins
 import importlib
-import sys
 
 import pytest
 
@@ -21,7 +20,6 @@ class TestNoBuiltinShadowing:
     def test_import_ftl2connectionerror_does_not_shadow_builtin(self):
         """After importing FTL2ConnectionError, builtins.ConnectionError is unchanged."""
         builtin_ce = builtins.ConnectionError
-        from ftl2.exceptions import FTL2ConnectionError  # noqa: F811
 
         assert builtins.ConnectionError is builtin_ce
         assert ConnectionError is builtin_ce  # module-level name still points to builtin
@@ -91,9 +89,8 @@ class TestDeprecatedAlias:
         assert hasattr(ftl2.exceptions, "ConnectionError")
 
     def test_alias_is_same_class(self):
-        from ftl2.exceptions import FTL2ConnectionError
-
         import ftl2.exceptions
+        from ftl2.exceptions import FTL2ConnectionError
 
         assert ftl2.exceptions.ConnectionError is FTL2ConnectionError
 
@@ -101,7 +98,7 @@ class TestDeprecatedAlias:
         """from ftl2.exceptions import ConnectionError should still resolve."""
         # Use importlib to avoid polluting module namespace
         mod = importlib.import_module("ftl2.exceptions")
-        alias = getattr(mod, "ConnectionError")
+        alias = mod.ConnectionError
         assert alias is mod.FTL2ConnectionError
 
     def test_alias_instance_is_ftl2connectionerror(self):

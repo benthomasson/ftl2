@@ -7,7 +7,7 @@ multiple executions under a single workflow ID.
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -92,14 +92,14 @@ class Workflow:
     def __post_init__(self) -> None:
         """Set timestamps if not provided."""
         if not self.created:
-            self.created = datetime.now(timezone.utc).isoformat()
+            self.created = datetime.now(UTC).isoformat()
         if not self.updated:
             self.updated = self.created
 
     def add_step(self, step: WorkflowStep) -> None:
         """Add a step to the workflow."""
         self.steps.append(step)
-        self.updated = datetime.now(timezone.utc).isoformat()
+        self.updated = datetime.now(UTC).isoformat()
 
     def get_total_duration(self) -> float:
         """Get total duration of all steps."""

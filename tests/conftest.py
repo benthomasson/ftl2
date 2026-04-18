@@ -83,7 +83,7 @@ def ssh_test_server():
         # Wait for container to be healthy
         print("Waiting for SSH server to be ready...")
         max_attempts = 30
-        for attempt in range(max_attempts):
+        for _attempt in range(max_attempts):
             if is_ssh_container_running():
                 # Additional wait for SSH to fully start
                 time.sleep(2)

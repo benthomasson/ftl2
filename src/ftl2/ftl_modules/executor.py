@@ -140,13 +140,13 @@ def _get_module(name: str) -> Any:
     circular import issues with the main __init__.py.
     """
     # Import here to avoid circular import
-    from ftl2.ftl_modules.file import ftl_file, ftl_copy, ftl_template
-    from ftl2.ftl_modules.http import ftl_uri, ftl_get_url
-    from ftl2.ftl_modules.command import ftl_command, ftl_shell
-    from ftl2.ftl_modules.pip import ftl_pip
     from ftl2.ftl_modules.aws.ec2 import ftl_ec2_instance
-    from ftl2.ftl_modules.swap import main as ftl_swap
+    from ftl2.ftl_modules.command import ftl_command, ftl_shell
     from ftl2.ftl_modules.dnf import ftl_dnf
+    from ftl2.ftl_modules.file import ftl_copy, ftl_file, ftl_template
+    from ftl2.ftl_modules.http import ftl_get_url, ftl_uri
+    from ftl2.ftl_modules.pip import ftl_pip
+    from ftl2.ftl_modules.swap import main as ftl_swap
 
     # Local registry to avoid circular import
     modules = {
@@ -476,14 +476,11 @@ async def _execute_remote(
     Uses the module_loading bundle system for remote execution.
     """
     try:
-        from ftl2.module_loading.executor import execute_remote_with_staging
         from ftl2.module_loading.bundle import build_bundle_from_fqcn
+        from ftl2.module_loading.executor import execute_remote_with_staging
 
         # Normalize to FQCN
-        if "." not in module_name:
-            fqcn = f"ansible.builtin.{module_name}"
-        else:
-            fqcn = module_name
+        fqcn = f"ansible.builtin.{module_name}" if "." not in module_name else module_name
 
         # Build bundle
         bundle = build_bundle_from_fqcn(fqcn)

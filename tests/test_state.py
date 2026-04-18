@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 
 from ftl2 import automation
+from ftl2.inventory import Inventory
 from ftl2.state import State, read_state_file, write_state_file
 from ftl2.state.merge import merge_state_into_inventory
-from ftl2.inventory import Inventory, HostGroup
 
 
 class TestStateFile:
@@ -209,6 +209,7 @@ class TestStateToInventoryRoundTrip:
     def test_single_group_round_trip(self):
         """State with one group round-trips through YAML inventory."""
         from tools.ftl2_state_to_inventory import state_to_inventory
+
         from ftl2.inventory import load_inventory
 
         state = {
@@ -237,6 +238,7 @@ class TestStateToInventoryRoundTrip:
     def test_multiple_groups_round_trip(self):
         """State with multiple groups round-trips through YAML inventory."""
         from tools.ftl2_state_to_inventory import state_to_inventory
+
         from ftl2.inventory import load_inventory
 
         state = {
@@ -275,6 +277,7 @@ class TestStateToInventoryRoundTrip:
     def test_ungrouped_round_trip(self):
         """State with no groups round-trips through YAML inventory."""
         from tools.ftl2_state_to_inventory import state_to_inventory
+
         from ftl2.inventory import load_inventory
 
         state = {
@@ -300,6 +303,7 @@ class TestStateToInventoryRoundTrip:
     def test_empty_state_round_trip(self):
         """Empty state produces valid YAML inventory."""
         from tools.ftl2_state_to_inventory import state_to_inventory
+
         from ftl2.inventory import load_inventory
 
         yaml_out = state_to_inventory({"hosts": {}})
@@ -414,7 +418,7 @@ class TestAutomationStateIntegration:
                 quiet=True,
             ) as ftl:
                 # Host should be visible in ftl.hosts
-                assert "minecraft-9" in ftl.hosts.keys()
+                assert "minecraft-9" in ftl.hosts
                 hosts = ftl.hosts["minecraft-9"]
                 assert len(hosts) == 1
                 assert hosts[0].ansible_host == "69.164.211.253"

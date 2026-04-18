@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from ftl2.exceptions import GateError, ModuleNotFound
 from ftl2.gate import GateBuildConfig, GateBuilder
 
 
@@ -232,7 +231,7 @@ class TestGateBuilder:
 # Gate Runtime Tests (module execution in ftl_gate)
 # =============================================================================
 
-import base64
+import base64  # noqa: E402
 
 
 class TestModuleTypeDetection:
@@ -326,8 +325,9 @@ class TestGetPythonPath:
 
     def test_get_python_path_returns_string(self):
         """get_python_path returns a path-separated string."""
-        from ftl2.ftl_gate.__main__ import get_python_path
         import os
+
+        from ftl2.ftl_gate.__main__ import get_python_path
 
         path = get_python_path()
         assert isinstance(path, str)
@@ -340,9 +340,10 @@ class TestExecuteFTLModule:
     @pytest.mark.asyncio
     async def test_execute_ftl_module_async_main(self):
         """execute_ftl_module can run async main()."""
+        from unittest.mock import AsyncMock, MagicMock
+
         from ftl2.ftl_gate.__main__ import execute_ftl_module
         from ftl2.message import GateProtocol
-        from unittest.mock import AsyncMock, MagicMock
 
         protocol = GateProtocol()
         protocol.send_message = AsyncMock()
@@ -364,9 +365,10 @@ async def main():
     @pytest.mark.asyncio
     async def test_execute_ftl_module_sync_main(self):
         """execute_ftl_module can run sync main()."""
+        from unittest.mock import AsyncMock, MagicMock
+
         from ftl2.ftl_gate.__main__ import execute_ftl_module
         from ftl2.message import GateProtocol
-        from unittest.mock import AsyncMock, MagicMock
 
         protocol = GateProtocol()
         protocol.send_message = AsyncMock()
@@ -388,9 +390,10 @@ def main():
     @pytest.mark.asyncio
     async def test_execute_ftl_module_with_args(self):
         """execute_ftl_module passes args to main()."""
+        from unittest.mock import AsyncMock, MagicMock
+
         from ftl2.ftl_gate.__main__ import execute_ftl_module
         from ftl2.message import GateProtocol
-        from unittest.mock import AsyncMock, MagicMock
 
         protocol = GateProtocol()
         protocol.send_message = AsyncMock()
@@ -412,9 +415,10 @@ async def main(args):
     @pytest.mark.asyncio
     async def test_execute_ftl_module_error(self):
         """execute_ftl_module sends error on exception."""
+        from unittest.mock import AsyncMock, MagicMock
+
         from ftl2.ftl_gate.__main__ import execute_ftl_module
         from ftl2.message import GateProtocol
-        from unittest.mock import AsyncMock, MagicMock
 
         protocol = GateProtocol()
         protocol.send_message = AsyncMock()
@@ -435,9 +439,10 @@ async def main():
     @pytest.mark.asyncio
     async def test_execute_ftl_module_no_main(self):
         """execute_ftl_module errors if no main()."""
+        from unittest.mock import AsyncMock, MagicMock
+
         from ftl2.ftl_gate.__main__ import execute_ftl_module
         from ftl2.message import GateProtocol
-        from unittest.mock import AsyncMock, MagicMock
 
         protocol = GateProtocol()
         protocol.send_message = AsyncMock()

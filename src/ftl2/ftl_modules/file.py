@@ -37,7 +37,7 @@ def _apply_owner(p: Path, owner: str) -> bool:
     try:
         uid = pwd.getpwnam(owner).pw_uid
     except KeyError:
-        raise FTLModuleError(f"Unknown user: {owner}", path=str(p), owner=owner)
+        raise FTLModuleError(f"Unknown user: {owner}", path=str(p), owner=owner) from None
     if p.stat().st_uid != uid:
         os.chown(p, uid, -1)
         return True
@@ -49,7 +49,7 @@ def _apply_group(p: Path, group: str) -> bool:
     try:
         gid = grp.getgrnam(group).gr_gid
     except KeyError:
-        raise FTLModuleError(f"Unknown group: {group}", path=str(p), group=group)
+        raise FTLModuleError(f"Unknown group: {group}", path=str(p), group=group) from None
     if p.stat().st_gid != gid:
         os.chown(p, -1, gid)
         return True
@@ -205,7 +205,7 @@ def ftl_file(
         if p.exists() and not p.is_symlink():
             if recurse and p.is_dir():
                 # Walk directory tree and apply to all entries
-                for dirpath, dirnames, filenames in os.walk(str(p)):
+                for dirpath, _dirnames, filenames in os.walk(str(p)):
                     dp = Path(dirpath)
                     if mode and _apply_mode(dp, mode):
                         changed = True
@@ -241,12 +241,12 @@ def ftl_file(
         raise FTLModuleError(
             f"Permission denied: {e}",
             path=path,
-        )
+        ) from e
     except OSError as e:
         raise FTLModuleError(
             f"OS error: {e}",
             path=path,
-        )
+        ) from e
 
 
 def ftl_copy(
@@ -366,9 +366,8 @@ def ftl_copy(
             shutil.copystat(src_path, dest_path)
 
         # Apply mode if specified
-        if mode:
-            if _apply_mode(dest_path, mode):
-                changed = True
+        if mode and _apply_mode(dest_path, mode):
+            changed = True
 
         result: dict[str, Any] = {
             "changed": changed,
@@ -388,13 +387,13 @@ def ftl_copy(
             f"Permission denied: {e}",
             src=src,
             dest=dest,
-        )
+        ) from e
     except OSError as e:
         raise FTLModuleError(
             f"Copy failed: {e}",
             src=src,
             dest=dest,
-        )
+        ) from e
 
 
 def ftl_template(
@@ -423,7 +422,7 @@ def ftl_template(
     except ImportError:
         raise FTLModuleError(
             "jinja2 is required for template module but not installed",
-        )
+        ) from None
 
     # Resolve relative paths from current working directory
     src_path = Path(src)
@@ -448,9 +447,8 @@ def ftl_template(
 
         # Check if content changed
         changed = True
-        if dest_path.exists():
-            if dest_path.read_text() == rendered:
-                changed = False
+        if dest_path.exists() and dest_path.read_text() == rendered:
+            changed = False
 
         # Write output
         if changed:
@@ -458,9 +456,8 @@ def ftl_template(
             dest_path.write_text(rendered)
 
         # Apply mode if specified
-        if mode:
-            if _apply_mode(dest_path, mode):
-                changed = True
+        if mode and _apply_mode(dest_path, mode):
+            changed = True
 
         return {
             "changed": changed,
@@ -475,4 +472,4 @@ def ftl_template(
             f"Template rendering failed: {e}",
             src=src,
             dest=dest,
-        )
+        ) from e

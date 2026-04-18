@@ -22,8 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from subprocess import CalledProcessError, check_output
 
-from .exceptions import GateError, ModuleNotFound
-from .utils import ensure_directory, find_module, read_module
+from .exceptions import GateError
+from .utils import ensure_directory, find_module
 
 logger = logging.getLogger(__name__)
 
@@ -306,9 +306,9 @@ class GateBuilder:
         Raises:
             ModuleNotFound: If module cannot be found
         """
-        from .module_loading.fqcn import resolve_fqcn
-        from .module_loading.dependencies import find_all_dependencies
         from .module_loading.bundle import get_archive_path
+        from .module_loading.dependencies import find_all_dependencies
+        from .module_loading.fqcn import resolve_fqcn
 
         # Collect all dependencies across all Ansible modules
         all_deps: dict[str, Path] = {}  # archive_path -> source_path
@@ -332,7 +332,8 @@ class GateBuilder:
             except Exception as e:
                 # Not an Ansible module — try FTL module
                 try:
-                    from ftl2.ftl_modules.executor import is_ftl_module as _is_ftl, get_ftl_module_source
+                    from ftl2.ftl_modules.executor import get_ftl_module_source
+                    from ftl2.ftl_modules.executor import is_ftl_module as _is_ftl
                     if _is_ftl(module):
                         ftl_source = get_ftl_module_source(module)
                         ftl_dir = gate_dir / "ftl_modules_baked"

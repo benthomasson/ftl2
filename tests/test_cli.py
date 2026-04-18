@@ -85,6 +85,7 @@ class TestOutputFormatters:
     def test_format_results_json(self):
         """Test JSON output formatting."""
         import json
+
         from ftl2.cli import format_results_json
         from ftl2.executor import ExecutionResults
         from ftl2.types import ModuleResult
@@ -182,9 +183,10 @@ class TestValidateExecutionRequirements:
 
     def test_validate_module_not_found(self):
         """Test validation fails when module not found."""
-        import pytest
         import tempfile
         from pathlib import Path
+
+        import pytest
 
         from ftl2.cli import validate_execution_requirements
         from ftl2.inventory import load_localhost
@@ -218,9 +220,10 @@ class TestValidateExecutionRequirements:
 
     def test_validate_ssh_no_auth_configured(self):
         """Test validation fails when SSH host has no authentication."""
-        import pytest
         import tempfile
         from pathlib import Path
+
+        import pytest
 
         from ftl2.cli import validate_execution_requirements
         from ftl2.inventory import load_inventory
@@ -253,9 +256,10 @@ webservers:
 
     def test_validate_ssh_key_not_found(self):
         """Test validation fails when SSH key file doesn't exist."""
-        import pytest
         import tempfile
         from pathlib import Path
+
+        import pytest
 
         from ftl2.cli import validate_execution_requirements
         from ftl2.inventory import load_inventory
@@ -548,6 +552,7 @@ class TestDryRun:
     def test_format_dry_run_json(self):
         """Test dry-run JSON output formatting."""
         import json
+
         from ftl2.cli import format_dry_run_json
         from ftl2.executor import ExecutionResults
         from ftl2.types import ModuleResult
@@ -677,10 +682,11 @@ class TestErrorContext:
     def test_format_results_json_with_error_context(self):
         """Test JSON output includes error context."""
         import json
+
         from ftl2.cli import format_results_json
+        from ftl2.exceptions import ErrorContext, ErrorTypes
         from ftl2.executor import ExecutionResults
         from ftl2.types import ModuleResult
-        from ftl2.exceptions import ErrorContext, ErrorTypes
 
         error_ctx = ErrorContext(
             host="web01",
@@ -717,9 +723,9 @@ class TestErrorContext:
     def test_format_results_text_with_error_context(self):
         """Test text output shows error context."""
         from ftl2.cli import format_results_text
+        from ftl2.exceptions import ErrorContext, ErrorTypes
         from ftl2.executor import ExecutionResults
         from ftl2.types import ModuleResult
-        from ftl2.exceptions import ErrorContext, ErrorTypes
 
         error_ctx = ErrorContext(
             host="db01",
@@ -751,7 +757,7 @@ class TestErrorContext:
 
     def test_get_suggestions(self):
         """Test suggestion generation with context substitution."""
-        from ftl2.exceptions import get_suggestions, ErrorTypes
+        from ftl2.exceptions import ErrorTypes, get_suggestions
 
         suggestions = get_suggestions(
             ErrorTypes.CONNECTION_TIMEOUT,
@@ -1073,8 +1079,8 @@ class TestRetryLogic:
 
     def test_is_transient_error(self):
         """Test transient error classification."""
-        from ftl2.retry import is_transient_error, is_permanent_error
         from ftl2.exceptions import ErrorTypes
+        from ftl2.retry import is_permanent_error, is_transient_error
 
         # Transient errors should be retried
         assert is_transient_error(ErrorTypes.CONNECTION_TIMEOUT)
@@ -1088,8 +1094,8 @@ class TestRetryLogic:
 
     def test_should_retry_smart(self):
         """Test smart retry logic."""
-        from ftl2.retry import should_retry
         from ftl2.exceptions import ErrorTypes
+        from ftl2.retry import should_retry
 
         # Smart retry: only transient errors
         assert should_retry(ErrorTypes.CONNECTION_TIMEOUT, smart_retry=True)
@@ -1139,7 +1145,7 @@ class TestRetryLogic:
 
     def test_circuit_breaker_check(self):
         """Test circuit breaker threshold."""
-        from ftl2.retry import check_circuit_breaker, CircuitBreakerConfig
+        from ftl2.retry import CircuitBreakerConfig, check_circuit_breaker
 
         config = CircuitBreakerConfig(
             enabled=True,
@@ -1158,7 +1164,7 @@ class TestRetryLogic:
 
     def test_circuit_breaker_disabled(self):
         """Test that disabled circuit breaker never triggers."""
-        from ftl2.retry import check_circuit_breaker, CircuitBreakerConfig
+        from ftl2.retry import CircuitBreakerConfig, check_circuit_breaker
 
         config = CircuitBreakerConfig(enabled=False)
 
@@ -1167,7 +1173,7 @@ class TestRetryLogic:
 
     def test_circuit_breaker_zero_hosts(self):
         """Test that zero total_hosts does not raise ZeroDivisionError."""
-        from ftl2.retry import check_circuit_breaker, CircuitBreakerConfig
+        from ftl2.retry import CircuitBreakerConfig, check_circuit_breaker
 
         config = CircuitBreakerConfig(enabled=True, threshold_percent=30, min_hosts=0)
 
@@ -1304,7 +1310,8 @@ class TestStateTracking:
         """Test saving and loading state to/from file."""
         import tempfile
         from pathlib import Path
-        from ftl2.state import ExecutionState, HostState, save_state, load_state
+
+        from ftl2.state import ExecutionState, HostState, load_state, save_state
 
         state = ExecutionState(
             module="copy",
@@ -1357,8 +1364,9 @@ class TestEnhancedLogging:
 
     def test_verbosity_levels(self):
         """Test verbosity count to log level conversion."""
-        from ftl2.logging import get_level_from_verbosity, TRACE
         import logging
+
+        from ftl2.logging import TRACE, get_level_from_verbosity
 
         assert get_level_from_verbosity(0) == logging.WARNING
         assert get_level_from_verbosity(1) == logging.INFO
@@ -1368,8 +1376,9 @@ class TestEnhancedLogging:
 
     def test_level_from_name(self):
         """Test log level from name conversion."""
-        from ftl2.logging import get_level_from_name, TRACE
         import logging
+
+        from ftl2.logging import TRACE, get_level_from_name
 
         assert get_level_from_name("trace") == TRACE
         assert get_level_from_name("debug") == logging.DEBUG
@@ -1380,8 +1389,9 @@ class TestEnhancedLogging:
 
     def test_level_from_name_case_insensitive(self):
         """Test log level name is case insensitive."""
-        from ftl2.logging import get_level_from_name
         import logging
+
+        from ftl2.logging import get_level_from_name
 
         assert get_level_from_name("DEBUG") == logging.DEBUG
         assert get_level_from_name("Info") == logging.INFO
@@ -1389,8 +1399,9 @@ class TestEnhancedLogging:
 
     def test_level_from_name_invalid(self):
         """Test invalid log level name raises error."""
-        from ftl2.logging import get_level_from_name
         import pytest
+
+        from ftl2.logging import get_level_from_name
 
         with pytest.raises(ValueError) as exc_info:
             get_level_from_name("invalid")
@@ -1398,9 +1409,10 @@ class TestEnhancedLogging:
 
     def test_configure_logging_with_file(self):
         """Test logging configuration with file output."""
-        import tempfile
         import logging
+        import tempfile
         from pathlib import Path
+
         from ftl2.logging import configure_logging
 
         with tempfile.NamedTemporaryFile(suffix=".log", delete=False) as f:
@@ -1452,6 +1464,7 @@ class TestProgressReporting:
     def test_text_progress_reporter(self):
         """Test text progress reporter output."""
         from io import StringIO
+
         from ftl2.progress import TextProgressReporter
 
         output = StringIO()
@@ -1477,6 +1490,7 @@ class TestProgressReporting:
         """Test JSON progress reporter output."""
         import json
         from io import StringIO
+
         from ftl2.progress import JsonProgressReporter
 
         output = StringIO()
@@ -1516,21 +1530,21 @@ class TestProgressReporting:
 
     def test_create_progress_reporter_disabled(self):
         """Test creating a disabled progress reporter."""
-        from ftl2.progress import create_progress_reporter, NullProgressReporter
+        from ftl2.progress import NullProgressReporter, create_progress_reporter
 
         reporter = create_progress_reporter(enabled=False)
         assert isinstance(reporter, NullProgressReporter)
 
     def test_create_progress_reporter_text(self):
         """Test creating a text progress reporter."""
-        from ftl2.progress import create_progress_reporter, TextProgressReporter
+        from ftl2.progress import TextProgressReporter, create_progress_reporter
 
         reporter = create_progress_reporter(enabled=True, json_format=False)
         assert isinstance(reporter, TextProgressReporter)
 
     def test_create_progress_reporter_json(self):
         """Test creating a JSON progress reporter."""
-        from ftl2.progress import create_progress_reporter, JsonProgressReporter
+        from ftl2.progress import JsonProgressReporter, create_progress_reporter
 
         reporter = create_progress_reporter(enabled=True, json_format=True)
         assert isinstance(reporter, JsonProgressReporter)
@@ -1538,6 +1552,7 @@ class TestProgressReporting:
     def test_progress_event_to_json(self):
         """Test progress event JSON serialization."""
         import json
+
         from ftl2.progress import ProgressEvent
 
         event = ProgressEvent(
@@ -1609,8 +1624,8 @@ all:
 
     def test_explain_json_output(self):
         """Test explain mode produces JSON execution plan."""
-        import tempfile
         import json
+        import tempfile
         from pathlib import Path
 
         yaml_content = """
@@ -1739,7 +1754,8 @@ class TestWorkflowTracking:
         """Test saving and loading workflows."""
         import tempfile
         from pathlib import Path
-        from ftl2.workflow import Workflow, WorkflowStep, save_workflow, load_workflow
+
+        from ftl2.workflow import Workflow, WorkflowStep, load_workflow, save_workflow
 
         workflow = Workflow(workflow_id="test-save-load")
         workflow.add_step(WorkflowStep(
@@ -1765,7 +1781,8 @@ class TestWorkflowTracking:
         """Test listing workflows."""
         import tempfile
         from pathlib import Path
-        from ftl2.workflow import Workflow, save_workflow, list_workflows
+
+        from ftl2.workflow import Workflow, list_workflows, save_workflow
 
         with tempfile.TemporaryDirectory() as tmpdir:
             workflow_dir = Path(tmpdir)
@@ -1786,7 +1803,8 @@ class TestWorkflowTracking:
         """Test deleting a workflow."""
         import tempfile
         from pathlib import Path
-        from ftl2.workflow import Workflow, save_workflow, load_workflow, delete_workflow
+
+        from ftl2.workflow import Workflow, delete_workflow, load_workflow, save_workflow
 
         with tempfile.TemporaryDirectory() as tmpdir:
             workflow_dir = Path(tmpdir)
@@ -2113,6 +2131,7 @@ Backup-Capable: No
         """Test backup path generation with central directory."""
         import tempfile
         from pathlib import Path
+
         from ftl2.backup import generate_backup_path
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2166,6 +2185,7 @@ Backup-Capable: No
         """Test creating and restoring a backup."""
         import tempfile
         from pathlib import Path
+
         from ftl2.backup import BackupManager, restore_backup
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2194,6 +2214,7 @@ Backup-Capable: No
         """Test listing backups."""
         import tempfile
         from pathlib import Path
+
         from ftl2.backup import BackupManager, list_backups
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2308,7 +2329,8 @@ class TestConfigProfiles:
         """Test saving and loading profiles."""
         import tempfile
         from pathlib import Path
-        from ftl2.config_profiles import ConfigProfile, save_profile, load_profile
+
+        from ftl2.config_profiles import ConfigProfile, load_profile, save_profile
 
         profile = ConfigProfile(
             name="test-save",
@@ -2330,7 +2352,8 @@ class TestConfigProfiles:
         """Test listing profiles."""
         import tempfile
         from pathlib import Path
-        from ftl2.config_profiles import ConfigProfile, save_profile, list_profiles
+
+        from ftl2.config_profiles import ConfigProfile, list_profiles, save_profile
 
         with tempfile.TemporaryDirectory() as tmpdir:
             profile_dir = Path(tmpdir)
@@ -2351,7 +2374,8 @@ class TestConfigProfiles:
         """Test deleting a profile."""
         import tempfile
         from pathlib import Path
-        from ftl2.config_profiles import ConfigProfile, save_profile, load_profile, delete_profile
+
+        from ftl2.config_profiles import ConfigProfile, delete_profile, load_profile, save_profile
 
         with tempfile.TemporaryDirectory() as tmpdir:
             profile_dir = Path(tmpdir)
@@ -2468,6 +2492,7 @@ Arguments:
         """Test that extract_module_doc uses parsed idempotency from docstring."""
         import tempfile
         from pathlib import Path
+
         from ftl2.module_docs import extract_module_doc
 
         module_content = '''#!/usr/bin/env python3
@@ -2503,6 +2528,7 @@ def main():
         """Test that extract_module_doc falls back to hardcoded list when not in docstring."""
         import tempfile
         from pathlib import Path
+
         from ftl2.module_docs import extract_module_doc
 
         # Create a module named 'ping' without Idempotent declaration

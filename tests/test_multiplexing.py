@@ -9,10 +9,9 @@ import json
 
 import pytest
 
-from ftl2.runners import Gate, _gate_reader_loop
 from ftl2.message import GateProtocol
+from ftl2.runners import Gate, _gate_reader_loop
 from ftl2.types import BecomeConfig, gate_cache_key
-
 
 # ---------------------------------------------------------------------------
 # Helpers: in-memory async reader/writer for protocol testing
@@ -266,7 +265,12 @@ class TestMainMultiplexed:
     @pytest.mark.asyncio
     async def test_shutdown_sends_goodbye(self):
         """Shutdown message gets a Goodbye response."""
-        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor, GateStatusMonitor
+        from ftl2.ftl_gate.__main__ import (
+            FileWatcher,
+            GateStatusMonitor,
+            SystemMonitor,
+            main_multiplexed,
+        )
 
         protocol = GateProtocol()
         reader = make_reader_from_messages([
@@ -288,7 +292,12 @@ class TestMainMultiplexed:
     @pytest.mark.asyncio
     async def test_module_execution(self):
         """Module request gets a response with the correct msg_id."""
-        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor, GateStatusMonitor
+        from ftl2.ftl_gate.__main__ import (
+            FileWatcher,
+            GateStatusMonitor,
+            SystemMonitor,
+            main_multiplexed,
+        )
 
         protocol = GateProtocol()
         # Send a Module request for a module that won't be found (no gate bundle)
@@ -318,7 +327,12 @@ class TestMainMultiplexed:
     @pytest.mark.asyncio
     async def test_info_request(self):
         """Info request returns gate info with correct msg_id."""
-        from ftl2.ftl_gate.__main__ import main_multiplexed, FileWatcher, SystemMonitor, GateStatusMonitor
+        from ftl2.ftl_gate.__main__ import (
+            FileWatcher,
+            GateStatusMonitor,
+            SystemMonitor,
+            main_multiplexed,
+        )
 
         protocol = GateProtocol()
         reader = make_reader_from_messages([

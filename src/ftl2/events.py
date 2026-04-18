@@ -16,10 +16,10 @@ Example:
         return {"changed": True}
 """
 
-from dataclasses import dataclass, field, asdict
 import json
 import sys
 import time
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 

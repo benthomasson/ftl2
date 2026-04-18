@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ftl2 import automation, AutomationContext
+from ftl2 import AutomationContext, automation
 from ftl2.automation import ModuleProxy
 
 
@@ -444,7 +444,7 @@ webservers:
     @pytest.mark.asyncio
     async def test_run_on_results_tracked(self):
         """Test that run_on results are tracked in ftl.results."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             async with automation() as ftl:
                 await ftl.run_on("localhost", "command", cmd="echo hello")
 
@@ -601,7 +601,7 @@ class TestAddHost:
     @pytest.mark.asyncio
     async def test_add_host_then_run_on(self):
         """Test full workflow: add host then run_on it."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             async with automation() as ftl:
                 # Add a "remote" host that's actually local
                 ftl.add_host(
@@ -696,7 +696,7 @@ class TestHostScopedProxy:
 
     def test_host_scoped_proxy_module_access(self):
         """Test accessing modules on HostScopedProxy."""
-        from ftl2.automation import HostScopedProxy, HostScopedModuleProxy
+        from ftl2.automation import HostScopedModuleProxy
 
         context = AutomationContext()
         proxy = context.localhost
@@ -741,7 +741,7 @@ class TestHostScopedProxy:
     @pytest.mark.asyncio
     async def test_host_scoped_proxy_with_group(self):
         """Test host-scoped proxy with group targets localhost."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             async with automation() as ftl:
                 # Add host to a group
                 ftl.add_host("localtest", ansible_host="localhost", groups=["testgroup"])
@@ -870,7 +870,6 @@ class TestHostScopedProxy:
 
     def test_underscore_normalization_only_when_needed(self):
         """Test that normalization only happens when exact match fails."""
-        from ftl2.automation import HostScopedProxy
 
         context = AutomationContext(inventory={
             "servers": {
@@ -1068,7 +1067,7 @@ class TestOutputModes:
         """Test on_event callback with run_on."""
         events = []
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             async with automation(on_event=events.append) as ftl:
                 await ftl.run_on("localhost", "command", cmd="echo hello")
 
@@ -1102,7 +1101,7 @@ class TestOutputModes:
     @pytest.mark.asyncio
     async def test_normal_mode_shows_errors(self, capsys):
         """Test that normal mode shows errors but not successes."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             async with automation() as ftl:
                 # This should succeed - no output in normal mode
                 await ftl.command(cmd="echo hello")
@@ -1319,14 +1318,13 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_fail_fast_raises_automation_error(self):
         """Test that fail_fast raises AutomationError."""
-        from ftl2.automation import AutomationError
         from ftl2.ftl_modules import ExecuteResult
 
         # Simulate a failure by manually adding a failed result and checking logic
         context = AutomationContext(fail_fast=True)
 
         # Create a mock failed result
-        failed_result = ExecuteResult(
+        ExecuteResult(
             success=False,
             changed=False,
             output={"failed": True},
@@ -1481,7 +1479,7 @@ class TestCheckMode:
             test_file = Path(tmpdir) / "should_not_exist.txt"
 
             async with automation(check_mode=True) as ftl:
-                result = await ftl.file(path=str(test_file), state="touch")
+                await ftl.file(path=str(test_file), state="touch")
 
             # File should NOT be created in check mode
             # Note: This depends on module implementation
@@ -1517,7 +1515,7 @@ class TestCheckMode:
         """Test check_mode with command module."""
         async with automation(check_mode=True) as ftl:
             # Command should still execute (commands don't typically support check mode)
-            result = await ftl.command(cmd="echo hello")
+            await ftl.command(cmd="echo hello")
             assert ftl.check_mode is True
 
     @pytest.mark.asyncio
@@ -1825,7 +1823,7 @@ class TestRecordDeps:
         """Test that record_deps writes deps file on exit."""
         with tempfile.TemporaryDirectory() as tmpdir:
             deps_file = Path(tmpdir) / "deps.txt"
-            test_file = Path(tmpdir) / "test.txt"
+            Path(tmpdir) / "test.txt"
 
             async with automation(
                 record_deps=True,

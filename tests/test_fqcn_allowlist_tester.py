@@ -6,12 +6,12 @@ are checked against the allowlist, not just short names.
 Covers the fix for issue #34: FQCN modules bypass _enabled_modules allowlist.
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from ftl2.automation.context import AutomationContext
-from ftl2.automation.proxy import NamespaceProxy, ModuleProxy, ModuleAccessProxy
-
+from ftl2.automation.proxy import NamespaceProxy
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -263,14 +263,14 @@ class TestGetAttrAllowlist:
         from ftl2.ftl_modules import list_modules
         if "shell" in list_modules():
             with pytest.raises(AttributeError, match="not enabled"):
-                getattr(ctx, "shell")
+                _ = ctx.shell
 
     def test_getattr_allows_permitted_short_module(self):
         """Accessing a permitted short module name does not raise."""
         ctx = _make_context(modules=["file"])
         from ftl2.ftl_modules import list_modules
         if "file" in list_modules():
-            result = getattr(ctx, "file")
+            result = ctx.file
             # Should return a callable wrapper, not raise
             assert callable(result)
 

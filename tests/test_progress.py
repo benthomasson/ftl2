@@ -1,16 +1,13 @@
 """Tests for progress reporting and event display."""
 
 import io
-from unittest.mock import MagicMock
-
-import pytest
 
 from ftl2.progress import (
     EventProgressDisplay,
-    SimpleEventDisplay,
-    TextProgressReporter,
     JsonProgressReporter,
     NullProgressReporter,
+    SimpleEventDisplay,
+    TextProgressReporter,
     create_progress_reporter,
 )
 

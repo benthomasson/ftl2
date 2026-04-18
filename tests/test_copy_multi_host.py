@@ -5,8 +5,9 @@ not just the first one. Always returns a list of result dicts.
 """
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from ftl2.automation.proxy import HostScopedProxy
 
@@ -66,7 +67,7 @@ class TestCopyMultiHost:
         assert len(results) == 3
 
         # Each SSH mock should have had write_file called
-        for name, ssh in ssh_mocks.items():
+        for _name, ssh in ssh_mocks.items():
             ssh.write_file.assert_called_once()
 
     @pytest.mark.asyncio
@@ -168,7 +169,6 @@ class TestCopyMultiHost:
     async def test_copy_multi_host_with_src_file(self):
         """copy() with src file fans out to all hosts."""
         import tempfile
-        from pathlib import Path
 
         hosts = [_make_host_config("s1"), _make_host_config("s2")]
         ssh_mocks = {h.name: _make_ssh_mock() for h in hosts}
@@ -197,7 +197,7 @@ class TestCopyMultiHost:
         hosts = [_make_host_config("ok1"), _make_host_config("fail1"), _make_host_config("ok2")]
 
         ssh_ok = _make_ssh_mock()
-        ssh_fail = AsyncMock()
+        AsyncMock()
 
         async def raise_on_connect(h):
             if h.name == "fail1":

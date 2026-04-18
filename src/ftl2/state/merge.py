@@ -7,9 +7,8 @@ Combines static inventory (from inventory.yml) with dynamic hosts
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ftl2.inventory import Inventory, HostGroup
+    from ftl2.inventory import Inventory
     from ftl2.state.state import State
-    from ftl2.types import HostConfig
 
 
 def merge_state_into_inventory(state: "State", inventory: "Inventory") -> None:

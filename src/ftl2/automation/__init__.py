@@ -24,20 +24,20 @@ This module is designed for AI-generated automation scripts where
 readability and natural language patterns are important.
 """
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Callable
 
 from ftl2.automation.context import (
     AutomationContext,
     AutomationError,
-    OutputMode,
     EventCallback,
+    OutputMode,
 )
 from ftl2.automation.proxy import (
+    HostScopedModuleProxy,
+    HostScopedProxy,
     ModuleProxy,
     NamespaceProxy,
-    HostScopedProxy,
-    HostScopedModuleProxy,
 )
 
 __all__ = [
@@ -79,7 +79,7 @@ async def automation(
     environment: str = "",
     policy_audit: str | None = None,
     ignore_missing_inventory: bool = True,
-) -> AsyncGenerator[AutomationContext, None]:
+) -> AsyncGenerator[AutomationContext]:
     """Create an automation context for running FTL modules.
 
     This is the main entry point for automation scripts. It provides

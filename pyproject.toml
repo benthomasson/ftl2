@@ -104,6 +104,10 @@ ignore = [
     "N818",   # exception naming (ModuleNotFound matches Python convention)
     "UP047",  # generic type parameters (not needed for simple cases)
     "SIM105", # try-except-pass is clearer than contextlib.suppress in shutdown code
+    "SIM102", # collapsible-if: nested ifs are often clearer than combined conditions
+    "SIM108", # ternary operator: multi-line if/else is clearer for complex expressions
+    "SIM117", # nested with: async context managers often read better nested
+    "TC003",  # typing-only-stdlib-import: not worth the churn
 ]
 
 [tool.ruff.lint.per-file-ignores]

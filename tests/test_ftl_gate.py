@@ -5,7 +5,6 @@ stdin/stdout, making traditional unit testing difficult. These tests
 verify basic functionality without requiring actual subprocess execution.
 """
 
-import asyncio
 
 import pytest
 

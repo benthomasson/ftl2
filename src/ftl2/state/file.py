@@ -6,14 +6,14 @@ Handles JSON state file persistence with atomic writes for safety.
 import json
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 
 def _empty_state() -> dict[str, Any]:
     """Create an empty state structure."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     return {
         "version": 1,
         "created_at": now,

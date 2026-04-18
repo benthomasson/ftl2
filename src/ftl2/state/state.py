@@ -4,7 +4,7 @@ Provides operations for managing state: has, get, add, remove, update.
 State is persisted to a JSON file for crash recovery and idempotent operations.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,12 +44,12 @@ class State:
 
     def _save(self) -> None:
         """Save state to file."""
-        self.data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self.data["updated_at"] = datetime.now(UTC).isoformat()
         write_state_file(self.path, self.data)
 
     def _now(self) -> str:
         """Get current timestamp as ISO string."""
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     # Host operations
 

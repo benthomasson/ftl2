@@ -7,15 +7,14 @@ import pytest
 
 from ftl2.module_loading.dependencies import (
     DependencyResult,
+    ModuleUtilsImport,
+    find_all_dependencies,
     find_module_utils_imports,
     find_module_utils_imports_from_file,
-    find_all_dependencies,
-    resolve_module_util_import,
-    resolve_core_module_util,
-    resolve_collection_module_util,
     get_dependency_tree,
-    ModuleUtilsImport,
-    ModuleUtilsFinder,
+    resolve_collection_module_util,
+    resolve_core_module_util,
+    resolve_module_util_import,
 )
 from ftl2.module_loading.fqcn import find_ansible_builtin_path
 

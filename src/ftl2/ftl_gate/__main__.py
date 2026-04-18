@@ -27,13 +27,13 @@ import base64
 import json
 import logging
 import os
-from pathlib import Path
 import shutil
 import stat
 import sys
 import tempfile
 import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 # Import the gate protocol from parent package
@@ -63,7 +63,7 @@ logger = logging.getLogger("ftl_gate")
 
 
 def _check_gate_policy(
-    policy: "Policy | None",
+    policy: Policy | None,
     module_name: str,
     module_args: dict[str, Any],
     environment: str = "",
@@ -390,7 +390,7 @@ async def run_module(
                     f.write(module_bytes)
             except FileNotFoundError:
                 logger.info(f"Module {module_name} not found in gate bundle")
-                raise ModuleNotFoundError(module_name)
+                raise ModuleNotFoundError(module_name) from None
         else:
             logger.info(f"Module {module_name} not found (no bundle available)")
             raise ModuleNotFoundError(module_name)
@@ -543,7 +543,7 @@ async def run_ftl_module(
         use_kwargs = len(sig.parameters) > 1 or (
             len(sig.parameters) == 1
             and list(sig.parameters.values())[0].kind != inspect.Parameter.VAR_POSITIONAL
-            and list(sig.parameters.values())[0].annotation != dict
+            and list(sig.parameters.values())[0].annotation is not dict
             and main_func.__name__ != "main"
         )
 
@@ -624,7 +624,8 @@ class FileWatcher:
     def add_watch(self, path: str) -> None:
         """Add a file watch. Starts the background event loop on first call."""
         if self._inotify is None:
-            from inotify_simple import INotify, flags as iflags
+            from inotify_simple import INotify
+            from inotify_simple import flags as iflags
 
             self._inotify = INotify(nonblocking=True)
             self._task = asyncio.create_task(self._event_loop())
@@ -1075,7 +1076,8 @@ async def main(args: list[str]) -> int | None:
         import hashlib
         gate_file = sys.argv[0] if sys.argv else ""
         if gate_file and os.path.exists(gate_file):
-            gate_hash = hashlib.sha256(open(gate_file, "rb").read()).hexdigest()[:16]
+            with open(gate_file, "rb") as f:
+                gate_hash = hashlib.sha256(f.read()).hexdigest()[:16]
             logger.info(f"Gate hash: {gate_hash}")
     except Exception:
         pass
@@ -1097,7 +1099,7 @@ async def main(args: list[str]) -> int | None:
     gate_status_monitor = GateStatusMonitor(protocol, writer, gate_hash)
 
     # Gate-side policy enforcement state
-    gate_policy: "Policy | None" = None
+    gate_policy: Policy | None = None
     gate_environment: str = ""
     gate_host: str = "localhost"
 

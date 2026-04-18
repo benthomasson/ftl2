@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -20,7 +19,6 @@ from ftl2.ftl_gate.__main__ import (
     execute_ftl_module,
     run_ftl_module,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

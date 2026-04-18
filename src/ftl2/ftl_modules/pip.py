@@ -123,9 +123,8 @@ def ftl_pip(
                 changed = False
             elif state == "latest" and "Successfully installed" in stdout:
                 changed = True
-        elif state == "absent":
-            if "Successfully uninstalled" in stdout:
-                changed = True
+        elif state == "absent" and "Successfully uninstalled" in stdout:
+            changed = True
 
         output: dict[str, Any] = {
             "changed": changed,
@@ -155,7 +154,7 @@ def ftl_pip(
             "pip operation timed out after 300s",
             name=name,
             requirements=requirements,
-        )
+        ) from None
     except FTLModuleError:
         raise
     except Exception as e:
@@ -163,4 +162,4 @@ def ftl_pip(
             f"pip operation failed: {e}",
             name=name,
             requirements=requirements,
-        )
+        ) from e

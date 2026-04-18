@@ -4,7 +4,7 @@ Validates that check_circuit_breaker handles total_hosts=0 without
 raising ZeroDivisionError, and that the fix doesn't break existing behavior.
 """
 
-from ftl2.retry import check_circuit_breaker, CircuitBreakerConfig
+from ftl2.retry import CircuitBreakerConfig, check_circuit_breaker
 
 
 def make_config(enabled=True, threshold=30.0, min_hosts=5):

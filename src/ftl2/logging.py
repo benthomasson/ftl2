@@ -11,9 +11,10 @@ This module provides enhanced logging capabilities including:
 
 import logging
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 # Standard log format
 DEFAULT_FORMAT = "%(levelname)s [%(name)s] %(message)s"
@@ -136,7 +137,7 @@ def log_scope(
     message: str,
     level: int = logging.INFO,
     **context: Any,
-) -> Generator[None, None, None]:
+) -> Generator[None]:
     """Context manager for scoped logging.
 
     Logs entry and exit of a scope with optional context data.
@@ -172,7 +173,7 @@ def log_performance(
     level: int = logging.INFO,
     threshold: float | None = None,
     **context: Any,
-) -> Generator[None, None, None]:
+) -> Generator[None]:
     """Context manager for performance logging.
 
     Times an operation and logs the duration.
@@ -307,7 +308,7 @@ class StructuredLogger:
         message: str,
         level: int = logging.INFO,
         **context: Any,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """Context manager for scoped logging with structured context.
 
         Args:
@@ -345,7 +346,7 @@ class StructuredLogger:
         level: int = logging.INFO,
         threshold: float | None = None,
         **context: Any,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """Context manager for performance logging with structured context.
 
         Args:

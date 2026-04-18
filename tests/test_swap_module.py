@@ -1,7 +1,8 @@
 """Tests for the FTL swap module."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, mock_open
 
 
 class TestParseSize:

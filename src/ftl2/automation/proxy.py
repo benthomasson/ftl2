@@ -8,19 +8,23 @@ Supports both simple modules and FQCN (Fully Qualified Collection Name):
     await ftl.amazon.aws.ec2_instance(instance_type="t3.micro")
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
 import warnings
-from typing import Any, Callable, TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
-from ftl2.module_loading.excluded import get_excluded
-from ftl2.module_loading.shadowed import is_shadowed, get_native_method
+from ftl2.automation.become import _extract_become_overrides
 from ftl2.exceptions import ExcludedModuleError
-from ftl2.automation.become import _BECOME_KWARGS, _extract_become_overrides
+from ftl2.module_loading.excluded import get_excluded
+from ftl2.module_loading.shadowed import get_native_method, is_shadowed
 
 if TYPE_CHECKING:
     from ftl2.automation.context import AutomationContext
+    from ftl2.types import BecomeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +55,7 @@ class HostScopedProxy:
         ftl.local.community.general.linode_v4(label="web01", ...)
     """
 
-    def __init__(self, context: "AutomationContext", target: str):
+    def __init__(self, context: AutomationContext, target: str):
         """Initialize the host-scoped proxy.
 
         Args:
@@ -129,7 +133,7 @@ class HostScopedProxy:
                     await writer.wait_closed()
                     elapsed = int(time.monotonic() - start)
                     return {"elapsed": elapsed, "changed": False}
-                except (OSError, asyncio.TimeoutError) as e:
+                except (TimeoutError, OSError) as e:
                     last_error = e
                     elapsed = time.monotonic() - start
                     if elapsed >= timeout:
@@ -158,7 +162,7 @@ class HostScopedProxy:
                     writer.close()
                     await writer.wait_closed()
                     break  # This host is ready, move to next
-                except (OSError, asyncio.TimeoutError) as e:
+                except (TimeoutError, OSError) as e:
                     last_error = e
                     elapsed = time.monotonic() - start
                     if elapsed >= timeout:
@@ -258,9 +262,8 @@ class HostScopedProxy:
         self,
         host_config: Any,
         overrides: dict[str, Any],
-    ) -> "BecomeConfig":
+    ) -> BecomeConfig:
         """Resolve effective become config from host defaults + call overrides."""
-        from ftl2.types import BecomeConfig
         return host_config.become_config.with_overrides(
             become=overrides.get("become"),
             become_user=overrides.get("become_user"),
@@ -337,8 +340,8 @@ class HostScopedProxy:
             await ftl.webserver.copy(src="nginx.conf", dest="/etc/nginx/nginx.conf")
             await ftl.webserver.copy(content="Hello", dest="/tmp/hello.txt")
         """
-        from pathlib import Path
         from datetime import datetime
+        from pathlib import Path
 
         start_time = time.time()
 
@@ -423,8 +426,8 @@ class HostScopedProxy:
                 if become_cfg.effective:
                     # Become path: SSH user may not have direct access to dest.
                     # Use sudo for reading/writing/permissions.
-                    import shlex as _shlex
                     import os as _os
+                    import shlex as _shlex
 
                     quoted_dest = _shlex.quote(dest)
 
@@ -580,6 +583,7 @@ class HostScopedProxy:
             )
         """
         from pathlib import Path
+
         from jinja2 import Environment, FileSystemLoader
 
         # Resolve template path
@@ -599,7 +603,7 @@ class HostScopedProxy:
 
         # Render template
         rendered = template.render(**variables)
-        content = rendered.encode("utf-8")
+        rendered.encode("utf-8")
 
         # Use copy() for the actual transfer (handles idempotency, permissions)
         # Pass content instead of src since we've already rendered
@@ -1081,7 +1085,7 @@ class HostScopedProxy:
         """
         self._context._register_event_handler(self._target, event_type, handler)
 
-    def __getattr__(self, name: str) -> "HostScopedModuleProxy":
+    def __getattr__(self, name: str) -> HostScopedModuleProxy:
         """Return a module proxy scoped to this host/group.
 
         Args:
@@ -1107,7 +1111,7 @@ class HostScopedModuleProxy:
         ftl.webservers.ansible.posix.firewalld(...)
     """
 
-    def __init__(self, context: "AutomationContext", target: str, path: str):
+    def __init__(self, context: AutomationContext, target: str, path: str):
         """Initialize the host-scoped module proxy.
 
         Args:
@@ -1119,7 +1123,7 @@ class HostScopedModuleProxy:
         self._target = target
         self._path = path
 
-    def __getattr__(self, name: str) -> "HostScopedModuleProxy":
+    def __getattr__(self, name: str) -> HostScopedModuleProxy:
         """Extend the module path for FQCN support.
 
         Args:
@@ -1188,7 +1192,7 @@ class NamespaceProxy:
         ftl.amazon.aws.ec2_instance(...) -> executes "amazon.aws.ec2_instance"
     """
 
-    def __init__(self, context: "AutomationContext", path: str):
+    def __init__(self, context: AutomationContext, path: str):
         """Initialize the namespace proxy.
 
         Args:
@@ -1198,7 +1202,7 @@ class NamespaceProxy:
         self._context = context
         self._path = path
 
-    def __getattr__(self, name: str) -> "NamespaceProxy":
+    def __getattr__(self, name: str) -> NamespaceProxy:
         """Return a nested proxy for the next namespace component.
 
         Args:
@@ -1261,7 +1265,7 @@ class ModuleProxy:
         result = await proxy.amazon.aws.ec2_instance(instance_type="t3.micro")
     """
 
-    def __init__(self, context: "AutomationContext"):
+    def __init__(self, context: AutomationContext):
         """Initialize the proxy with an automation context.
 
         Args:
@@ -1291,7 +1295,7 @@ class ModuleProxy:
             return HostScopedProxy(self._context, "localhost")
 
         hosts_proxy = self._context.hosts
-        if name in hosts_proxy.groups or name in hosts_proxy.keys():
+        if name in hosts_proxy.groups or name in hosts_proxy.keys():  # noqa: SIM118
             return HostScopedProxy(self._context, name)
 
         raise KeyError(f"Host or group '{name}' not found in inventory")
@@ -1329,13 +1333,13 @@ class ModuleProxy:
         try:
             hosts_proxy = self._context.hosts
             # Try exact match first
-            if name in hosts_proxy.groups or name in hosts_proxy.keys():
+            if name in hosts_proxy.groups or name in hosts_proxy.keys():  # noqa: SIM118
                 self._warn_shadow(name)
                 return HostScopedProxy(self._context, name)
             # Try underscore→dash normalization (e.g., minecraft_9 → minecraft-9)
             normalized = name.replace("_", "-")
             if normalized != name:
-                if normalized in hosts_proxy.groups or normalized in hosts_proxy.keys():
+                if normalized in hosts_proxy.groups or normalized in hosts_proxy.keys():  # noqa: SIM118
                     return HostScopedProxy(self._context, normalized)
         except Exception:
             # Inventory not loaded or other issue - continue to module check.
@@ -1391,7 +1395,7 @@ class ModuleProxy:
             )
 
     @property
-    def module(self) -> "ModuleAccessProxy":
+    def module(self) -> ModuleAccessProxy:
         """Access modules directly, bypassing host/group name resolution.
 
         Use this when a host or group name shadows a module name::
@@ -1417,7 +1421,7 @@ class ModuleAccessProxy:
     Only known modules are resolved; unknown names raise ``AttributeError``.
     """
 
-    def __init__(self, context: "AutomationContext") -> None:
+    def __init__(self, context: AutomationContext) -> None:
         self._context = context
 
     def __getattr__(self, name: str) -> Callable[..., Any]:

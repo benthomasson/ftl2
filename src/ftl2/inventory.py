@@ -126,7 +126,7 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
         raise FileNotFoundError(f"Inventory file not found: {path}")
 
     # Executable script — run with --list
-    if os.access(path, os.X_OK) and not path.suffix in (".yml", ".yaml", ".json"):
+    if os.access(path, os.X_OK) and path.suffix not in (".yml", ".yaml", ".json"):
         return load_inventory_script(path, require_hosts=require_hosts)
 
     content = path.read_text()

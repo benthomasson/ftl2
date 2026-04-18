@@ -7,7 +7,7 @@ from a previous run, skipping hosts that already succeeded.
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -242,7 +242,7 @@ def create_state_from_results(
     Returns:
         ExecutionState with per-host results
     """
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
 
     hosts: dict[str, HostState] = {}
     for host_name, result in results.results.items():

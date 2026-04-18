@@ -11,12 +11,11 @@ Features:
 """
 
 import asyncio
-import json
 import logging
 import shlex
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 import asyncssh
 
@@ -236,7 +235,7 @@ class SSHHost:
 
             return stdout, stderr, return_code
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"Command timed out after {timeout}s: {command[:50]}")
             return "", f"Command timed out after {timeout}s", -1
 
@@ -316,7 +315,7 @@ class SSHHost:
                         asyncio.gather(read_stdout(), read_stderr_streaming()),
                         timeout=timeout,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     process.kill()
                     logger.error(f"Command timed out after {timeout}s: {command[:50]}")
                     return "", f"Command timed out after {timeout}s", -1, events
@@ -384,9 +383,8 @@ class SSHHost:
 
         logger.debug(f"Writing {len(content)} bytes to {path}")
 
-        async with conn.start_sftp_client() as sftp:
-            async with sftp.open(path, "wb") as f:
-                await f.write(content)
+        async with conn.start_sftp_client() as sftp, sftp.open(path, "wb") as f:
+            await f.write(content)
 
         # Make executable if it's a .pyz bundle
         if path.endswith(".pyz"):
@@ -405,9 +403,8 @@ class SSHHost:
         """
         conn = await self.connect()
 
-        async with conn.start_sftp_client() as sftp:
-            async with sftp.open(path, "rb") as f:
-                return await f.read()
+        async with conn.start_sftp_client() as sftp, sftp.open(path, "rb") as f:
+            return await f.read()
 
     async def read_file_or_none(self, path: str) -> bytes | None:
         """Read a file from the remote host, returning None if not exists.

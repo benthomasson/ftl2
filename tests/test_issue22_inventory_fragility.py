@@ -11,14 +11,13 @@ from pathlib import Path
 
 import pytest
 
+from ftl2 import AutomationContext
 from ftl2.inventory import (
-    Inventory,
     HostGroup,
+    Inventory,
     load_inventory,
-    load_localhost,
 )
 from ftl2.types import HostConfig
-from ftl2 import AutomationContext
 
 
 class TestCacheInvalidationFix:

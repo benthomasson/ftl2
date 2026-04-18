@@ -201,7 +201,7 @@ class ModuleDoc:
 
         if self.backup.capable:
             lines.append("")
-            lines.append(f"Backup-Capable: Yes")
+            lines.append("Backup-Capable: Yes")
             if self.backup.paths:
                 lines.append(f"Backup-Paths: {', '.join(self.backup.paths)}")
             if self.backup.triggers:

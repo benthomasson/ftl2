@@ -4,14 +4,11 @@ Verifies that empty or whitespace-only YAML files do not crash with
 AttributeError at any safe_load call site.
 """
 
-import tempfile
-from pathlib import Path
 
-import pytest
 
-from ftl2.policy import Policy
 from ftl2.inventory import Inventory, load_inventory
-from ftl2.module_loading.requirements import parse_requirements, ModuleRequirements
+from ftl2.module_loading.requirements import ModuleRequirements, parse_requirements
+from ftl2.policy import Policy
 
 
 class TestPolicyEmptyYAML:

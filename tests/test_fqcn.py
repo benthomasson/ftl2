@@ -7,15 +7,14 @@ from pathlib import Path
 import pytest
 
 from ftl2.module_loading.fqcn import (
-    parse_fqcn,
-    get_collection_paths,
-    resolve_fqcn,
-    resolve_collection_module,
-    find_ansible_builtin_path,
-    is_valid_fqcn,
-    ParsedFQCN,
     InvalidFQCNError,
     ModuleNotFoundError,
+    find_ansible_builtin_path,
+    get_collection_paths,
+    is_valid_fqcn,
+    parse_fqcn,
+    resolve_collection_module,
+    resolve_fqcn,
 )
 
 
@@ -251,12 +250,11 @@ class TestResolveFQCN:
 
     def test_resolve_nonexistent_raises_error(self):
         """Test resolving nonexistent module raises error."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with pytest.raises(ModuleNotFoundError):
-                resolve_fqcn(
-                    "nonexistent.collection.module",
-                    extra_paths=[Path(tmpdir)],
-                )
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ModuleNotFoundError):
+            resolve_fqcn(
+                "nonexistent.collection.module",
+                extra_paths=[Path(tmpdir)],
+            )
 
 
 class TestFindAnsibleBuiltinPath:

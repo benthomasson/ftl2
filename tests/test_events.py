@@ -1,19 +1,15 @@
 """Tests for ftl2.events module."""
 
 import json
-import sys
-from io import StringIO
-
-import pytest
 
 from ftl2.events import (
+    DataEvent,
+    LogEvent,
     ModuleEvent,
     ProgressEvent,
-    LogEvent,
-    DataEvent,
-    emit_progress,
-    emit_log,
     emit_data,
+    emit_log,
+    emit_progress,
     parse_event,
     parse_events,
 )

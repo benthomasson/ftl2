@@ -14,7 +14,6 @@ import pytest
 
 from ftl2.policy import Policy, PolicyRule
 
-
 # =============================================================================
 # Policy Serialization (to_dict / to_wire / from_wire)
 # =============================================================================
@@ -317,9 +316,9 @@ class TestGateBuilderPolicyBundling:
 
     def test_policy_in_hash_source_files(self):
         """GateBuildConfig.compute_hash() includes policy.py in its inputs."""
-        import ftl2
-        from ftl2.gate import GateBuildConfig
         from pathlib import Path
+
+        import ftl2
 
         ftl2_dir = Path(ftl2.__file__).parent
         policy_path = ftl2_dir / "policy.py"
@@ -374,8 +373,8 @@ class TestRunnerPolicyIntegration:
 
     def test_policy_denied_error_raised_on_response(self):
         """PolicyDeniedError is importable and has correct hierarchy."""
-        from ftl2.policy import PolicyDeniedError
         from ftl2.exceptions import FTL2Error
+        from ftl2.policy import PolicyDeniedError
 
         err = PolicyDeniedError("denied by gate", rule=None)
         assert isinstance(err, FTL2Error)

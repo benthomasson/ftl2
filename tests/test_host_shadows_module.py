@@ -15,7 +15,6 @@ import pytest
 
 from ftl2.automation.proxy import ModuleAccessProxy, ModuleProxy
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -82,7 +81,7 @@ class TestWarnShadow:
         proxy = ModuleProxy(ctx)
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            result = proxy.__getattr__("file")
+            proxy.__getattr__("file")
         assert len(w) == 1
         assert "shadows" in str(w[0].message)
         assert "ftl.module.file()" in str(w[0].message)
@@ -442,7 +441,7 @@ class TestAutomationContextEscapeHatch:
         ctx = self._make_context_obj(host_keys=["file"])
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            result = getattr(ctx, "file")
+            result = ctx.file
         assert isinstance(result, HostScopedProxy)
         shadow_warnings = [x for x in w if "shadows" in str(x.message)]
         assert len(shadow_warnings) == 1

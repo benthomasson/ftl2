@@ -5,16 +5,16 @@ used_ftl based on whether an FTL module was dispatched, rather than
 hardcoding False.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+from ftl2.ftl_modules.exceptions import FTLModuleError
 from ftl2.ftl_modules.executor import (
-    execute,
     ExecuteResult,
     LocalHost,
+    execute,
 )
-from ftl2.ftl_modules.exceptions import FTLModuleError
-
 
 # ---------------------------------------------------------------------------
 # ExecuteResult.from_error() unit tests

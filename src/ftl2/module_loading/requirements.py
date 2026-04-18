@@ -187,7 +187,7 @@ def normalize_package_name(requirement: str) -> tuple[str, str]:
 
     # Common package name to import name mappings
     # (pip name -> import name)
-    PACKAGE_TO_IMPORT = {
+    PACKAGE_TO_IMPORT = {  # noqa: N806
         "linode-api4": "linode_api4",
         "linode_api4": "linode_api4",
         "boto3": "boto3",
@@ -421,7 +421,7 @@ def check_and_install_requirements(
         still_missing = check_module_requirements(module_path)
         if still_missing:
             return False, (
-                f"Installed packages but they're still not importable:\n"
+                "Installed packages but they're still not importable:\n"
                 + "\n".join(f"  - {m.package_name}" for m in still_missing)
             )
         return True, ""

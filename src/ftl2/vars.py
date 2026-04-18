@@ -8,7 +8,7 @@ where variable correctness is critical before execution.
 from dataclasses import dataclass, field
 from typing import Any
 
-from .inventory import Inventory, HostGroup
+from .inventory import Inventory
 from .types import HostConfig
 
 
@@ -337,7 +337,7 @@ def format_all_hosts_text(all_vars: dict[str, HostVariables]) -> str:
     lines = ["", "Host Variables Summary:", ""]
 
     # Find max name length for alignment
-    max_name = max(len(name) for name in all_vars.keys())
+    max_name = max(len(name) for name in all_vars)
 
     for host_name, host_vars in sorted(all_vars.items()):
         padding = " " * (max_name - len(host_name) + 2)

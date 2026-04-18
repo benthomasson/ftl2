@@ -62,7 +62,7 @@ async def has_swap_signature(path: str) -> bool:
 async def ensure_fstab_entry(path: str, priority: int | None = None) -> bool:
     """Add swap entry to /etc/fstab if not present. Returns True if changed."""
     try:
-        with open("/etc/fstab", "r") as f:
+        with open("/etc/fstab") as f:
             fstab = f.read()
     except FileNotFoundError:
         return False
@@ -85,7 +85,7 @@ async def ensure_fstab_entry(path: str, priority: int | None = None) -> bool:
 async def remove_fstab_entry(path: str) -> bool:
     """Remove swap entry from /etc/fstab. Returns True if changed."""
     try:
-        with open("/etc/fstab", "r") as f:
+        with open("/etc/fstab") as f:
             lines = f.readlines()
     except FileNotFoundError:
         return False
