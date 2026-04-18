@@ -223,38 +223,41 @@ def _load_inventory_yaml(
 
 
 def _is_ini_content(content: str) -> bool:
-    section_re = re.compile(r"^\[[\w.:_ -]+\]$")
+    """Return True if content looks like an INI inventory (has [section] headers)."""
     for line in content.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or line.startswith(";"):
             continue
-        if section_re.match(line):
+        if _INI_SECTION_RE.match(line):
             return True
     return False
 
 
 def _parse_ini_host_value(value: str) -> Any:
+    """Parse a host-line value using ast.literal_eval, falling back to string."""
     try:
         return ast.literal_eval(value)
     except (ValueError, SyntaxError):
         return value
 
 
+_INI_SECTION_RE = re.compile(r"^\[([^\]]+)\]$")
+
+
 def load_inventory_ini(content: str, require_hosts: bool = True) -> Inventory:
+    """Parse an Ansible INI inventory string into an Inventory."""
     inventory = Inventory()
     current_group_name: str | None = None
     section_type = "hosts"
-
-    section_re = re.compile(r"^\[([\w.:_ -]+)\]$")
 
     for line in content.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or line.startswith(";"):
             continue
 
-        m = section_re.match(line)
-        if m:
-            header = m.group(1)
+        section_match = _INI_SECTION_RE.match(line)
+        if section_match:
+            header = section_match.group(1)
             if header.endswith(":vars"):
                 current_group_name = header[: -len(":vars")]
                 section_type = "vars"
@@ -264,7 +267,7 @@ def load_inventory_ini(content: str, require_hosts: bool = True) -> Inventory:
             else:
                 current_group_name = header
                 section_type = "hosts"
-            if current_group_name not in (g.name for g in inventory.list_groups()):
+            if inventory.get_group(current_group_name) is None:
                 inventory.add_group(HostGroup(name=current_group_name))
             continue
 
