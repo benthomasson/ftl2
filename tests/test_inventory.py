@@ -1,9 +1,19 @@
 """Tests for inventory management."""
 
+import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
-from ftl2.inventory import HostGroup, Inventory, load_inventory, load_localhost, unique_hosts
+from ftl2.inventory import (
+    HostGroup,
+    Inventory,
+    load_inventory,
+    load_inventory_json,
+    load_inventory_script,
+    load_localhost,
+    unique_hosts,
+)
 from ftl2.types import HostConfig
 
 
@@ -507,3 +517,201 @@ class TestUniqueHosts:
         hosts = unique_hosts(inventory)
 
         assert len(hosts) == 0
+
+
+class TestLoadInventoryJson:
+    """Tests for load_inventory_json with _meta.hostvars."""
+
+    def test_meta_hostvars_applied_to_hosts(self):
+        data = {
+            "_meta": {
+                "hostvars": {
+                    "host1": {"ansible_host": "192.168.1.10", "var1": "value1"},
+                    "host2": {"var2": "value2"},
+                }
+            },
+            "webservers": {"hosts": ["host1", "host2"], "vars": {"http_port": 80}},
+        }
+        inventory = load_inventory_json(data)
+
+        ws = inventory.get_group("webservers")
+        assert ws is not None
+        host1 = ws.get_host("host1")
+        assert host1.ansible_host == "192.168.1.10"
+        assert host1.vars == {"var1": "value1"}
+
+        host2 = ws.get_host("host2")
+        assert host2.ansible_host == "host2"
+        assert host2.vars == {"var2": "value2"}
+
+    def test_group_vars_parsed(self):
+        data = {
+            "_meta": {"hostvars": {"h1": {}}},
+            "app": {"hosts": ["h1"], "vars": {"port": 8080}},
+        }
+        inventory = load_inventory_json(data)
+        assert inventory.get_group("app").vars == {"port": 8080}
+
+    def test_children_list_parsed(self):
+        data = {
+            "_meta": {"hostvars": {"h1": {}}},
+            "all": {"children": ["webservers"]},
+            "webservers": {"hosts": ["h1"]},
+        }
+        inventory = load_inventory_json(data)
+        assert "webservers" in inventory.get_group("all").children
+
+    def test_minimum_skeleton_require_hosts_false(self):
+        data = {
+            "_meta": {"hostvars": {}},
+            "all": {"children": ["ungrouped"]},
+            "ungrouped": {"children": []},
+        }
+        inventory = load_inventory_json(data, require_hosts=False)
+        assert inventory.get_group("all") is not None
+        assert inventory.get_group("ungrouped") is not None
+
+    def test_minimum_skeleton_require_hosts_true_raises(self):
+        import pytest
+
+        data = {
+            "_meta": {"hostvars": {}},
+            "all": {"children": ["ungrouped"]},
+            "ungrouped": {"children": []},
+        }
+        with pytest.raises(ValueError, match="No hosts loaded"):
+            load_inventory_json(data, require_hosts=True)
+
+
+class TestLoadInventoryScript:
+    """Tests for load_inventory_script with --host fallback."""
+
+    def _make_mock_run(self, list_output, host_outputs=None):
+        """Return a side_effect function for subprocess.run."""
+        def mock_run(cmd, **kwargs):
+            class Result:
+                def __init__(self, stdout):
+                    self.stdout = stdout
+                    self.returncode = 0
+
+            if cmd[1] == "--list":
+                return Result(json.dumps(list_output))
+            elif cmd[1] == "--host":
+                hostname = cmd[2]
+                return Result(json.dumps(host_outputs.get(hostname, {})))
+            raise ValueError(f"Unexpected command: {cmd}")
+
+        return mock_run
+
+    def test_meta_present_skips_host_calls(self):
+        list_data = {
+            "_meta": {"hostvars": {"h1": {"ansible_host": "10.0.0.1"}}},
+            "web": {"hosts": ["h1"]},
+        }
+
+        with patch("ftl2.inventory.subprocess.run") as mock_run:
+            mock_run.side_effect = self._make_mock_run(list_data)
+            inventory = load_inventory_script("/fake/script.py")
+
+        assert mock_run.call_count == 1
+        assert mock_run.call_args_list[0][0][0][1] == "--list"
+
+        h1 = inventory.get_group("web").get_host("h1")
+        assert h1.ansible_host == "10.0.0.1"
+
+    def test_host_fallback_when_meta_absent(self):
+        list_data = {
+            "web": {"hosts": ["h1", "h2"]},
+        }
+        host_outputs = {
+            "h1": {"ansible_host": "10.0.0.1", "role": "primary"},
+            "h2": {"ansible_host": "10.0.0.2"},
+        }
+
+        with patch("ftl2.inventory.subprocess.run") as mock_run:
+            mock_run.side_effect = self._make_mock_run(list_data, host_outputs)
+            inventory = load_inventory_script("/fake/script.py")
+
+        assert mock_run.call_count == 3
+        host_calls = [c for c in mock_run.call_args_list if c[0][0][1] == "--host"]
+        assert len(host_calls) == 2
+        called_hosts = {c[0][0][2] for c in host_calls}
+        assert called_hosts == {"h1", "h2"}
+
+        h1 = inventory.get_group("web").get_host("h1")
+        assert h1.ansible_host == "10.0.0.1"
+        assert h1.vars == {"role": "primary"}
+
+        h2 = inventory.get_group("web").get_host("h2")
+        assert h2.ansible_host == "10.0.0.2"
+
+    def test_host_fallback_multiple_groups_deduplicates(self):
+        """Same host in two groups only triggers one --host call."""
+        list_data = {
+            "web": {"hosts": ["shared"]},
+            "app": {"hosts": ["shared"]},
+        }
+        host_outputs = {"shared": {"ansible_host": "10.0.0.5"}}
+
+        with patch("ftl2.inventory.subprocess.run") as mock_run:
+            mock_run.side_effect = self._make_mock_run(list_data, host_outputs)
+            inventory = load_inventory_script("/fake/script.py")
+
+        host_calls = [c for c in mock_run.call_args_list if c[0][0][1] == "--host"]
+        assert len(host_calls) == 1
+
+        assert inventory.get_group("web").get_host("shared").ansible_host == "10.0.0.5"
+        assert inventory.get_group("app").get_host("shared").ansible_host == "10.0.0.5"
+
+    def test_host_fallback_empty_host_response(self):
+        """--host returning {} still produces a valid host with defaults."""
+        list_data = {"grp": {"hosts": ["bare"]}}
+        host_outputs = {"bare": {}}
+
+        with patch("ftl2.inventory.subprocess.run") as mock_run:
+            mock_run.side_effect = self._make_mock_run(list_data, host_outputs)
+            inventory = load_inventory_script("/fake/script.py")
+
+        host = inventory.get_group("grp").get_host("bare")
+        assert host is not None
+        assert host.ansible_host == "bare"
+        assert host.vars == {}
+
+    def test_host_fallback_no_hosts_require_false(self):
+        """--list with no hosts and no _meta, require_hosts=False succeeds."""
+        list_data = {"all": {"children": ["ungrouped"]}, "ungrouped": {}}
+
+        with patch("ftl2.inventory.subprocess.run") as mock_run:
+            mock_run.side_effect = self._make_mock_run(list_data)
+            inventory = load_inventory_script("/fake/script.py", require_hosts=False)
+
+        assert mock_run.call_count == 1
+        assert inventory.get_all_hosts() == {}
+
+    def test_load_inventory_json_file_format(self):
+        """load_inventory auto-detects JSON files and parses _meta.hostvars."""
+        data = {
+            "_meta": {
+                "hostvars": {
+                    "host1": {"ansible_host": "192.168.1.10", "var1": "value1"},
+                    "host2": {"var2": "value2"},
+                }
+            },
+            "all": {"children": ["ungrouped", "webservers"]},
+            "webservers": {"hosts": ["host1", "host2"], "vars": {"http_port": 80}},
+        }
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(data, f)
+            f.flush()
+            path = Path(f.name)
+
+        try:
+            inventory = load_inventory(path)
+            ws = inventory.get_group("webservers")
+            assert ws.get_host("host1").ansible_host == "192.168.1.10"
+            assert ws.get_host("host1").vars == {"var1": "value1"}
+            assert ws.get_host("host2").vars == {"var2": "value2"}
+            assert ws.vars == {"http_port": 80}
+        finally:
+            path.unlink()

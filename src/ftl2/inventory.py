@@ -354,6 +354,25 @@ def load_inventory_script(
         check=True,
     )
     data = json.loads(result.stdout)
+
+    if "_meta" not in data:
+        all_hosts: set[str] = set()
+        for group_data in data.values():
+            if isinstance(group_data, dict) and isinstance(group_data.get("hosts"), list):
+                all_hosts.update(group_data["hosts"])
+
+        hostvars: dict[str, Any] = {}
+        for hostname in all_hosts:
+            host_result = subprocess.run(
+                [str(path), "--host", hostname],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            hostvars[hostname] = json.loads(host_result.stdout)
+
+        data["_meta"] = {"hostvars": hostvars}
+
     return load_inventory_json(data, require_hosts=require_hosts)
 
 
