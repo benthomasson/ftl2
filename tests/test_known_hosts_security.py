@@ -8,13 +8,10 @@ Validates that:
 - Edge cases around type handling and cache key behavior
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from ftl2.ssh import SSHConfig, SSHConnectionPool, SSHHost
-
 
 # =============================================================================
 # SSHConfig: known_hosts=None rejection

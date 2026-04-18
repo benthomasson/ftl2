@@ -23,8 +23,8 @@ import sys
 
 def gather_facts():
     """Gather system facts."""
-    import socket
     import getpass
+    import socket
 
     facts = {
         "system": platform.system(),
@@ -46,7 +46,7 @@ def gather_facts():
 def main():
     """Execute setup module."""
     try:
-        args = json.load(sys.stdin)
+        json.load(sys.stdin)
     except Exception as e:
         result = {
             "failed": True,

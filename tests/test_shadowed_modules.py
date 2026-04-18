@@ -10,7 +10,6 @@ import pytest
 
 from ftl2 import automation
 from ftl2.module_loading.shadowed import (
-    SHADOWED_MODULES,
     get_native_method,
     is_shadowed,
 )
@@ -101,7 +100,7 @@ class TestShadowedModuleIntegration:
             start = time.monotonic()
             try:
                 # With 1 second delay
-                result = await ftl.local.wait_for_connection(timeout=5, delay=1)
+                await ftl.local.wait_for_connection(timeout=5, delay=1)
                 elapsed = time.monotonic() - start
                 # Should have waited at least 1 second for delay
                 assert elapsed >= 1.0

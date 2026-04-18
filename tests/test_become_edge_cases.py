@@ -1,6 +1,7 @@
 """Edge-case tests for become_prefix — supplements test_become.py."""
 
 import pytest
+
 from ftl2.types import BecomeConfig
 
 

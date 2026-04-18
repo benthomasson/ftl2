@@ -4,7 +4,6 @@ Validates that both LocalModuleRunner and RemoteModuleRunner follow the
 errors-as-data contract: run() always returns ModuleResult, never raises.
 """
 
-import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,7 +14,6 @@ from ftl2.exceptions import (
     ConnectionError,
     ErrorContext,
     ErrorTypes,
-    FTL2Error,
     GateError,
     ModuleExecutionError,
 )
@@ -23,11 +21,9 @@ from ftl2.executor import ModuleExecutor
 from ftl2.runners import (
     ExecutionContext,
     LocalModuleRunner,
-    ModuleRunnerFactory,
     RemoteModuleRunner,
 )
 from ftl2.types import ExecutionConfig, GateConfig, HostConfig, ModuleResult
-
 
 # --- Fixtures ---
 
@@ -310,7 +306,7 @@ class TestExecutorUniformHandling:
 
         assert results.total_hosts == 2
         assert results.failed == 2
-        for name, result in results.results.items():
+        for _name, result in results.results.items():
             assert isinstance(result, ModuleResult)
             assert result.is_failure
 

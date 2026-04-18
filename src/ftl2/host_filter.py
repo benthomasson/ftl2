@@ -8,11 +8,9 @@ Provides functionality to filter hosts by patterns, supporting:
 """
 
 import fnmatch
-import re
-from typing import Set
 
 
-def parse_limit_pattern(pattern: str) -> tuple[Set[str], Set[str], Set[str], Set[str]]:
+def parse_limit_pattern(pattern: str) -> tuple[set[str], set[str], set[str], set[str]]:
     """Parse a limit pattern into include/exclude sets.
 
     Args:
@@ -25,10 +23,10 @@ def parse_limit_pattern(pattern: str) -> tuple[Set[str], Set[str], Set[str], Set
     Returns:
         Tuple of (include_exact, include_patterns, exclude_patterns, include_groups)
     """
-    include_exact: Set[str] = set()
-    include_patterns: Set[str] = set()
-    exclude_patterns: Set[str] = set()
-    include_groups: Set[str] = set()
+    include_exact: set[str] = set()
+    include_patterns: set[str] = set()
+    exclude_patterns: set[str] = set()
+    include_groups: set[str] = set()
 
     if not pattern:
         return include_exact, include_patterns, exclude_patterns, include_groups
@@ -56,9 +54,9 @@ def parse_limit_pattern(pattern: str) -> tuple[Set[str], Set[str], Set[str], Set
 
 def match_host(
     hostname: str,
-    include_exact: Set[str],
-    include_patterns: Set[str],
-    exclude_patterns: Set[str],
+    include_exact: set[str],
+    include_patterns: set[str],
+    exclude_patterns: set[str],
 ) -> bool:
     """Check if a hostname matches the filter criteria.
 
@@ -85,17 +83,13 @@ def match_host(
         return True
 
     # Check pattern match
-    for pattern in include_patterns:
-        if fnmatch.fnmatchcase(hostname, pattern):
-            return True
-
-    return False
+    return any(fnmatch.fnmatchcase(hostname, pattern) for pattern in include_patterns)
 
 
 def filter_hosts(
     all_hosts: dict[str, any],
     limit_pattern: str,
-    group_hosts: dict[str, Set[str]] | None = None,
+    group_hosts: dict[str, set[str]] | None = None,
 ) -> dict[str, any]:
     """Filter hosts based on a limit pattern.
 
@@ -145,7 +139,7 @@ def filter_hosts(
     return result
 
 
-def get_group_hosts_mapping(inventory) -> dict[str, Set[str]]:
+def get_group_hosts_mapping(inventory) -> dict[str, set[str]]:
     """Build a mapping of group names to hostnames from an inventory.
 
     Args:
@@ -154,7 +148,7 @@ def get_group_hosts_mapping(inventory) -> dict[str, Set[str]]:
     Returns:
         Dictionary mapping group name -> set of hostnames
     """
-    group_hosts: dict[str, Set[str]] = {}
+    group_hosts: dict[str, set[str]] = {}
 
     for group in inventory.list_groups():
         group_hosts[group.name] = set(group.hosts.keys())

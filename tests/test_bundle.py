@@ -8,16 +8,14 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-import pytest
-
 from ftl2.module_loading.bundle import (
-    build_bundle,
-    verify_bundle,
-    list_bundle_contents,
-    get_archive_path,
     Bundle,
-    BundleInfo,
     BundleCache,
+    BundleInfo,
+    build_bundle,
+    get_archive_path,
+    list_bundle_contents,
+    verify_bundle,
 )
 
 

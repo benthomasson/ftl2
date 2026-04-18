@@ -12,10 +12,12 @@ Messages are either 2-tuples or 3-tuples:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import asyncio
 
 logger = logging.getLogger(__name__)
 

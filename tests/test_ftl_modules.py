@@ -3,24 +3,24 @@
 import pytest
 
 from ftl2.ftl_modules import (
-    FTLModuleError,
-    FTLModuleCheckModeError,
-    FTLModuleNotFoundError,
-    FTL_MODULES,
     ANSIBLE_COMPAT,
-    get_module,
-    has_ftl_module,
-    list_modules,
-    list_ansible_compat,
-    ftl_file,
+    FTL_MODULES,
+    FTLModuleCheckModeError,
+    FTLModuleError,
+    FTLModuleNotFoundError,
+    ftl_command,
     ftl_copy,
+    ftl_ec2_instance,
+    ftl_file,
+    ftl_get_url,
+    ftl_pip,
+    ftl_shell,
     ftl_template,
     ftl_uri,
-    ftl_get_url,
-    ftl_command,
-    ftl_shell,
-    ftl_pip,
-    ftl_ec2_instance,
+    get_module,
+    has_ftl_module,
+    list_ansible_compat,
+    list_modules,
 )
 
 

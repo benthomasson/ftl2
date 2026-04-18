@@ -8,12 +8,12 @@ import hashlib
 import io
 import logging
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
-from ftl2.module_loading.dependencies import find_all_dependencies, DependencyResult
-from ftl2.module_loading.fqcn import resolve_fqcn, find_ansible_builtin_path
+from ftl2.module_loading.dependencies import DependencyResult, find_all_dependencies
+from ftl2.module_loading.fqcn import resolve_fqcn
 
 logger = logging.getLogger(__name__)
 

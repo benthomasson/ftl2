@@ -1,6 +1,5 @@
 """Tests for async SSH transport (Phase 6)."""
 
-import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,8 +7,8 @@ import pytest
 
 from ftl2.ssh import (
     SSHConfig,
-    SSHHost,
     SSHConnectionPool,
+    SSHHost,
     ssh_run,
     ssh_run_on_hosts,
 )
@@ -190,7 +189,7 @@ class TestSSHHost:
         mock_conn.is_closed.return_value = False
 
         async def mock_run_timeout(*args, **kwargs):
-            raise asyncio.TimeoutError()
+            raise TimeoutError()
 
         mock_conn.run = mock_run_timeout
 
@@ -453,7 +452,7 @@ class TestSSHSecurity:
 
     def test_command_injection_path_exists(self):
         """Test that path_exists quotes the path argument."""
-        host = SSHHost("server.example.com")
+        SSHHost("server.example.com")
         # The path with shell metacharacters should be quoted
         import shlex
         malicious_path = "/tmp/test; rm -rf /"
@@ -575,7 +574,7 @@ class TestConvenienceFunctions:
             )
 
         assert len(results) == 3
-        for hostname, stdout, stderr, rc in results:
+        for hostname, stdout, _stderr, rc in results:
             assert hostname in ["server1", "server2", "server3"]
             assert stdout == "up\n"
             assert rc == 0
@@ -587,7 +586,6 @@ class TestIntegrationWithExecutor:
     @pytest.mark.asyncio
     async def test_ssh_host_implements_remote_host_protocol(self):
         """Test that SSHHost works with executor's RemoteHost protocol."""
-        from ftl2.ftl_modules.executor import execute
 
         host = SSHHost("server.example.com", username="deploy")
 

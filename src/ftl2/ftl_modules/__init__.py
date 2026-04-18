@@ -17,29 +17,30 @@ Usage:
     result = ftl_copy(src="/tmp/foo", dest="/tmp/bar")
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
+from ftl2.ftl_modules.aws import ftl_ec2_instance
+from ftl2.ftl_modules.command import ftl_command, ftl_shell
+from ftl2.ftl_modules.dnf import ftl_dnf
 from ftl2.ftl_modules.exceptions import (
-    FTLModuleError,
     FTLModuleCheckModeError,
+    FTLModuleError,
     FTLModuleNotFoundError,
 )
-from ftl2.ftl_modules.file import ftl_file, ftl_copy, ftl_template
-from ftl2.ftl_modules.http import ftl_uri, ftl_get_url
-from ftl2.ftl_modules.command import ftl_command, ftl_shell
-from ftl2.ftl_modules.pip import ftl_pip
-from ftl2.ftl_modules.dnf import ftl_dnf
-from ftl2.ftl_modules.wait_for import ftl_wait_for
-from ftl2.ftl_modules.aws import ftl_ec2_instance
 from ftl2.ftl_modules.executor import (
-    execute,
-    execute_on_hosts,
-    execute_batch,
-    run,
-    run_on,
     ExecuteResult,
     LocalHost,
+    execute,
+    execute_batch,
+    execute_on_hosts,
+    run,
+    run_on,
 )
+from ftl2.ftl_modules.file import ftl_copy, ftl_file, ftl_template
+from ftl2.ftl_modules.http import ftl_get_url, ftl_uri
+from ftl2.ftl_modules.pip import ftl_pip
+from ftl2.ftl_modules.wait_for import ftl_wait_for
 
 # Type for module functions
 ModuleFunc = Callable[..., dict[str, Any]]

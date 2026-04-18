@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from ftl2.message import GateProtocol, MAX_MESSAGE_SIZE, ProtocolError
+from ftl2.message import MAX_MESSAGE_SIZE, GateProtocol, ProtocolError
 
 
 class TestGateProtocol:

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
-from ftl2.automation.proxy import ModuleProxy, HostScopedProxy, NamespaceProxy
+from ftl2.automation.proxy import HostScopedProxy, ModuleProxy, NamespaceProxy
 
 
 class _FakeContext:
@@ -111,7 +111,7 @@ class TestInventoryLookupLogging:
 
     def test_io_error_logged_at_debug(self, caplog):
         """IOError from inventory access failure is logged at DEBUG."""
-        proxy, _ = _make_proxy(hosts_side_effect=IOError("disk read error"))
+        proxy, _ = _make_proxy(hosts_side_effect=OSError("disk read error"))
 
         with caplog.at_level(logging.DEBUG, logger="ftl2.automation.proxy"):
             result = proxy.__getattr__("cache01")
@@ -261,7 +261,7 @@ class TestSuccessfulInventoryLookup:
         proxy, _ = _make_proxy(hosts_return=hp)
 
         with caplog.at_level(logging.DEBUG, logger="ftl2.automation.proxy"):
-            result = proxy.__getattr__("unknown_name")
+            proxy.__getattr__("unknown_name")
 
         # Should fall through to module check without logging an error
         inventory_msgs = [r for r in caplog.records if "Inventory lookup failed" in r.message]

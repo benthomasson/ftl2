@@ -8,7 +8,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # Patterns that indicate destructive commands
 DESTRUCTIVE_PATTERNS = [
     # rm with force/recursive flags
@@ -101,10 +100,7 @@ class SafetyCheckResult:
 
 def _is_safe_path(cmd: str) -> bool:
     """Check if the command only operates on safe paths."""
-    for safe_path in SAFE_PATHS:
-        if safe_path in cmd:
-            return True
-    return False
+    return any(safe_path in cmd for safe_path in SAFE_PATHS)
 
 
 def check_command_safety(cmd: str) -> SafetyCheckResult:

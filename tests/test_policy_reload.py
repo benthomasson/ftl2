@@ -1,15 +1,12 @@
 """Tests for runtime policy reload (#73)."""
 
 import asyncio
-import tempfile
 import time
-from pathlib import Path
 
 import pytest
 
 from ftl2.automation.context import AutomationContext
-from ftl2.policy import Policy, PolicyRule
-
+from ftl2.policy import Policy
 
 # ---------------------------------------------------------------------------
 # reload_policy()

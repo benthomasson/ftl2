@@ -4,25 +4,35 @@ Provides the AutomationContext class that enables the intuitive
 ftl.module_name() syntax for automation scripts.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 import time
 import uuid
 import warnings
+from collections.abc import Callable, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ftl2.automation.proxy import ModuleProxy
 from ftl2.exceptions import FTL2ConnectionError
 
 if TYPE_CHECKING:
+    from ftl2.automation.proxy import HostScopedProxy
+    from ftl2.module_loading.bundle import BundleCache
+    from ftl2.policy import Policy
+    from ftl2.runners import Gate, RemoteModuleRunner
     from ftl2.state import State
-from ftl2.ftl_modules import list_modules, ExecuteResult
-from ftl2.inventory import Inventory, HostGroup, load_inventory, load_localhost
-from ftl2.types import HostConfig, gate_cache_key
+    from ftl2.types import BecomeConfig
+from datetime import UTC
+
+from ftl2.ftl_modules import ExecuteResult, list_modules
+from ftl2.inventory import HostGroup, Inventory, load_inventory, load_localhost
 from ftl2.ssh import SSHHost
+from ftl2.types import HostConfig, gate_cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +65,7 @@ class AutomationError(Exception):
         message: Error message
     """
 
-    def __init__(self, message: str, result: "ExecuteResult | None" = None):
+    def __init__(self, message: str, result: ExecuteResult | None = None):
         super().__init__(message)
         self.result = result
         self.message = message
@@ -368,7 +378,7 @@ class AutomationContext:
         self._inventory = self._load_inventory(inventory, ignore_missing=ignore_missing_inventory)
 
         # Initialize state if state_file provided
-        self._state: "State | None" = None
+        self._state: State | None = None
         if state_file is not None:
             from ftl2.state import State, merge_state_into_inventory
             self._state = State(state_file)
@@ -422,9 +432,9 @@ class AutomationContext:
         self._check_name_collisions()
         self._results: list[ExecuteResult] = []
         self._ssh_connections: dict[str, SSHHost] = {}
-        self._remote_runner: "RemoteModuleRunner | None" = None
+        self._remote_runner: RemoteModuleRunner | None = None
         self._gate_locks: dict[str, asyncio.Lock] = {}
-        self._bundle_cache: "BundleCache | None" = None
+        self._bundle_cache: BundleCache | None = None
         self._start_time: float | None = None
 
     def _load_bound_secrets(self) -> None:
@@ -553,11 +563,11 @@ class AutomationContext:
             return
 
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         line = dict(event)
         line["timestamp"] = datetime.fromtimestamp(
-            event["timestamp"], tz=timezone.utc
+            event["timestamp"], tz=UTC
         ).isoformat()
         with open(self._policy_audit_file, "a") as f:
             f.write(json.dumps(line) + "\n")
@@ -606,10 +616,7 @@ class AutomationContext:
             )
 
         # Load and validate — if this raises, old policy stays
-        if source.is_dir():
-            new_policy = Policy.from_directory(source)
-        else:
-            new_policy = Policy.from_file(source)
+        new_policy = Policy.from_directory(source) if source.is_dir() else Policy.from_file(source)
 
         # Atomic swap — Python attribute assignment is atomic in asyncio
         self._policy = new_policy
@@ -619,7 +626,7 @@ class AutomationContext:
         logger.info("Policy reloaded from %s (%d rules)", source, len(new_policy.rules))
 
     @property
-    def policy(self) -> "Policy":
+    def policy(self) -> Policy:
         """The currently active policy."""
         return self._policy
 
@@ -933,7 +940,7 @@ class AutomationContext:
         return self._secrets_proxy
 
     @property
-    def state(self) -> "State":
+    def state(self) -> State:
         """Access the state manager for persistent host/resource tracking.
 
         State enables crash recovery and idempotent provisioning by
@@ -969,9 +976,7 @@ class AutomationContext:
         if self._enabled_modules is not None:
             result = []
             for m in self._enabled_modules:
-                if m in all_modules:
-                    result.append(m)
-                elif m.rsplit(".", 1)[-1] in all_modules:
+                if m in all_modules or m.rsplit(".", 1)[-1] in all_modules:
                     result.append(m)
             return result
         return all_modules
@@ -1033,7 +1038,7 @@ class AutomationContext:
         """List of all execution results from this context."""
         return self._results.copy()
 
-    def __getitem__(self, name: str) -> "HostScopedProxy":
+    def __getitem__(self, name: str) -> HostScopedProxy:
         """Return a HostScopedProxy for the given host or group name.
 
         Supports names with dashes and other characters that aren't valid
@@ -1242,7 +1247,7 @@ class AutomationContext:
         })
 
     async def _send_gate_command(
-        self, host: "HostConfig", msg_type: str, data: dict[str, Any]
+        self, host: HostConfig, msg_type: str, data: dict[str, Any]
     ) -> tuple[str, Any]:
         """Send a protocol-level command to a host's gate and read the response.
 
@@ -1321,6 +1326,7 @@ class AutomationContext:
                 indefinite (until cancelled or connections close).
         """
         import asyncio as _asyncio
+
         from ftl2.message import GateProtocol
 
         if self._remote_runner is None:
@@ -1330,7 +1336,7 @@ class AutomationContext:
         if not gates:
             return
 
-        async def _listen_one(host_name: str, gate: "Gate") -> None:
+        async def _listen_one(host_name: str, gate: Gate) -> None:
             while True:
                 msg = await self._remote_runner.protocol.read_message(
                     gate.gate_process.stdout
@@ -1350,7 +1356,7 @@ class AutomationContext:
                 )
             else:
                 await _asyncio.gather(*tasks)
-        except (_asyncio.TimeoutError, _asyncio.CancelledError, KeyboardInterrupt):
+        except (TimeoutError, _asyncio.CancelledError, KeyboardInterrupt):
             pass
 
     def _log_result(
@@ -1553,7 +1559,7 @@ class AutomationContext:
         host: HostConfig,
         module_name: str,
         params: dict[str, Any],
-        become: "BecomeConfig | None" = None,
+        become: BecomeConfig | None = None,
     ) -> ExecuteResult:
         """Execute module on remote host via gate process.
 
@@ -1570,11 +1576,8 @@ class AutomationContext:
         Returns:
             ExecuteResult with execution outcome
         """
-        from ftl2.ftl_modules.executor import is_ftl_module, get_ftl_module_source, ExecuteResult
-        from ftl2.runners import ExecutionContext, Gate
-        from ftl2.types import ExecutionConfig, GateConfig
-        from getpass import getuser
-        import sys
+
+        from ftl2.ftl_modules.executor import ExecuteResult, get_ftl_module_source, is_ftl_module
 
         if self._remote_runner is None:
             raise RuntimeError("RemoteModuleRunner not initialized - use 'async with' context manager")
@@ -1743,19 +1746,20 @@ class AutomationContext:
 
     async def _execute_multiplexed(
         self,
-        gate: "Gate",
+        gate: Gate,
         host: HostConfig,
         module_name: str,
         params: dict[str, Any],
-    ) -> "ExecuteResult":
+    ) -> ExecuteResult:
         """Execute module through a multiplexed gate using msg_id futures.
 
         No lock needed — multiple requests can be in-flight on the same gate.
         The background reader task dispatches responses to Futures by msg_id.
         """
-        from ftl2.ftl_modules.executor import is_ftl_module, get_ftl_module_source, ExecuteResult
         import base64
         import json
+
+        from ftl2.ftl_modules.executor import ExecuteResult, get_ftl_module_source, is_ftl_module
 
         try:
             ftl_attempted = False
@@ -1886,9 +1890,9 @@ class AutomationContext:
     async def _get_or_create_gate(
         self,
         host: HostConfig,
-        become: "BecomeConfig | None" = None,
+        become: BecomeConfig | None = None,
         register_subsystem: bool | None = None,
-    ) -> "Gate":
+    ) -> Gate:
         """Get or create a gate connection for a host.
 
         Args:
@@ -1900,10 +1904,11 @@ class AutomationContext:
         Returns:
             Active Gate connection
         """
-        from ftl2.runners import ExecutionContext
-        from ftl2.types import ExecutionConfig, GateConfig, BecomeConfig
-        from getpass import getuser
         import sys
+        from getpass import getuser
+
+        from ftl2.runners import ExecutionContext
+        from ftl2.types import ExecutionConfig, GateConfig
 
         if self._remote_runner is None:
             raise RuntimeError("RemoteModuleRunner not initialized")
@@ -2177,11 +2182,11 @@ class AutomationContext:
                 results.append({"host": host.name, "status": "error", "message": str(e)})
         return results
 
-    async def __aenter__(self) -> "AutomationContext":
+    async def __aenter__(self) -> AutomationContext:
         """Enter the async context manager."""
-        from ftl2.runners import RemoteModuleRunner
         from ftl2.gate import GateBuilder
         from ftl2.module_loading.bundle import BundleCache
+        from ftl2.runners import RemoteModuleRunner
 
         self._remote_runner = RemoteModuleRunner()
         self._remote_runner.gate_builder = GateBuilder()
@@ -2270,7 +2275,6 @@ class AutomationContext:
         requirements from the DOCUMENTATION string, then writes them
         in requirements.txt format.
         """
-        import re
         from ftl2.module_loading.fqcn import resolve_fqcn
         from ftl2.module_loading.requirements import get_module_requirements
 
@@ -2418,10 +2422,10 @@ class AutomationContext:
         (params are captured before secret injection).
         """
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         def epoch_to_iso(epoch: float) -> str:
-            return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+            return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
 
         actions = []
         for r in self._results:

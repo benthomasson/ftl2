@@ -7,11 +7,8 @@ case-sensitive matching.
 
 import fnmatch
 
-import pytest
-
-from ftl2.host_filter import filter_hosts, match_host, parse_limit_pattern
+from ftl2.host_filter import filter_hosts, match_host
 from ftl2.policy import Policy, PolicyRule
-
 
 # ---------------------------------------------------------------------------
 # Policy engine case-sensitivity tests

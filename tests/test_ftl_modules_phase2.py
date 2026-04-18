@@ -3,14 +3,14 @@
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from ftl2.ftl_modules import FTLModuleError
-from ftl2.ftl_modules.file import ftl_file, ftl_copy, ftl_template
-from ftl2.ftl_modules.http import ftl_uri, ftl_get_url
 from ftl2.ftl_modules.command import ftl_command, ftl_shell
+from ftl2.ftl_modules.file import ftl_copy, ftl_file, ftl_template
+from ftl2.ftl_modules.http import ftl_get_url, ftl_uri
 from ftl2.ftl_modules.pip import ftl_pip
 
 

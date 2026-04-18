@@ -5,10 +5,11 @@ for file transfers. This enables relative path resolution from CWD and
 proper local-to-remote file copying.
 """
 
-import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
+
+import pytest
 
 from ftl2.automation.proxy import HostScopedProxy
 
@@ -260,7 +261,7 @@ class TestShadowedModules:
 
     def test_copy_is_shadowed(self):
         """copy module is registered as shadowed."""
-        from ftl2.module_loading.shadowed import is_shadowed, get_native_method
+        from ftl2.module_loading.shadowed import get_native_method, is_shadowed
 
         assert is_shadowed("copy")
         assert is_shadowed("ansible.builtin.copy")
@@ -268,7 +269,7 @@ class TestShadowedModules:
 
     def test_template_is_shadowed(self):
         """template module is registered as shadowed."""
-        from ftl2.module_loading.shadowed import is_shadowed, get_native_method
+        from ftl2.module_loading.shadowed import get_native_method, is_shadowed
 
         assert is_shadowed("template")
         assert is_shadowed("ansible.builtin.template")
@@ -276,7 +277,7 @@ class TestShadowedModules:
 
     def test_fetch_is_shadowed(self):
         """fetch module is registered as shadowed."""
-        from ftl2.module_loading.shadowed import is_shadowed, get_native_method
+        from ftl2.module_loading.shadowed import get_native_method, is_shadowed
 
         assert is_shadowed("fetch")
         assert is_shadowed("ansible.builtin.fetch")
@@ -509,7 +510,7 @@ class TestShellShadowed:
 
     def test_shell_is_shadowed(self):
         """shell module is registered as shadowed."""
-        from ftl2.module_loading.shadowed import is_shadowed, get_native_method
+        from ftl2.module_loading.shadowed import get_native_method, is_shadowed
 
         assert is_shadowed("shell")
         assert is_shadowed("ansible.builtin.shell")

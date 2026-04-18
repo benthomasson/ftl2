@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from ftl2.automation.context import AutomationContext
-from ftl2.policy import Policy, PolicyRule
+from ftl2.policy import Policy
 
 
 # Helper to write a policy YAML file

@@ -13,6 +13,6 @@ Quick Start:
 
 __version__ = "0.1.0"
 
-from ftl2.automation import automation, AutomationContext
+from ftl2.automation import AutomationContext, automation
 
 __all__ = ["__version__", "automation", "AutomationContext"]

@@ -7,14 +7,12 @@ multiplexed mode wiring, event routing, and error tracking.
 import asyncio
 import json
 import os
-import sys
 import time
 
 import pytest
 
 from ftl2.message import GateProtocol
 from ftl2.runners import Gate, _gate_reader_loop
-
 
 # ---------------------------------------------------------------------------
 # Helpers (reused from test_multiplexing.py)
@@ -349,7 +347,7 @@ class TestGateStatusSerialMode:
         )
 
         protocol = GateProtocol()
-        reader = make_reader_from_messages([
+        make_reader_from_messages([
             ["StartGateStatus", {"interval": 1.0}],
             ["Shutdown", {}],
         ])
@@ -363,8 +361,8 @@ class TestGateStatusSerialMode:
         #
         # For serial mode, we test indirectly: the message type is
         # recognized and handled without error.
-        watcher = FileWatcher(protocol, writer)
-        monitor = SystemMonitor(protocol, writer)
+        FileWatcher(protocol, writer)
+        SystemMonitor(protocol, writer)
         gate_status_monitor = GateStatusMonitor(protocol, writer, "serial_hash")
 
         # Directly test the handler behavior

@@ -1,25 +1,21 @@
 """Tests for module requirements checker."""
 
-import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from ftl2.module_loading.requirements import (
-    extract_documentation,
-    parse_requirements,
-    get_module_requirements,
-    normalize_package_name,
-    is_package_installed,
-    check_module_requirements,
-    format_missing_requirements_error,
-    install_missing_requirements,
-    check_and_install_requirements,
-    ModuleRequirements,
-    MissingRequirement,
     InstallResult,
+    MissingRequirement,
+    check_and_install_requirements,
+    check_module_requirements,
+    extract_documentation,
+    format_missing_requirements_error,
+    get_module_requirements,
+    install_missing_requirements,
+    is_package_installed,
+    normalize_package_name,
+    parse_requirements,
 )
 
 

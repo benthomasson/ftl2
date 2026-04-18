@@ -2,7 +2,6 @@
 
 import logging
 import time
-from io import StringIO
 
 import pytest
 
@@ -75,9 +74,8 @@ class TestLogScope:
         logger = logging.getLogger("test.scope.exception")
         logger.setLevel(logging.INFO)
 
-        with pytest.raises(ValueError):
-            with log_scope(logger, "Failing operation"):
-                raise ValueError("test error")
+        with pytest.raises(ValueError), log_scope(logger, "Failing operation"):
+            raise ValueError("test error")
 
         # Should still log exit even on exception
         assert "Entering: Failing operation" in caplog.text
@@ -141,9 +139,8 @@ class TestLogPerformance:
         logger = logging.getLogger("test.perf.exception")
         logger.setLevel(logging.INFO)
 
-        with pytest.raises(ValueError):
-            with log_performance(logger, "Failing operation"):
-                raise ValueError("test error")
+        with pytest.raises(ValueError), log_performance(logger, "Failing operation"):
+            raise ValueError("test error")
 
         # Should still log duration even on exception
         assert "Failing operation completed" in caplog.text

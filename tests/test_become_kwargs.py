@@ -24,7 +24,7 @@ class TestBecomeKwargs:
     def test_contains_required_keys(self):
         """_BECOME_KWARGS should contain at least the three core become keys."""
         required = {"become", "become_user", "become_method"}
-        assert _BECOME_KWARGS >= required
+        assert required <= _BECOME_KWARGS
 
 
 class TestExtractBecomeOverrides:

@@ -14,30 +14,37 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from getpass import getuser
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import asyncssh
 from asyncssh.connection import SSHClientConnection
-from asyncssh.process import SSHClientProcess
 
 from .arguments import merge_arguments
 from .exceptions import (
     AuthenticationError,
-    FTL2ConnectionError,
-    ErrorContext,
     ErrorTypes,
+    FTL2ConnectionError,
     FTL2Error,
     GateHandshakeTimeoutError,
     GateRequestTimeoutError,
     GateUnresponsiveError,
     ModuleExecutionError,
-    get_suggestions,
 )
-from .policy import PolicyDeniedError
 from .gate import GateBuildConfig, GateBuilder
 from .message import GateProtocol
-from .types import BecomeConfig, ExecutionConfig, GateConfig, HostConfig, ModuleResult, gate_cache_key
+from .policy import PolicyDeniedError
+from .types import (
+    BecomeConfig,
+    ExecutionConfig,
+    GateConfig,
+    HostConfig,
+    ModuleResult,
+    gate_cache_key,
+)
 from .utils import find_module, module_wants_json
+
+if TYPE_CHECKING:
+    from asyncssh.process import SSHClientProcess
 
 logger = logging.getLogger(__name__)
 
@@ -650,7 +657,7 @@ class RemoteModuleRunner(ModuleRunner):
                     error=result_data.get("stderr") if not success else None,
                 )
 
-            except Exception as e:
+            except Exception:
                 # Clean up gate on error — but not multiplexed gates (other requests may be in-flight)
                 if not gate.multiplexed:
                     await self._close_gate(gate)
@@ -762,7 +769,6 @@ class RemoteModuleRunner(ModuleRunner):
         """
         import asyncio
 
-        last_error = None
         auth_method = "SSH key" if ssh_key_file else ("password" if ssh_password else "default keys")
 
         for attempt in range(1, max_retries + 1):
@@ -849,7 +855,6 @@ class RemoteModuleRunner(ModuleRunner):
                 TimeoutError,
                 OSError,
             ) as e:
-                last_error = e
                 python_error_type = type(e).__name__
 
                 # Classify the error
@@ -1021,18 +1026,18 @@ class RemoteModuleRunner(ModuleRunner):
                 self.protocol.read_message(process.stdout),  # type: ignore[arg-type]
                 timeout=self.HANDSHAKE_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             stderr_output = ""
             try:
                 stderr_output = (await asyncio.wait_for(
                     process.stderr.read(), timeout=5,  # type: ignore[arg-type]
                 )).decode(errors="replace")
-            except (asyncio.TimeoutError, Exception):
+            except (TimeoutError, Exception):
                 pass
             raise GateHandshakeTimeoutError(
                 f"Gate handshake timed out after {self.HANDSHAKE_TIMEOUT}s"
                 + (f": {stderr_output}" if stderr_output else "")
-            )
+            ) from None
 
         if response is None or response[0] != "Hello":
             error = await process.stderr.read()
@@ -1137,7 +1142,7 @@ class RemoteModuleRunner(ModuleRunner):
         )
         try:
             return await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             gate._pending.pop(msg_id, None)
             raise GateRequestTimeoutError(
                 f"Gate request timed out after {timeout}s "
@@ -1169,7 +1174,7 @@ class RemoteModuleRunner(ModuleRunner):
                     logger.debug(
                         f"Keepalive OK for {cache_key} (latency={latency:.3f}s)"
                     )
-                except (GateRequestTimeoutError, asyncio.TimeoutError):
+                except (TimeoutError, GateRequestTimeoutError):
                     logger.error(
                         f"Keepalive timeout for {cache_key} — gate unresponsive"
                     )

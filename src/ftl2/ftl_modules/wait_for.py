@@ -25,7 +25,7 @@ def _can_connect(host: str, port: int, timeout: int) -> bool:
     try:
         result = sock.connect_ex((host, port))
         return result == 0
-    except (OSError, socket.error):
+    except OSError:
         return False
     finally:
         sock.close()

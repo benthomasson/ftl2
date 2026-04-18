@@ -2,20 +2,19 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ftl2.ftl_modules import FTLModuleError
 from ftl2.ftl_modules.executor import (
-    execute,
-    execute_on_hosts,
-    execute_batch,
-    run,
-    run_on,
     ExecuteResult,
     LocalHost,
     _execute_ftl_module,
+    execute,
+    execute_batch,
+    execute_on_hosts,
+    run,
+    run_on,
 )
 
 

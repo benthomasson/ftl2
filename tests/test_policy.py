@@ -1,11 +1,9 @@
 """Tests for policy engine."""
 
-import tempfile
-from pathlib import Path
 
 import pytest
 
-from ftl2.policy import Policy, PolicyDeniedError, PolicyResult, PolicyRule
+from ftl2.policy import Policy, PolicyDeniedError, PolicyRule
 
 
 class TestPolicyEvaluate:

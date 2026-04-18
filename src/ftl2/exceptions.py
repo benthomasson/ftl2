@@ -4,8 +4,13 @@ Provides structured exception types with rich context for debugging
 and actionable error messages for AI-assisted development.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ftl2.module_loading.excluded import ExcludedModule
 
 
 @dataclass
@@ -213,7 +218,7 @@ class FTL2Error(Exception):
         super().__init__(message)
         self.context = context or ErrorContext(message=message)
 
-    def with_context(self, **kwargs: Any) -> "FTL2Error":
+    def with_context(self, **kwargs: Any) -> FTL2Error:
         """Add context to this error."""
         for key, value in kwargs.items():
             if hasattr(self.context, key):
@@ -292,7 +297,7 @@ class FTL2ConnectionError(FTL2Error):
             attempt=attempt,
             max_attempts=max_attempts,
             suggestions=suggestions,
-            debug_command=f"ftl2 test-ssh -i <inventory> --timeout 30",
+            debug_command="ftl2 test-ssh -i <inventory> --timeout 30",
         )
         super().__init__(message, context)
 
@@ -406,8 +411,7 @@ class ExcludedModuleError(FTL2Error):
     These modules don't apply to FTL2's direct execution model.
     """
 
-    def __init__(self, module: "ExcludedModule"):
-        from ftl2.module_loading.excluded import ExcludedModule
+    def __init__(self, module: ExcludedModule):
 
         self.module = module
         message = self._format_message()

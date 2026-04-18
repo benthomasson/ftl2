@@ -27,9 +27,9 @@ Backup-Trigger: delete
 
 import json
 import os
+import shutil
 import stat
 import sys
-import shutil
 
 
 def main():

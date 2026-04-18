@@ -6,7 +6,6 @@ imported directly in tests without stubbing the rest of the package.
 
 from typing import Any
 
-
 # Become-control kwargs that are NOT module parameters
 _BECOME_KWARGS = frozenset({"become", "become_user", "become_method"})
 

@@ -11,14 +11,12 @@ ftl2.ftl_modules.systemd, not available in this workspace). Instead we:
 import json
 import time
 import uuid
-from pathlib import Path
 
 import pytest
 
 from ftl2 import automation
 from ftl2.automation.context import AutomationContext
 from ftl2.policy import Policy, PolicyDeniedError, PolicyRule
-
 
 # ── PolicyRule.to_dict() ──────────────────────────────────────────────
 

@@ -106,14 +106,14 @@ def ftl_command(
             f"Command timed out after {timeout}s",
             cmd=cmd,
             timeout=timeout,
-        )
+        ) from None
     except FTLModuleError:
         raise
     except Exception as e:
         raise FTLModuleError(
             f"Command execution failed: {e}",
             cmd=cmd,
-        )
+        ) from e
 
 
 def ftl_shell(cmd: str, **kwargs: Any) -> dict[str, Any]:

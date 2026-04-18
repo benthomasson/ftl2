@@ -13,8 +13,8 @@ from urllib.parse import urlencode
 
 import httpx
 
-from ftl2.ftl_modules.exceptions import FTLModuleError
 from ftl2.events import emit_progress
+from ftl2.ftl_modules.exceptions import FTLModuleError
 
 __all__ = ["ftl_uri", "ftl_get_url"]
 
@@ -84,19 +84,14 @@ async def ftl_uri(
         if body_format == "json":
             if isinstance(body, (dict, list)):
                 content = json_lib.dumps(body)
-            elif isinstance(body, str):
-                content = body
-            elif isinstance(body, bytes):
+            elif isinstance(body, (str, bytes)):
                 content = body
             else:
                 content = json_lib.dumps(body)
             if "content-type" not in {k.lower() for k in headers}:
                 headers["Content-Type"] = "application/json"
         elif body_format == "form":
-            if isinstance(body, dict):
-                content = urlencode(body)
-            else:
-                content = str(body)
+            content = urlencode(body) if isinstance(body, dict) else str(body)
             if "content-type" not in {k.lower() for k in headers}:
                 headers["Content-Type"] = "application/x-www-form-urlencoded"
         else:
@@ -153,24 +148,24 @@ async def ftl_uri(
             f"Request timed out after {timeout}s",
             url=url,
             timeout=timeout,
-        )
+        ) from None
     except httpx.ConnectError as e:
         raise FTLModuleError(
             f"Connection failed: {e}",
             url=url,
-        )
+        ) from e
     except httpx.HTTPError as e:
         raise FTLModuleError(
             f"HTTP error: {e}",
             url=url,
-        )
+        ) from e
     except FTLModuleError:
         raise
     except Exception as e:
         raise FTLModuleError(
             f"Request failed: {e}",
             url=url,
-        )
+        ) from e
 
 
 async def ftl_get_url(
@@ -302,20 +297,20 @@ async def ftl_get_url(
             f"Download timed out after {timeout}s",
             url=url,
             dest=dest,
-        )
+        ) from None
     except httpx.HTTPStatusError as e:
         raise FTLModuleError(
             f"Download failed with status {e.response.status_code}",
             url=url,
             dest=dest,
             status=e.response.status_code,
-        )
+        ) from e
     except httpx.HTTPError as e:
         raise FTLModuleError(
             f"Download failed: {e}",
             url=url,
             dest=dest,
-        )
+        ) from e
     except FTLModuleError:
         raise
     except Exception as e:
@@ -323,7 +318,7 @@ async def ftl_get_url(
             f"Download failed: {e}",
             url=url,
             dest=dest,
-        )
+        ) from e
 
 
 def _calculate_checksum(path: Path) -> str:

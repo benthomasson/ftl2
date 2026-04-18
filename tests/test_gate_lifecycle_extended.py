@@ -15,13 +15,11 @@ Covers edge cases and scenarios not in test_gate_lifecycle.py:
 - Decommission exception during SSH operations
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from ftl2.types import BecomeConfig, HostConfig, gate_cache_key
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -117,7 +115,7 @@ class TestGateDrainEdgeCases:
         cache_key = gate_cache_key(host.name, host.become_config)
         ctx._remote_runner.gate_cache = {cache_key: MagicMock()}
         ctx._remote_runner._drain_gate = AsyncMock(
-            side_effect=asyncio.TimeoutError("Drain timed out")
+            side_effect=TimeoutError("Drain timed out")
         )
 
         results = await ctx.gate_drain("web01", timeout_seconds=5)

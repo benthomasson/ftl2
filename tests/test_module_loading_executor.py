@@ -1,30 +1,28 @@
 """Tests for module loading executor."""
 
 import json
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
+from ftl2.module_loading.bundle import build_bundle
 from ftl2.module_loading.executor import (
     ExecutionResult,
+    ModuleExecutor,
+    execute_bundle_local,
     execute_local,
     execute_local_fqcn,
-    execute_local_streaming,
     execute_local_fqcn_streaming,
-    execute_bundle_local,
+    execute_local_streaming,
     execute_remote,
     execute_remote_streaming,
     execute_remote_with_staging,
     execute_remote_with_staging_streaming,
-    stage_bundle_remote,
     get_module_utils_pythonpath,
-    ModuleExecutor,
+    stage_bundle_remote,
 )
-from ftl2.module_loading.bundle import build_bundle, Bundle, BundleInfo
 
 
 class TestExecutionResult:
@@ -170,7 +168,6 @@ class TestGetModuleUtilsPythonpath:
 
     def test_paths_separated_by_os_pathsep(self):
         """Test paths are separated correctly."""
-        import os
         result = get_module_utils_pythonpath()
         # If multiple paths, they should be separated by os.pathsep
         if result:

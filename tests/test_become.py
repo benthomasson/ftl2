@@ -1,6 +1,7 @@
 """Tests for become privilege escalation support (sudo, su, doas)."""
 
 import pytest
+
 from ftl2.types import BecomeConfig, HostConfig, gate_cache_key
 
 

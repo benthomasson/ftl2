@@ -12,20 +12,21 @@ import logging
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
-from ftl2.module_loading.fqcn import (
-    resolve_fqcn,
-    get_collection_paths,
-    find_ansible_builtin_path,
-)
+from ftl2.events import parse_event, parse_events
 from ftl2.module_loading.bundle import Bundle, BundleCache
+from ftl2.module_loading.fqcn import (
+    find_ansible_builtin_path,
+    get_collection_paths,
+    resolve_fqcn,
+)
 from ftl2.module_loading.requirements import (
     check_and_install_requirements,
 )
-from ftl2.events import parse_events, parse_event
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +299,7 @@ async def execute_local_streaming(
                 asyncio.gather(read_stdout(), read_stderr()),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             await process.wait()
             return ExecutionResult(

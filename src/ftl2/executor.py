@@ -9,16 +9,15 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 from .exceptions import ErrorTypes
 from .inventory import Inventory
-from .progress import ProgressReporter, NullProgressReporter
+from .progress import NullProgressReporter, ProgressReporter
 from .retry import (
-    RetryConfig,
     CircuitBreakerConfig,
-    RetryStats,
+    RetryConfig,
     RetryState,
+    RetryStats,
     check_circuit_breaker,
 )
 from .runners import ExecutionContext, ModuleRunnerFactory

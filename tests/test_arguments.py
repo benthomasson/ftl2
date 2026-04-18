@@ -1,6 +1,5 @@
 """Tests for argument merging and resolution."""
 
-import pytest
 
 from ftl2.arguments import ArgumentConfig, has_refs, merge_arguments
 from ftl2.refs import Ref

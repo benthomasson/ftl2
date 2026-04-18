@@ -10,23 +10,23 @@ events (progress, log, data) with Rich progress bars.
 import json
 import sys
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, Generator, Protocol
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Protocol
 
 from rich.console import Console
-from rich.live import Live
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    TextColumn,
-    BarColumn,
     TaskProgressColumn,
+    TextColumn,
     TimeElapsedColumn,
 )
-from rich.table import Table
-from rich.text import Text
+
+if TYPE_CHECKING:
+    from rich.live import Live
 
 
 @dataclass
@@ -134,7 +134,7 @@ class JsonProgressReporter(ProgressReporter):
 
     def _now(self) -> str:
         """Get current timestamp."""
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     def on_execution_start(self, total_hosts: int, module: str) -> None:
         """Called when execution starts."""

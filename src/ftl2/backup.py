@@ -4,12 +4,10 @@ Provides automatic backup creation before destructive operations,
 with support for backup discovery, creation, listing, and restoration.
 """
 
-import json
 import logging
-import os
 import shutil
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +66,7 @@ class BackupResult:
     def __post_init__(self) -> None:
         """Set timestamp if not provided."""
         if not self.timestamp:
-            self.timestamp = datetime.now(timezone.utc).isoformat()
+            self.timestamp = datetime.now(UTC).isoformat()
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -526,7 +524,7 @@ def prune_backups(
             by_original[b.original] = []
         by_original[b.original].append(b)
 
-    for orig, orig_backups in by_original.items():
+    for _orig, orig_backups in by_original.items():
         # Sort by timestamp, newest first
         orig_backups.sort(key=lambda b: b.timestamp, reverse=True)
 
@@ -541,9 +539,8 @@ def prune_backups(
             if cutoff_date is not None and backup.timestamp < cutoff_date:
                 should_delete = True
 
-            if should_delete:
-                if delete_backup(backup.backup):
-                    deleted.append(backup.backup)
+            if should_delete and delete_backup(backup.backup):
+                deleted.append(backup.backup)
 
     return deleted
 

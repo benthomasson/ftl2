@@ -156,7 +156,7 @@ async def test_connection_reuse(ssh_test_host, tmp_path):
 
     # Execute multiple times with same runner
     results = []
-    for i in range(3):
+    for _i in range(3):
         result = await runner.run(ssh_test_host, context)
         results.append(result)
 

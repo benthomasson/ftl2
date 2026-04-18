@@ -6,7 +6,7 @@ the errors-as-data contract.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,7 +14,7 @@ from ftl2.automation.context import AutomationContext
 from ftl2.exceptions import FTL2ConnectionError
 from ftl2.ftl_modules.executor import ExecuteResult
 from ftl2.message import GateProtocol, ProtocolError
-from ftl2.types import HostConfig, gate_cache_key
+from ftl2.types import HostConfig
 
 
 def _make_context_with_mocks():
@@ -70,12 +70,11 @@ class TestSerialPathErrorHandling:
         gate.gate_process.stdin = MagicMock()
         gate.gate_process.stdout = MagicMock()
 
-        with patch.object(ctx, '_get_or_create_gate', return_value=gate):
-            with patch.object(
-                ctx._remote_runner.protocol, 'send_message',
-                side_effect=BrokenPipeError("Connection lost"),
-            ):
-                result = await ctx._execute_remote_via_gate(host, "ping", {})
+        with patch.object(ctx, '_get_or_create_gate', return_value=gate), patch.object(
+            ctx._remote_runner.protocol, 'send_message',
+            side_effect=BrokenPipeError("Connection lost"),
+        ):
+            result = await ctx._execute_remote_via_gate(host, "ping", {})
 
         assert isinstance(result, ExecuteResult)
         assert result.success is False
@@ -93,16 +92,14 @@ class TestSerialPathErrorHandling:
         gate.gate_process.stdin = MagicMock()
         gate.gate_process.stdout = MagicMock()
 
-        with patch.object(ctx, '_get_or_create_gate', return_value=gate):
-            with patch.object(
-                ctx._remote_runner.protocol, 'send_message',
-                new_callable=AsyncMock,
-            ):
-                with patch.object(
-                    ctx._remote_runner.protocol, 'read_message',
-                    side_effect=ProtocolError("Invalid hex length"),
-                ):
-                    result = await ctx._execute_remote_via_gate(host, "ping", {})
+        with patch.object(ctx, '_get_or_create_gate', return_value=gate), patch.object(
+            ctx._remote_runner.protocol, 'send_message',
+            new_callable=AsyncMock,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'read_message',
+            side_effect=ProtocolError("Invalid hex length"),
+        ):
+            result = await ctx._execute_remote_via_gate(host, "ping", {})
 
         assert isinstance(result, ExecuteResult)
         assert result.success is False
@@ -120,23 +117,20 @@ class TestSerialPathErrorHandling:
         gate.gate_process.stdin = MagicMock()
         gate.gate_process.stdout = MagicMock()
 
-        with patch.object(ctx, '_get_or_create_gate', return_value=gate):
-            with patch.object(
-                ctx._remote_runner.protocol, 'send_message',
-                new_callable=AsyncMock,
-            ):
-                with patch.object(
-                    ctx._remote_runner.protocol, 'read_message',
-                    new_callable=AsyncMock,
-                    return_value=("Error", {"message": "Module crashed"}),
-                ):
-                    with patch(
-                        'ftl2.ftl_modules.executor.is_ftl_module',
-                        return_value=True,
-                    ):
-                        result = await ctx._execute_remote_via_gate(
-                            host, "system_info", {},
-                        )
+        with patch.object(ctx, '_get_or_create_gate', return_value=gate), patch.object(
+            ctx._remote_runner.protocol, 'send_message',
+            new_callable=AsyncMock,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'read_message',
+            new_callable=AsyncMock,
+            return_value=("Error", {"message": "Module crashed"}),
+        ), patch(
+            'ftl2.ftl_modules.executor.is_ftl_module',
+            return_value=True,
+        ):
+            result = await ctx._execute_remote_via_gate(
+                host, "system_info", {},
+            )
 
         assert isinstance(result, ExecuteResult)
         assert result.success is False
@@ -154,23 +148,20 @@ class TestSerialPathErrorHandling:
         gate.gate_process.stdin = MagicMock()
         gate.gate_process.stdout = MagicMock()
 
-        with patch.object(ctx, '_get_or_create_gate', return_value=gate):
-            with patch.object(
-                ctx._remote_runner.protocol, 'send_message',
-                new_callable=AsyncMock,
-            ):
-                with patch.object(
-                    ctx._remote_runner.protocol, 'read_message',
-                    new_callable=AsyncMock,
-                    return_value=("Bogus", {}),
-                ):
-                    with patch(
-                        'ftl2.ftl_modules.executor.is_ftl_module',
-                        return_value=True,
-                    ):
-                        result = await ctx._execute_remote_via_gate(
-                            host, "system_info", {},
-                        )
+        with patch.object(ctx, '_get_or_create_gate', return_value=gate), patch.object(
+            ctx._remote_runner.protocol, 'send_message',
+            new_callable=AsyncMock,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'read_message',
+            new_callable=AsyncMock,
+            return_value=("Bogus", {}),
+        ), patch(
+            'ftl2.ftl_modules.executor.is_ftl_module',
+            return_value=True,
+        ):
+            result = await ctx._execute_remote_via_gate(
+                host, "system_info", {},
+            )
 
         assert isinstance(result, ExecuteResult)
         assert result.success is False
@@ -253,14 +244,13 @@ class TestMultiplexedPathErrorHandling:
         with patch.object(
             ctx._remote_runner.protocol, 'send_message_with_id',
             new_callable=AsyncMock,
+        ), patch(
+            'ftl2.ftl_modules.executor.is_ftl_module',
+            return_value=True,
         ):
-            with patch(
-                'ftl2.ftl_modules.executor.is_ftl_module',
-                return_value=True,
-            ):
-                result = await ctx._execute_multiplexed(
-                    gate, host, "system_info", {},
-                )
+            result = await ctx._execute_multiplexed(
+                gate, host, "system_info", {},
+            )
 
         assert isinstance(result, ExecuteResult)
         assert result.success is False

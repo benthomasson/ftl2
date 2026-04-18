@@ -3,14 +3,12 @@
 These tests validate the policy composition mechanism added in Issue #43.
 """
 
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from ftl2.policy import Policy, PolicyRule
-
+from ftl2.policy import Policy
 
 # ---------------------------------------------------------------------------
 # Helper to write a YAML policy file with deny rules
@@ -315,7 +313,7 @@ class TestAutomationContextPolicyAutoDetect:
             mock_dir.return_value = Policy.empty()
             try:
                 from ftl2.automation.context import AutomationContext
-                ctx = AutomationContext(policy=str(tmp_path))
+                AutomationContext(policy=str(tmp_path))
                 mock_dir.assert_called_once_with(Path(tmp_path))
             except Exception:
                 # AutomationContext may require other setup; verify the mock was called
@@ -332,7 +330,7 @@ class TestAutomationContextPolicyAutoDetect:
             mock_file.return_value = Policy.empty()
             try:
                 from ftl2.automation.context import AutomationContext
-                ctx = AutomationContext(policy=str(policy_file))
+                AutomationContext(policy=str(policy_file))
                 mock_file.assert_called_once_with(Path(policy_file))
             except Exception:
                 if mock_file.called:
@@ -346,7 +344,7 @@ class TestAutomationContextPolicyAutoDetect:
             mock_empty.return_value = Policy.empty()
             try:
                 from ftl2.automation.context import AutomationContext
-                ctx = AutomationContext(policy=None)
+                AutomationContext(policy=None)
                 mock_empty.assert_called()
             except Exception:
                 pytest.skip("AutomationContext requires additional setup not available in test")

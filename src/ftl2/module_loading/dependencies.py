@@ -6,15 +6,13 @@ to file paths, including transitive dependencies.
 
 import ast
 import logging
-import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 from ftl2.module_loading.fqcn import (
-    get_collection_paths,
-    find_ansible_builtin_path,
     find_ansible_module_utils_path,
+    get_collection_paths,
 )
 
 logger = logging.getLogger(__name__)
@@ -211,7 +209,7 @@ def _get_package_from_path(file_path: Path) -> str:
 
     # Look for module_utils in the path
     try:
-        mu_idx = parts.index("module_utils")
+        parts.index("module_utils")
     except ValueError:
         return ""
 

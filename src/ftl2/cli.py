@@ -5,85 +5,82 @@ import json
 import logging
 import shlex
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from pprint import pprint
-from typing import Any, Optional
+from typing import Any
 
 import click
 
 from ftl2 import __version__
-from ftl2.executor import ModuleExecutor, ExecutionResults
-from ftl2.inventory import load_inventory, Inventory
-from ftl2.logging import (
-    configure_logging,
-    get_logger,
-    get_level_from_verbosity,
-    get_level_from_name,
-    TRACE,
-)
-from ftl2.module_docs import discover_modules, extract_module_doc, format_module_list, format_module_list_json
-from ftl2.vars import (
-    collect_host_variables,
-    get_all_host_variables,
-    format_all_hosts_text,
-    format_all_hosts_json,
-)
-from ftl2.safety import (
-    check_module_args_safety,
-    format_safety_error,
-    DEFAULT_PARALLEL,
-    DEFAULT_TIMEOUT,
-    MAX_PARALLEL,
-)
-from ftl2.retry import (
-    RetryConfig,
-    CircuitBreakerConfig,
-    RetryStats,
-    is_transient_error,
-)
-from ftl2.state import (
-    ExecutionState,
-    load_state,
-    save_state,
-    create_state_from_results,
-    filter_hosts_for_resume,
-)
-from ftl2.progress import create_progress_reporter
-from ftl2.workflow import (
-    Workflow,
-    WorkflowStep,
-    load_workflow,
-    save_workflow,
-    list_workflows,
-    delete_workflow,
-    add_step_to_workflow,
-)
-from ftl2.host_filter import (
-    filter_hosts,
-    get_group_hosts_mapping,
-    format_filter_summary,
+from ftl2.backup import (
+    BackupManager,
+    delete_backup,
+    determine_operation,
+    format_backup_list_json,
+    format_backup_list_text,
+    list_backups,
+    prune_backups,
+    restore_backup,
 )
 from ftl2.config_profiles import (
     ConfigProfile,
+    delete_profile,
+    list_profiles,
     load_profile,
     save_profile,
-    list_profiles,
-    delete_profile,
 )
-from ftl2.backup import (
-    BackupManager,
-    list_backups,
-    restore_backup,
-    prune_backups,
-    delete_backup,
-    format_backup_list_text,
-    format_backup_list_json,
-    determine_operation,
+from ftl2.executor import ExecutionResults, ModuleExecutor
+from ftl2.host_filter import (
+    filter_hosts,
+    format_filter_summary,
+    get_group_hosts_mapping,
 )
-from ftl2.module_docs import BackupMetadata
+from ftl2.inventory import load_inventory
+from ftl2.logging import (
+    configure_logging,
+    get_level_from_name,
+    get_level_from_verbosity,
+    get_logger,
+)
+from ftl2.module_docs import (
+    discover_modules,
+    extract_module_doc,
+    format_module_list,
+    format_module_list_json,
+)
+from ftl2.progress import create_progress_reporter
+from ftl2.retry import (
+    CircuitBreakerConfig,
+    RetryConfig,
+)
 from ftl2.runners import ExecutionContext
-from ftl2.types import ExecutionConfig, GateConfig, ModuleResult
+from ftl2.safety import (
+    DEFAULT_PARALLEL,
+    DEFAULT_TIMEOUT,
+    MAX_PARALLEL,
+    check_module_args_safety,
+    format_safety_error,
+)
+from ftl2.state import (
+    create_state_from_results,
+    filter_hosts_for_resume,
+    load_state,
+    save_state,
+)
+from ftl2.types import ExecutionConfig, GateConfig
+from ftl2.vars import (
+    collect_host_variables,
+    format_all_hosts_json,
+    format_all_hosts_text,
+    get_all_host_variables,
+)
+from ftl2.workflow import (
+    WorkflowStep,
+    add_step_to_workflow,
+    delete_workflow,
+    list_workflows,
+    load_workflow,
+)
 
 logger = get_logger("ftl2.cli")
 
@@ -129,7 +126,7 @@ def format_results_json(
         "failed": results.failed,
         "results": host_results,
         "duration": round(duration, 3),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
     # Add errors summary if there are any
@@ -232,7 +229,7 @@ def format_dry_run_json(
         "module": module,
         "total_hosts": results.total_hosts,
         "hosts": host_previews,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
     return json.dumps(output, indent=2)
@@ -329,7 +326,7 @@ def format_explain_text(
     if module_path:
         lines.append(f"     - Path: {module_path}")
     else:
-        lines.append(f"     - Using built-in module")
+        lines.append("     - Using built-in module")
     lines.append("")
 
     # Step 3: Build gate
@@ -466,7 +463,7 @@ def format_explain_json(
         "args": args,
         "steps": steps,
         "hosts": host_details,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
     return json.dumps(output, indent=2)
@@ -506,7 +503,7 @@ def inventory_validate(inventory: str, check_ssh: bool) -> None:
     try:
         inv = load_inventory(inventory)
     except ValueError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e)) from e
 
     all_hosts = inv.get_all_hosts()
     groups = inv.list_groups()
@@ -585,7 +582,7 @@ def test_ssh(inventory: str, timeout: int) -> None:
     try:
         inv = load_inventory(inventory)
     except ValueError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e)) from e
 
     all_hosts = inv.get_all_hosts()
     ssh_hosts = {name: host for name, host in all_hosts.items()
@@ -612,13 +609,14 @@ def test_ssh(inventory: str, timeout: int) -> None:
 
             if result != 0:
                 return (host_name, False, f"Port {port} not reachable")
-        except socket.error as e:
+        except OSError as e:
             return (host_name, False, f"Socket error: {e}")
 
         # Step 2: Test SSH authentication
         try:
-            import asyncssh
             import os
+
+            import asyncssh
 
             ssh_password = host.get_var("ansible_password")
             ssh_key_file = host.get_var("ssh_private_key_file")
@@ -641,7 +639,7 @@ def test_ssh(inventory: str, timeout: int) -> None:
             conn.close()
             return (host_name, True, "OK")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return (host_name, False, "Connection timeout")
         except Exception as e:
             error_msg = str(e)
@@ -925,7 +923,6 @@ def validate_execution_requirements(inventory, module_name: str, module_dirs: li
     Example:
         >>> validate_execution_requirements(inv, "ping", [Path("/modules")])
     """
-    from ftl2.inventory import Inventory
 
     # 1. Check module exists
     module_found = False
@@ -945,10 +942,10 @@ def validate_execution_requirements(inventory, module_name: str, module_dirs: li
         error_msg += "\n".join(f"  - {d}" for d in module_dirs)
 
         if available_modules:
-            error_msg += f"\n\nAvailable modules:\n"
+            error_msg += "\n\nAvailable modules:\n"
             error_msg += "\n".join(f"  - {m}" for m in sorted(set(available_modules)))
         else:
-            error_msg += f"\n\nNo modules found in search paths"
+            error_msg += "\n\nNo modules found in search paths"
 
         raise ValueError(error_msg)
 
@@ -1086,7 +1083,7 @@ def backup() -> None:
 @click.option("--backup-dir", type=click.Path(), help="Central backup directory to search")
 @click.option("--format", "-f", "output_format", type=click.Choice(["text", "json"]),
               default="text", help="Output format")
-def backup_list(path: Optional[str], backup_dir: Optional[str], output_format: str) -> None:
+def backup_list(path: str | None, backup_dir: str | None, output_format: str) -> None:
     """List backups for a path or all backups.
 
     Examples:
@@ -1129,7 +1126,7 @@ def backup_restore(backup_path: str, force: bool, dry_run: bool) -> None:
         click.echo(f"Would restore: {backup_path}")
         click.echo(f"         To: {original}")
         if original_exists:
-            click.echo(f"Note: Target exists (use --force to overwrite)")
+            click.echo("Note: Target exists (use --force to overwrite)")
         return
 
     result = restore_backup(backup_path, force=force)
@@ -1171,10 +1168,10 @@ def backup_delete(backup_path: str, yes: bool) -> None:
 @click.option("--dry-run", is_flag=True, help="Show what would be deleted")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 def backup_prune(
-    path: Optional[str],
-    keep: Optional[int],
-    older_than: Optional[int],
-    backup_dir: Optional[str],
+    path: str | None,
+    keep: int | None,
+    older_than: int | None,
+    backup_dir: str | None,
     dry_run: bool,
     yes: bool,
 ) -> None:
@@ -1211,12 +1208,10 @@ def backup_prune(
             by_original[b.original].append(b)
 
         to_delete = []
-        for orig, orig_backups in by_original.items():
+        for _orig, orig_backups in by_original.items():
             orig_backups.sort(key=lambda b: b.timestamp, reverse=True)
             for i, b in enumerate(orig_backups):
-                if keep is not None and i >= keep:
-                    to_delete.append(b)
-                elif cutoff is not None and b.timestamp < cutoff:
+                if keep is not None and i >= keep or cutoff is not None and b.timestamp < cutoff:
                     to_delete.append(b)
 
         if not to_delete:
@@ -1266,16 +1261,16 @@ def config() -> None:
 def config_save(
     name: str,
     module: str,
-    args: Optional[str],
-    description: Optional[str],
-    parallel: Optional[int],
-    timeout: Optional[int],
-    retry: Optional[int],
-    retry_delay: Optional[float],
-    smart_retry: Optional[bool],
-    circuit_breaker: Optional[float],
-    output_format: Optional[str],
-    allow_destructive: Optional[bool],
+    args: str | None,
+    description: str | None,
+    parallel: int | None,
+    timeout: int | None,
+    retry: int | None,
+    retry_delay: float | None,
+    smart_retry: bool | None,
+    circuit_breaker: float | None,
+    output_format: str | None,
+    allow_destructive: bool | None,
 ) -> None:
     """Save a configuration profile.
 
@@ -1413,8 +1408,8 @@ def config_run(
     name: str,
     inventory: str,
     var: tuple[str, ...],
-    limit: Optional[str],
-    output_format: Optional[str],
+    limit: str | None,
+    output_format: str | None,
 ) -> None:
     """Run a saved configuration profile.
 
@@ -1507,7 +1502,7 @@ def collection() -> None:
               help="Install path (default: ~/.ansible/collections)")
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing collection")
 @click.option("--version", "-v", type=str, default=None, help="Specific version to install")
-def collection_install(name: str, path: Optional[str], force: bool, version: Optional[str]) -> None:
+def collection_install(name: str, path: str | None, force: bool, version: str | None) -> None:
     """Install a collection from Ansible Galaxy.
 
     NAME is namespace.collection (e.g., community.general) or
@@ -1526,15 +1521,15 @@ def collection_install(name: str, path: Optional[str], force: bool, version: Opt
     try:
         install_collection(name, version=version, path=install_path, force=force)
     except ValueError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e)) from e
     except Exception as e:
-        raise click.ClickException(f"Failed to install collection: {e}")
+        raise click.ClickException(f"Failed to install collection: {e}") from e
 
 
 @collection.command("list")
 @click.option("--path", "-p", type=click.Path(), default=None,
               help="Collection path to search (default: all standard paths)")
-def collection_list(path: Optional[str]) -> None:
+def collection_list(path: str | None) -> None:
     """List installed collections.
 
     Examples:
@@ -1611,8 +1606,8 @@ def run_module(
     module: str,
     module_dir: tuple[str, ...],
     inventory: str,
-    requirements: Optional[str],
-    args: Optional[str],
+    requirements: str | None,
+    args: str | None,
     output_format: str,
     dry_run: bool,
     allow_destructive: bool,
@@ -1622,20 +1617,20 @@ def run_module(
     retry_delay: float,
     smart_retry: bool,
     circuit_breaker: float,
-    state_file: Optional[str],
-    resume: Optional[str],
-    log_file: Optional[str],
-    log_level: Optional[str],
+    state_file: str | None,
+    resume: str | None,
+    log_file: str | None,
+    log_level: str | None,
     verbose: int,
     explain: bool,
     progress: bool,
-    workflow_id: Optional[str],
-    step: Optional[str],
-    limit: Optional[str],
-    save_results: Optional[str],
-    retry_failed: Optional[str],
+    workflow_id: str | None,
+    step: str | None,
+    limit: str | None,
+    save_results: str | None,
+    retry_failed: str | None,
     no_backup: bool,
-    backup_dir: Optional[str],
+    backup_dir: str | None,
 ) -> None:
     """Execute a module across inventory hosts.
 
@@ -1743,17 +1738,11 @@ def run_module(
     """
     # Configure logging
     # Determine log level from options
-    if log_level:
-        level = get_level_from_name(log_level)
-    else:
-        level = get_level_from_verbosity(verbose)
+    level = get_level_from_name(log_level) if log_level else get_level_from_verbosity(verbose)
 
     # For JSON output, suppress console logging to avoid polluting the output
     # But still allow file logging if specified
-    if output_format == "json":
-        console_level = logging.CRITICAL
-    else:
-        console_level = level
+    console_level = logging.CRITICAL if output_format == "json" else level
 
     # Configure logging with file support
     configure_logging(
@@ -1820,7 +1809,7 @@ def run_module(
         try:
             inv = load_inventory(inventory)
         except ValueError as e:
-            raise click.ClickException(str(e))
+            raise click.ClickException(str(e)) from e
 
         hosts = inv.get_all_hosts()
 
@@ -1893,7 +1882,7 @@ def run_module(
                         click.echo(f"Retrying {len(retry_failed_hosts)} failed host(s) from previous run")
                     logger.info("Retry-failed mode", hosts=len(retry_failed_hosts))
                 except (json.JSONDecodeError, KeyError) as e:
-                    raise click.ClickException(f"Failed to parse results file: {e}")
+                    raise click.ClickException(f"Failed to parse results file: {e}") from e
 
             # Handle --limit: filter hosts by pattern
             if limit or retry_failed_hosts:
@@ -1901,10 +1890,7 @@ def run_module(
                 group_hosts = get_group_hosts_mapping(inv)
 
                 # Apply limit pattern if specified
-                if limit:
-                    filtered = filter_hosts(all_hosts, limit, group_hosts)
-                else:
-                    filtered = all_hosts
+                filtered = filter_hosts(all_hosts, limit, group_hosts) if limit else all_hosts
 
                 # Further filter by retry-failed hosts if specified
                 if retry_failed_hosts:
@@ -2125,14 +2111,14 @@ def run_module(
             step_name=step_name,
             module=module,
             args=parsed_args,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             duration=duration,
             total_hosts=results.total_hosts,
             successful=results.successful,
             failed=results.failed,
             failed_hosts=failed_hosts,
         )
-        workflow = add_step_to_workflow(workflow_id, workflow_step)
+        add_step_to_workflow(workflow_id, workflow_step)
         if output_format != "json":
             click.echo(f"Workflow step '{step_name}' added to workflow '{workflow_id}'")
 
