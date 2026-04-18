@@ -8,6 +8,7 @@ from unittest.mock import patch
 from ftl2.inventory import (
     HostGroup,
     Inventory,
+    expand_host_range,
     load_inventory,
     load_inventory_json,
     load_inventory_script,
@@ -715,3 +716,117 @@ class TestLoadInventoryScript:
             assert ws.vars == {"http_port": 80}
         finally:
             path.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Host range expansion
+# ---------------------------------------------------------------------------
+
+
+class TestExpandHostRange:
+    """Tests for expand_host_range()."""
+
+    def test_numeric_range(self):
+        result = expand_host_range("www[01:03].example.com")
+        assert result == [
+            "www01.example.com",
+            "www02.example.com",
+            "www03.example.com",
+        ]
+
+    def test_numeric_range_leading_zeros(self):
+        result = expand_host_range("node[001:003]")
+        assert result == ["node001", "node002", "node003"]
+
+    def test_alphabetic_range(self):
+        result = expand_host_range("db-[a:f].example.com")
+        assert result == [
+            "db-a.example.com",
+            "db-b.example.com",
+            "db-c.example.com",
+            "db-d.example.com",
+            "db-e.example.com",
+            "db-f.example.com",
+        ]
+
+    def test_numeric_stride(self):
+        result = expand_host_range("www[01:10:3].example.com")
+        assert result == [
+            "www01.example.com",
+            "www04.example.com",
+            "www07.example.com",
+            "www10.example.com",
+        ]
+
+    def test_alpha_stride(self):
+        result = expand_host_range("db-[a:f:2].local")
+        assert result == ["db-a.local", "db-c.local", "db-e.local"]
+
+    def test_no_range_passthrough(self):
+        assert expand_host_range("plain-host") == ["plain-host"]
+
+    def test_multiple_ranges_cartesian(self):
+        result = expand_host_range("rack[1:2]-node[a:b]")
+        assert result == [
+            "rack1-nodea",
+            "rack1-nodeb",
+            "rack2-nodea",
+            "rack2-nodeb",
+        ]
+
+    def test_single_value_range(self):
+        result = expand_host_range("host[5:5]")
+        assert result == ["host5"]
+
+
+class TestHostRangeIntegration:
+    """Test host range expansion through YAML inventory loading."""
+
+    def test_yaml_inventory_with_ranges(self, tmp_path):
+        inv_file = tmp_path / "inventory.yaml"
+        inv_file.write_text(
+            "webservers:\n"
+            "  hosts:\n"
+            "    www[01:03].example.com:\n"
+            "      ansible_user: deploy\n"
+        )
+        inventory = load_inventory(str(inv_file))
+        ws = inventory.get_group("webservers")
+        assert ws is not None
+        hosts = sorted(ws.hosts.keys())
+        assert hosts == [
+            "www01.example.com",
+            "www02.example.com",
+            "www03.example.com",
+        ]
+        for h in ws.hosts.values():
+            assert h.ansible_user == "deploy"
+
+    def test_yaml_inventory_alpha_range(self, tmp_path):
+        inv_file = tmp_path / "inventory.yaml"
+        inv_file.write_text(
+            "databases:\n"
+            "  hosts:\n"
+            "    db-[a:c].internal:\n"
+        )
+        inventory = load_inventory(str(inv_file))
+        db = inventory.get_group("databases")
+        assert sorted(db.hosts.keys()) == [
+            "db-a.internal",
+            "db-b.internal",
+            "db-c.internal",
+        ]
+
+    def test_mixed_range_and_plain_hosts(self, tmp_path):
+        inv_file = tmp_path / "inventory.yaml"
+        inv_file.write_text(
+            "cluster:\n"
+            "  hosts:\n"
+            "    node[1:3]:\n"
+            "    bastion:\n"
+        )
+        inventory = load_inventory(str(inv_file))
+        grp = inventory.get_group("cluster")
+        assert sorted(grp.hosts.keys()) == [
+            "bastion", "node1", "node2", "node3",
+        ]
