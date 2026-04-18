@@ -141,6 +141,60 @@ all:
         finally:
             path.unlink()
 
+    def test_dag_group_with_multiple_parents(self):
+        """A group can have multiple parents (DAG) — should not raise circular error."""
+        data = {
+            "all": {
+                "children": {
+                    "prod": {
+                        "children": {
+                            "shared_db": {
+                                "hosts": {"db1": {"ansible_host": "10.0.0.1"}},
+                                "vars": {"db_port": 5432},
+                            },
+                        }
+                    },
+                    "staging": {
+                        "children": {
+                            "shared_db": {
+                                "hosts": {"db2": {"ansible_host": "10.0.0.2"}},
+                            },
+                        }
+                    },
+                }
+            }
+        }
+        inventory = _load_inventory_yaml(data)
+        shared = inventory.get_group("shared_db")
+        assert shared is not None
+        # Both hosts merged from both parent paths
+        assert shared.get_host("db1") is not None
+        assert shared.get_host("db2") is not None
+        # Vars merged
+        assert shared.vars.get("db_port") == 5432
+        # Both parent groups list shared_db as child
+        assert "shared_db" in inventory.get_group("prod").children
+        assert "shared_db" in inventory.get_group("staging").children
+
+    def test_split_definition_top_level_and_child(self):
+        """A group defined at top level AND as a child should merge, not lose data."""
+        data = {
+            "all": {
+                "children": {
+                    "webservers": None,  # reference only
+                }
+            },
+            "webservers": {
+                "hosts": {"web1": {"ansible_host": "10.0.0.1"}},
+                "vars": {"http_port": 80},
+            },
+        }
+        inventory = _load_inventory_yaml(data)
+        ws = inventory.get_group("webservers")
+        assert ws is not None
+        assert ws.get_host("web1") is not None
+        assert ws.vars.get("http_port") == 80
+
     def test_deeply_nested_host_reachable(self):
         """Hosts 4+ levels deep should be reachable via get_all_hosts."""
         data = {
