@@ -2560,3 +2560,478 @@ def main():
         finally:
             if ping_path.exists():
                 ping_path.unlink()
+
+
+class TestCliModuleCommands:
+    """Tests for module list/doc CLI commands hitting the command body."""
+
+    def test_module_list_text(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["module", "list"])
+        assert result.exit_code == 0
+        # Built-in modules should be listed
+        assert "ping" in result.output
+
+    def test_module_list_json(self):
+        import json
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["module", "list", "--format", "json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        names = [m["name"] for m in data]
+        assert "ping" in names
+
+    def test_module_list_with_custom_dir(self, tmp_path):
+        (tmp_path / "custom_mod.py").write_text('"""Custom - A custom module."""\n')
+        runner = CliRunner()
+        result = runner.invoke(cli, ["module", "list", "-M", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "custom_mod" in result.output
+
+    def test_module_doc_ping_text(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["module", "doc", "ping"])
+        assert result.exit_code == 0
+        assert "ping" in result.output.lower()
+
+    def test_module_doc_ping_json(self):
+        import json
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["module", "doc", "ping", "--format", "json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "name" in data
+
+    def test_module_doc_not_found(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["module", "doc", "nonexistent_xyz"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+
+class TestGetModuleDirs:
+    """Tests for _get_module_dirs helper."""
+
+    def test_empty_tuple_includes_builtins(self):
+        from ftl2.cli import _get_module_dirs
+
+        dirs = _get_module_dirs(())
+        # Should include at least the built-in modules dir
+        assert len(dirs) >= 1
+        assert any("modules" in str(d) for d in dirs)
+
+    def test_user_dir_first(self, tmp_path):
+        from ftl2.cli import _get_module_dirs
+
+        dirs = _get_module_dirs((str(tmp_path),))
+        assert dirs[0] == tmp_path
+
+    def test_multiple_user_dirs(self, tmp_path):
+        from ftl2.cli import _get_module_dirs
+
+        d1 = tmp_path / "a"
+        d2 = tmp_path / "b"
+        d1.mkdir()
+        d2.mkdir()
+        dirs = _get_module_dirs((str(d1), str(d2)))
+        assert dirs[0] == d1
+        assert dirs[1] == d2
+
+
+class TestCliWorkflowCommandBodies:
+    """Tests for workflow CLI command bodies with actual workflow data."""
+
+    def test_workflow_list_with_workflows(self, tmp_path, monkeypatch):
+        from ftl2.workflow import Workflow, save_workflow
+
+        save_workflow(Workflow(workflow_id="wf-test"), tmp_path)
+        monkeypatch.setattr("ftl2.workflow.DEFAULT_WORKFLOW_DIR", tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["workflow", "list"])
+        assert result.exit_code == 0
+        assert "wf-test" in result.output
+        assert "1 workflow(s)" in result.output
+
+    def test_workflow_list_json(self, tmp_path, monkeypatch):
+        import json
+
+        from ftl2.workflow import Workflow, save_workflow
+
+        save_workflow(Workflow(workflow_id="wf1"), tmp_path)
+        monkeypatch.setattr("ftl2.workflow.DEFAULT_WORKFLOW_DIR", tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["workflow", "list", "--format", "json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "wf1" in data["workflows"]
+
+    def test_workflow_show_found(self, tmp_path, monkeypatch):
+        from ftl2.workflow import Workflow, WorkflowStep, save_workflow
+
+        wf = Workflow(workflow_id="deploy-test")
+        wf.add_step(WorkflowStep(
+            step_name="step1", module="ping",
+            total_hosts=2, successful=2, failed=0, duration=1.0,
+        ))
+        save_workflow(wf, tmp_path)
+        monkeypatch.setattr("ftl2.workflow.DEFAULT_WORKFLOW_DIR", tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["workflow", "show", "deploy-test"])
+        assert result.exit_code == 0
+        assert "deploy-test" in result.output
+        assert "step1" in result.output
+
+    def test_workflow_show_json(self, tmp_path, monkeypatch):
+        import json
+
+        from ftl2.workflow import Workflow, save_workflow
+
+        save_workflow(Workflow(workflow_id="wf-json"), tmp_path)
+        monkeypatch.setattr("ftl2.workflow.DEFAULT_WORKFLOW_DIR", tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["workflow", "show", "wf-json", "--format", "json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["workflow_id"] == "wf-json"
+
+    def test_workflow_delete_confirmed(self, tmp_path, monkeypatch):
+        from ftl2.workflow import Workflow, save_workflow
+
+        save_workflow(Workflow(workflow_id="to-remove"), tmp_path)
+        monkeypatch.setattr("ftl2.workflow.DEFAULT_WORKFLOW_DIR", tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["workflow", "delete", "to-remove", "-y"])
+        assert result.exit_code == 0
+        assert "deleted" in result.output.lower()
+
+    def test_workflow_delete_failed(self, tmp_path, monkeypatch):
+        from ftl2.workflow import Workflow, save_workflow
+
+        save_workflow(Workflow(workflow_id="wf-del"), tmp_path)
+        monkeypatch.setattr("ftl2.workflow.DEFAULT_WORKFLOW_DIR", tmp_path)
+
+        # Delete twice - second should fail
+        runner = CliRunner()
+        runner.invoke(cli, ["workflow", "delete", "wf-del", "-y"])
+        result = runner.invoke(cli, ["workflow", "delete", "wf-del", "-y"])
+        assert result.exit_code != 0
+
+
+class TestCliBackupCommandBodies:
+    """Tests for backup CLI commands hitting their full bodies."""
+
+    def test_backup_restore_success(self, tmp_path):
+        from ftl2.backup import BackupManager
+
+        original = tmp_path / "config.txt"
+        original.write_text("original data")
+
+        mgr = BackupManager()
+        backup_result = mgr.create_backup(str(original))
+        original.write_text("modified")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "backup", "restore", backup_result.backup, "--force",
+        ])
+        assert result.exit_code == 0
+        assert "Restored" in result.output
+        assert original.read_text() == "original data"
+
+    def test_backup_delete_actual(self, tmp_path):
+        backup_file = tmp_path / "f.ftl2-backup-20260418-120000"
+        backup_file.write_text("data")
+        runner = CliRunner()
+        result = runner.invoke(cli, ["backup", "delete", str(backup_file), "-y"])
+        assert result.exit_code == 0
+        assert "Deleted" in result.output
+        assert not backup_file.exists()
+
+    def test_backup_prune_actual(self, tmp_path):
+        original = tmp_path / "config.txt"
+        original.write_text("data")
+        (tmp_path / "config.txt.ftl2-backup-20260418-100000").write_text("v1")
+        (tmp_path / "config.txt.ftl2-backup-20260418-110000").write_text("v2")
+        (tmp_path / "config.txt.ftl2-backup-20260418-120000").write_text("v3")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "backup", "prune", "--path", str(original), "--keep", "1", "-y",
+        ])
+        assert result.exit_code == 0
+        assert "Deleted 2 backup(s)" in result.output
+
+    def test_backup_prune_nothing_to_delete(self, tmp_path):
+        original = tmp_path / "config.txt"
+        original.write_text("data")
+        (tmp_path / "config.txt.ftl2-backup-20260418-120000").write_text("v1")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "backup", "prune", "--path", str(original), "--keep", "5", "-y",
+        ])
+        assert result.exit_code == 0
+        assert "No backups deleted" in result.output
+
+    def test_backup_list_json_with_backups(self, tmp_path):
+        import json
+
+        original = tmp_path / "config.txt"
+        original.write_text("data")
+        (tmp_path / "config.txt.ftl2-backup-20260418-120000").write_text("v1")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "backup", "list", str(original), "--format", "json",
+        ])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["total_count"] == 1
+
+    def test_backup_list_text_with_backups(self, tmp_path):
+        original = tmp_path / "config.txt"
+        original.write_text("data")
+        (tmp_path / "config.txt.ftl2-backup-20260418-120000").write_text("v1")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["backup", "list", str(original)])
+        assert result.exit_code == 0
+        assert "1 backup(s)" in result.output
+
+    def test_backup_restore_dry_run_with_target_exists(self, tmp_path):
+        original = tmp_path / "config.txt"
+        original.write_text("original")
+        backup_file = tmp_path / "config.txt.ftl2-backup-20260418-120000"
+        backup_file.write_text("backup data")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "backup", "restore", str(backup_file), "--dry-run",
+        ])
+        assert result.exit_code == 0
+        assert "Would restore" in result.output
+        assert "use --force" in result.output.lower()
+
+    def test_backup_prune_dry_run_nothing(self, tmp_path):
+        original = tmp_path / "config.txt"
+        original.write_text("data")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "backup", "prune", "--path", str(original), "--keep", "5", "--dry-run",
+        ])
+        assert result.exit_code == 0
+        assert "No backups would be deleted" in result.output
+
+
+class TestCliConfigCommandBodies:
+    """Tests for config CLI commands with actual profile data."""
+
+    def test_config_save_and_show(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ftl2.config_profiles.DEFAULT_PROFILE_DIR", tmp_path)
+        runner = CliRunner()
+
+        result = runner.invoke(cli, [
+            "config", "save", "my-profile", "-m", "ping",
+            "-d", "Test connectivity",
+        ])
+        assert result.exit_code == 0
+        assert "saved" in result.output.lower()
+
+        result = runner.invoke(cli, ["config", "show", "my-profile"])
+        assert result.exit_code == 0
+        assert "ping" in result.output
+
+    def test_config_save_and_show_json(self, tmp_path, monkeypatch):
+        import json
+
+        monkeypatch.setattr("ftl2.config_profiles.DEFAULT_PROFILE_DIR", tmp_path)
+        runner = CliRunner()
+
+        runner.invoke(cli, ["config", "save", "jp", "-m", "setup"])
+        result = runner.invoke(cli, ["config", "show", "jp", "--format", "json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["module"] == "setup"
+
+    def test_config_list_with_profiles(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ftl2.config_profiles.DEFAULT_PROFILE_DIR", tmp_path)
+        runner = CliRunner()
+
+        runner.invoke(cli, ["config", "save", "prof-a", "-m", "ping"])
+        runner.invoke(cli, ["config", "save", "prof-b", "-m", "setup"])
+
+        result = runner.invoke(cli, ["config", "list"])
+        assert result.exit_code == 0
+        assert "prof-a" in result.output
+        assert "prof-b" in result.output
+        assert "2 profile(s)" in result.output
+
+    def test_config_list_json(self, tmp_path, monkeypatch):
+        import json
+
+        monkeypatch.setattr("ftl2.config_profiles.DEFAULT_PROFILE_DIR", tmp_path)
+        runner = CliRunner()
+
+        runner.invoke(cli, ["config", "save", "jp", "-m", "ping"])
+
+        result = runner.invoke(cli, ["config", "list", "--format", "json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "jp" in data["profiles"]
+
+    def test_config_delete_success(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ftl2.config_profiles.DEFAULT_PROFILE_DIR", tmp_path)
+        runner = CliRunner()
+
+        runner.invoke(cli, ["config", "save", "to-del", "-m", "ping"])
+        result = runner.invoke(cli, ["config", "delete", "to-del", "-y"])
+        assert result.exit_code == 0
+        assert "deleted" in result.output.lower()
+
+    def test_config_save_with_args(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ftl2.config_profiles.DEFAULT_PROFILE_DIR", tmp_path)
+        runner = CliRunner()
+
+        result = runner.invoke(cli, [
+            "config", "save", "deploy", "-m", "copy",
+            "-a", "src=app.tgz dest=/opt/",
+            "-p", "5", "-t", "600",
+        ])
+        assert result.exit_code == 0
+
+        result = runner.invoke(cli, ["config", "show", "deploy"])
+        assert result.exit_code == 0
+        assert "copy" in result.output
+
+    def test_config_save_with_template_vars(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ftl2.config_profiles.DEFAULT_PROFILE_DIR", tmp_path)
+        runner = CliRunner()
+
+        result = runner.invoke(cli, [
+            "config", "save", "tmpl", "-m", "copy",
+            "-a", "src={{app}} dest={{target}}",
+        ])
+        assert result.exit_code == 0
+        assert "Template variables" in result.output
+        assert "app" in result.output
+        assert "target" in result.output
+
+
+class TestCliCollectionCommands:
+    """Tests for collection CLI command bodies."""
+
+    def test_collection_list_with_collections(self, tmp_path):
+        coll_dir = tmp_path / "ansible_collections" / "ansible" / "utils"
+        coll_dir.mkdir(parents=True)
+        (coll_dir / "MANIFEST.json").write_text(
+            '{"collection_info": {"version": "3.1.0"}}'
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["collection", "list", "-p", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "ansible" in result.output
+        assert "utils" in result.output
+        assert "3.1.0" in result.output
+
+    def test_collection_list_empty(self, tmp_path):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["collection", "list", "-p", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "No collections installed" in result.output
+
+
+class TestCliRunAdditionalValidation:
+    """Additional tests for run command validation branches."""
+
+    def test_run_bad_args_format(self, tmp_path):
+        inv_file = tmp_path / "hosts.yml"
+        inv_file.write_text(
+            "all:\n  hosts:\n    localhost:\n"
+            "      ansible_host: 127.0.0.1\n"
+            "      ansible_connection: local\n"
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "run", "-m", "shell", "-i", str(inv_file), "-a", "no_equals_sign",
+        ])
+        assert result.exit_code != 0
+
+    def test_run_blocked_command(self, tmp_path):
+        inv_file = tmp_path / "hosts.yml"
+        inv_file.write_text(
+            "all:\n  hosts:\n    localhost:\n"
+            "      ansible_host: 127.0.0.1\n"
+            "      ansible_connection: local\n"
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "run", "-m", "shell", "-i", str(inv_file),
+            "-a", "cmd='rm -rf /'",
+        ])
+        assert result.exit_code != 0
+
+
+class TestFormatResultsEdgeCases:
+    """Tests for edge cases in format_results_* functions."""
+
+    def test_format_results_json_with_changed(self):
+        import json
+
+        from ftl2.cli import format_results_json
+        from ftl2.executor import ExecutionResults
+        from ftl2.types import ModuleResult
+
+        results = ExecutionResults(results={
+            "h1": ModuleResult(host_name="h1", success=True, changed=True, output={"msg": "done"}),
+        })
+        out = json.loads(format_results_json(results, "file", 2.5))
+        assert out["results"]["h1"]["changed"] is True
+
+    def test_format_results_text_no_verbose_no_details(self):
+        from ftl2.cli import format_results_text
+        from ftl2.executor import ExecutionResults
+        from ftl2.types import ModuleResult
+
+        results = ExecutionResults(results={
+            "h1": ModuleResult(host_name="h1", success=True, output={"msg": "ok"}),
+        })
+        text = format_results_text(results, verbose=False)
+        assert "Detailed Results:" not in text
+
+    def test_format_results_json_no_retry_stats(self):
+        import json
+
+        from ftl2.cli import format_results_json
+        from ftl2.executor import ExecutionResults
+        from ftl2.types import ModuleResult
+
+        results = ExecutionResults(results={
+            "web01": ModuleResult(host_name="web01", success=True, changed=True, output={"msg": "ok"}),
+            "web02": ModuleResult(host_name="web02", success=False, error="timeout"),
+        })
+        out = json.loads(format_results_json(results, "ping", 1.0))
+        assert "retry_stats" not in out
+
+    def test_format_results_text_multi_host_verbose(self):
+        from ftl2.cli import format_results_text
+        from ftl2.executor import ExecutionResults
+        from ftl2.types import ModuleResult
+
+        results = ExecutionResults(results={
+            "web01": ModuleResult(host_name="web01", success=True, changed=True, output={"msg": "ok"}),
+            "web02": ModuleResult(host_name="web02", success=False, error="timeout"),
+        })
+        text = format_results_text(results, verbose=True)
+        assert "web01: OK (changed)" in text
+        assert "web02: FAILED" in text
+        assert "Error: timeout" in text
