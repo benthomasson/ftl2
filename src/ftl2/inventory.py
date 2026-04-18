@@ -110,17 +110,37 @@ def _load_vars_file(path: Path) -> dict[str, Any]:
 
 
 def _load_vars_dir(dirpath: Path) -> dict[str, Any]:
+    """Load vars from a file or directory.
+
+    If *dirpath* is a file, load it directly (any extension — the caller
+    decides whether this entry is valid).  If it is a directory, iterate
+    entries in sorted order, filtering by ``_VALID_VARS_EXTENSIONS`` to
+    skip stray files like ``README.txt``.
+    """
     if dirpath.is_file():
-        if dirpath.suffix not in _VALID_VARS_EXTENSIONS:
-            return {}
         return _load_vars_file(dirpath)
     result: dict[str, Any] = {}
     for entry in sorted(dirpath.iterdir()):
+        if entry.is_file() and entry.suffix not in _VALID_VARS_EXTENSIONS:
+            continue
         result.update(_load_vars_dir(entry))
     return result
 
 
+def _vars_entry_name(entry: Path) -> str:
+    """Extract the group/host name from a vars directory entry.
+
+    Only strips suffixes that are valid vars extensions (.yml, .yaml, .json).
+    This preserves FQDN hostnames like ``db.example.com`` when stored as
+    extensionless files or directories.
+    """
+    if entry.suffix in (".yml", ".yaml", ".json"):
+        return entry.stem
+    return entry.name
+
+
 def _apply_external_vars(inventory: Inventory, inventory_path: Path) -> None:
+    """Load group_vars/ and host_vars/ directories adjacent to the inventory file."""
     base = inventory_path.parent
     standard_fields = {
         "ansible_host", "ansible_port", "ansible_user",
@@ -130,7 +150,7 @@ def _apply_external_vars(inventory: Inventory, inventory_path: Path) -> None:
     group_vars_dir = base / "group_vars"
     if group_vars_dir.is_dir():
         for entry in sorted(group_vars_dir.iterdir()):
-            group_name = entry.stem
+            group_name = _vars_entry_name(entry)
             group = inventory.get_group(group_name)
             if group is None and group_name == "all":
                 group = HostGroup(name="all")
@@ -143,14 +163,14 @@ def _apply_external_vars(inventory: Inventory, inventory_path: Path) -> None:
     if host_vars_dir.is_dir():
         all_hosts = inventory.get_all_hosts()
         for entry in sorted(host_vars_dir.iterdir()):
-            host_name = entry.stem
+            host_name = _vars_entry_name(entry)
             host = all_hosts.get(host_name)
             if host is None:
                 continue
             loaded = _load_vars_dir(entry)
-            for field in standard_fields:
-                if field in loaded:
-                    setattr(host, field, loaded.pop(field))
+            for field_name in standard_fields:
+                if field_name in loaded:
+                    setattr(host, field_name, loaded.pop(field_name))
             host.vars.update(loaded)
 
 

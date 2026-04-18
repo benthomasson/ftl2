@@ -1139,6 +1139,38 @@ class TestExternalVars:
         inv = load_inventory(inv_file)
         assert inv.get_group("webservers") is not None
 
+    def test_fqdn_host_vars(self, tmp_path):
+        """FQDN hostnames like db.example.com must not be truncated by Path.stem."""
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "all:\n  hosts:\n    db.example.com:\n      ansible_host: 10.0.0.1\n"
+        )
+        hv = inv_dir / "host_vars"
+        hv.mkdir()
+        # Directory form — name is the full FQDN
+        fqdn_dir = hv / "db.example.com"
+        fqdn_dir.mkdir()
+        (fqdn_dir / "settings.yml").write_text("db_port: 5432\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        host = inv.get_all_hosts()["db.example.com"]
+        assert host.vars["db_port"] == 5432
+
+    def test_fqdn_group_vars(self, tmp_path):
+        """Group names with dots in extensionless files must not be truncated."""
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "us.east:\n  hosts:\n    web01:\n      ansible_host: 10.0.0.1\n"
+        )
+        gv = inv_dir / "group_vars"
+        gv.mkdir()
+        (gv / "us.east").write_text("region: us-east-1\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        assert inv.get_group("us.east").vars["region"] == "us-east-1"
+
     def test_host_vars_promotes_standard_fields(self, tmp_path):
         inv_dir = tmp_path / "inventory"
         inv_dir.mkdir()
