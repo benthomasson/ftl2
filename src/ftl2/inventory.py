@@ -142,10 +142,57 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
     return _load_inventory_yaml(data, require_hosts=require_hosts)
 
 
+def _process_group(
+    group_name: str,
+    group_data: dict[str, Any] | None,
+    inventory: Inventory,
+    ancestors: frozenset[str] = frozenset(),
+) -> None:
+    """Recursively process a group and its children into the inventory.
+
+    Uses path-based cycle detection: ``ancestors`` tracks the chain from
+    root to the current node.  A group that has already been visited via
+    a *different* parent is legal (DAG) and will be merged, not rejected.
+    """
+    if group_name in ancestors:
+        raise ValueError(f"Circular group: {group_name}")
+
+    # Merge into an existing group if one was already created (DAG or
+    # split-definition case).
+    group = inventory.get_group(group_name) or HostGroup(name=group_name)
+
+    if isinstance(group_data, dict):
+        if "hosts" in group_data and isinstance(group_data["hosts"], dict):
+            for host_name, host_data in group_data["hosts"].items():
+                if not isinstance(host_data, dict):
+                    host_data = {}
+                group.add_host(_host_from_vars(host_name, host_data))
+
+        if "vars" in group_data and isinstance(group_data["vars"], dict):
+            group.vars.update(group_data["vars"])
+
+        if "children" in group_data:
+            if isinstance(group_data["children"], list):
+                for child in group_data["children"]:
+                    if child not in group.children:
+                        group.children.append(child)
+            elif isinstance(group_data["children"], dict):
+                child_ancestors = ancestors | {group_name}
+                for child_name in group_data["children"]:
+                    if child_name not in group.children:
+                        group.children.append(child_name)
+                for child_name, child_data in group_data["children"].items():
+                    _process_group(
+                        child_name, child_data, inventory, child_ancestors
+                    )
+
+    inventory.add_group(group)
+
+
 def _load_inventory_yaml(
     data: dict[str, Any] | None, require_hosts: bool = True
 ) -> Inventory:
-    """Load inventory from parsed YAML data.
+    """Load inventory from parsed YAML data, supporting nested all.children hierarchy.
 
     Args:
         data: Parsed YAML inventory data
@@ -153,53 +200,12 @@ def _load_inventory_yaml(
 
     Returns:
         Inventory object with typed groups and hosts
-
-    Note:
-        Expected structure (groups at top level, NOT nested under 'all'):
-
-            webservers:
-              hosts:
-                web01:
-                  ansible_host: 127.0.0.1
-                  ansible_port: 2222
-
-            databases:
-              hosts:
-                db01:
-                  ansible_host: 127.0.0.1
-
-        Nested structure like 'all.children.webservers' is NOT supported.
-        FTL2 only processes top-level group names.
     """
     inventory = Inventory()
 
-    # Process each group in the inventory (skip if data is None/empty)
     if data:
         for group_name, group_data in data.items():
-            if not isinstance(group_data, dict):
-                continue
-
-            group = HostGroup(name=group_name)
-
-            # Process hosts in this group (YAML format: hosts is a dict)
-            if "hosts" in group_data and isinstance(group_data["hosts"], dict):
-                for host_name, host_data in group_data["hosts"].items():
-                    if not isinstance(host_data, dict):
-                        host_data = {}
-                    group.add_host(_host_from_vars(host_name, host_data))
-
-            # Process group vars
-            if "vars" in group_data and isinstance(group_data["vars"], dict):
-                group.vars = group_data["vars"]
-
-            # Process children
-            if "children" in group_data:
-                if isinstance(group_data["children"], list):
-                    group.children = group_data["children"]
-                elif isinstance(group_data["children"], dict):
-                    group.children = list(group_data["children"].keys())
-
-            inventory.add_group(group)
+            _process_group(group_name, group_data, inventory)
 
     if require_hosts and not inventory.get_all_hosts():
         raise ValueError("No hosts loaded from inventory")
