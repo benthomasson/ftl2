@@ -101,6 +101,16 @@ class Inventory:
 
 _VALID_VARS_EXTENSIONS = {".yml", ".yaml", ".json", ""}
 
+_STANDARD_HOST_FIELDS = {
+    "ansible_host",
+    "ansible_port",
+    "ansible_user",
+    "ansible_connection",
+    "ansible_python_interpreter",
+    "ansible_become",
+    "ansible_become_user",
+}
+
 
 def _load_vars_file(path: Path) -> dict[str, Any]:
     content = path.read_text()
@@ -142,12 +152,6 @@ def _vars_entry_name(entry: Path) -> str:
 def _apply_external_vars(inventory: Inventory, inventory_path: Path) -> None:
     """Load group_vars/ and host_vars/ directories adjacent to the inventory file."""
     base = inventory_path.parent
-    standard_fields = {
-        "ansible_host", "ansible_port", "ansible_user",
-        "ansible_connection", "ansible_python_interpreter",
-        "ansible_become", "ansible_become_user",
-    }
-
     group_vars_dir = base / "group_vars"
     if group_vars_dir.is_dir():
         for entry in sorted(group_vars_dir.iterdir()):
@@ -169,7 +173,7 @@ def _apply_external_vars(inventory: Inventory, inventory_path: Path) -> None:
             if host is None:
                 continue
             loaded = _load_vars_dir(entry)
-            for field_name in standard_fields:
+            for field_name in _STANDARD_HOST_FIELDS:
                 if field_name in loaded:
                     setattr(host, field_name, loaded.pop(field_name))
             host.vars.update(loaded)
@@ -406,7 +410,7 @@ def _host_from_vars(host_name: str, host_data: dict[str, Any]) -> HostConfig:
     Returns:
         HostConfig with standard fields extracted and remainder in vars
     """
-    standard_fields = {
+    _STANDARD_HOST_FIELDS = {
         "ansible_host",
         "ansible_port",
         "ansible_user",
@@ -427,7 +431,7 @@ def _host_from_vars(host_name: str, host_data: dict[str, Any]) -> HostConfig:
         ),
         ansible_become=host_data.get("ansible_become", False),
         ansible_become_user=host_data.get("ansible_become_user", "root"),
-        vars={k: v for k, v in host_data.items() if k not in standard_fields},
+        vars={k: v for k, v in host_data.items() if k not in _STANDARD_HOST_FIELDS},
     )
 
 
