@@ -145,6 +145,7 @@ def _apply_external_vars(inventory: Inventory, inventory_path: Path) -> None:
     standard_fields = {
         "ansible_host", "ansible_port", "ansible_user",
         "ansible_connection", "ansible_python_interpreter",
+        "ansible_become", "ansible_become_user",
     }
 
     group_vars_dir = base / "group_vars"
@@ -411,6 +412,8 @@ def _host_from_vars(host_name: str, host_data: dict[str, Any]) -> HostConfig:
         "ansible_user",
         "ansible_connection",
         "ansible_python_interpreter",
+        "ansible_become",
+        "ansible_become_user",
     }
 
     return HostConfig(
@@ -422,6 +425,8 @@ def _host_from_vars(host_name: str, host_data: dict[str, Any]) -> HostConfig:
         ansible_python_interpreter=host_data.get(
             "ansible_python_interpreter", "python3"
         ),
+        ansible_become=host_data.get("ansible_become", False),
+        ansible_become_user=host_data.get("ansible_become_user", "root"),
         vars={k: v for k, v in host_data.items() if k not in standard_fields},
     )
 
