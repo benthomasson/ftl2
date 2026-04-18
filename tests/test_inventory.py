@@ -5,6 +5,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from ftl2.inventory import (
     HostGroup,
     Inventory,
@@ -782,9 +784,27 @@ class TestExpandHostRange:
         """Brackets without colon are not range syntax — pass through literally."""
         assert expand_host_range("host[tag]") == ["host[tag]"]
 
+    def test_multi_char_alpha_passthrough(self):
+        """Multi-character alpha brackets are not valid ranges — pass through."""
+        assert expand_host_range("host[tag:value]") == ["host[tag:value]"]
+
+    def test_ipv6_like_passthrough(self):
+        """IPv6-like brackets are not valid ranges — pass through."""
+        assert expand_host_range("host[2001:db8]") == ["host[2001:db8]"]
+
     def test_descending_range_empty(self):
         """Descending range produces no values — returns empty list."""
         assert expand_host_range("host[5:1]") == []
+
+    def test_zero_stride_raises(self):
+        """Stride of 0 raises ValueError."""
+        with pytest.raises(ValueError, match="stride of 0"):
+            expand_host_range("host[1:5:0]")
+
+    def test_width_from_longer_side(self):
+        """Zero-padding uses the wider of start/end."""
+        result = expand_host_range("host[1:003]")
+        assert result == ["host001", "host002", "host003"]
 
 
 class TestHostRangeIntegration:

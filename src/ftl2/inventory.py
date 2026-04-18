@@ -247,11 +247,23 @@ def _host_from_vars(host_name: str, host_data: dict[str, Any]) -> HostConfig:
     )
 
 
-_RANGE_RE = re.compile(r"\[([a-zA-Z0-9]+:[a-zA-Z0-9]+(?::[0-9]+)?)\]")
+_NUMERIC_RANGE_RE = re.compile(r"\[([0-9]+):([0-9]+)(?::([0-9]+))?\]")
+_ALPHA_RANGE_RE = re.compile(r"\[([a-zA-Z]):([a-zA-Z])(?::([0-9]+))?\]")
+_RANGE_RE = re.compile(
+    r"\[([0-9]+):([0-9]+)(?::([0-9]+))?\]"
+    r"|"
+    r"\[([a-zA-Z]):([a-zA-Z])(?::([0-9]+))?\]"
+)
 
 
 def expand_host_range(pattern: str) -> list[str]:
-    """Expand Ansible host range patterns like ``www[01:50].example.com``."""
+    """Expand Ansible host range patterns like ``www[01:50].example.com``.
+
+    Supports numeric ranges (``[01:50]``), alphabetic ranges (``[a:f]``),
+    and stride (``[01:50:2]``).  Multiple bracket groups produce a cartesian
+    product.  Brackets that don't match valid range syntax are left as
+    literal characters.
+    """
     matches = list(_RANGE_RE.finditer(pattern))
     if not matches:
         return [pattern]
@@ -260,15 +272,23 @@ def expand_host_range(pattern: str) -> list[str]:
     last_end = 0
     for m in matches:
         segments.append([pattern[last_end : m.start()]])
-        parts = m.group(1).split(":")
-        start, end = parts[0], parts[1]
-        stride = int(parts[2]) if len(parts) > 2 else 1
 
-        if start.isdigit() and end.isdigit():
-            width = len(start)
+        if m.group(1) is not None:
+            # Numeric range
+            start, end = m.group(1), m.group(2)
+            stride = int(m.group(3)) if m.group(3) else 1
+            if stride == 0:
+                raise ValueError(f"Invalid host range stride of 0 in '{pattern}'")
+            width = max(len(start), len(end))
             vals = [str(i).zfill(width) for i in range(int(start), int(end) + 1, stride)]
         else:
+            # Alpha range
+            start, end = m.group(4), m.group(5)
+            stride = int(m.group(6)) if m.group(6) else 1
+            if stride == 0:
+                raise ValueError(f"Invalid host range stride of 0 in '{pattern}'")
             vals = [chr(c) for c in range(ord(start), ord(end) + 1, stride)]
+
         segments.append(vals)
         last_end = m.end()
 
