@@ -1007,3 +1007,201 @@ host1 flag= port=80
         h = inv.get_group("web").get_host("host1")
         assert h.vars["flag"] == ""
         assert h.vars["port"] == 80
+
+
+class TestExternalVars:
+    """Tests for host_vars/ and group_vars/ loading alongside inventory."""
+
+    def test_group_vars_yml(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "webservers:\n  hosts:\n    web01:\n      ansible_host: 10.0.0.1\n"
+        )
+        gv = inv_dir / "group_vars"
+        gv.mkdir()
+        (gv / "webservers.yml").write_text("http_port: 80\nmax_clients: 200\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        ws = inv.get_group("webservers")
+        assert ws.vars["http_port"] == 80
+        assert ws.vars["max_clients"] == 200
+
+    def test_host_vars_yml(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "all:\n  hosts:\n    foosball:\n      ansible_host: 10.0.0.2\n"
+        )
+        hv = inv_dir / "host_vars"
+        hv.mkdir()
+        (hv / "foosball.yml").write_text("app_port: 9000\nenv: production\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        host = inv.get_group("all").get_host("foosball")
+        assert host.vars["app_port"] == 9000
+        assert host.vars["env"] == "production"
+
+    def test_group_vars_directory(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "raleigh:\n  hosts:\n    host3:\n      ansible_host: 10.0.0.3\n"
+        )
+        gv = inv_dir / "group_vars" / "raleigh"
+        gv.mkdir(parents=True)
+        (gv / "a_db_settings.yml").write_text("db_port: 5432\n")
+        (gv / "b_cluster_settings.yml").write_text("cluster_name: east\ndb_port: 5433\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        raleigh = inv.get_group("raleigh")
+        assert raleigh.vars["cluster_name"] == "east"
+        assert raleigh.vars["db_port"] == 5433  # b overrides a (sorted order)
+
+    def test_group_vars_all(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "webservers:\n  hosts:\n    web01:\n      ansible_host: 10.0.0.1\n"
+        )
+        gv = inv_dir / "group_vars"
+        gv.mkdir()
+        (gv / "all.yml").write_text("ntp_server: ntp.example.com\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        all_group = inv.get_group("all")
+        assert all_group is not None
+        assert all_group.vars["ntp_server"] == "ntp.example.com"
+
+    def test_json_vars_file(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "webservers:\n  hosts:\n    web01:\n      ansible_host: 10.0.0.1\n"
+        )
+        gv = inv_dir / "group_vars"
+        gv.mkdir()
+        (gv / "webservers.json").write_text('{"json_var": true}')
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        assert inv.get_group("webservers").vars["json_var"] is True
+
+    def test_no_extension_vars_file(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "webservers:\n  hosts:\n    web01:\n      ansible_host: 10.0.0.1\n"
+        )
+        gv = inv_dir / "group_vars"
+        gv.mkdir()
+        (gv / "webservers").write_text("no_ext_var: works\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        assert inv.get_group("webservers").vars["no_ext_var"] == "works"
+
+    def test_invalid_extension_ignored(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "webservers:\n  hosts:\n    web01:\n      ansible_host: 10.0.0.1\n"
+        )
+        gv = inv_dir / "group_vars" / "webservers"
+        gv.mkdir(parents=True)
+        (gv / "valid.yml").write_text("good: yes\n")
+        (gv / "readme.txt").write_text("bad: should_be_ignored\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        ws = inv.get_group("webservers")
+        assert ws.vars["good"] is True
+        assert "bad" not in ws.vars
+
+    def test_external_vars_override_inline(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "webservers:\n  hosts:\n    web01:\n      ansible_host: 10.0.0.1\n"
+            "  vars:\n    http_port: 80\n    inline_only: keep\n"
+        )
+        gv = inv_dir / "group_vars"
+        gv.mkdir()
+        (gv / "webservers.yml").write_text("http_port: 8080\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        ws = inv.get_group("webservers")
+        assert ws.vars["http_port"] == 8080  # overridden
+        assert ws.vars["inline_only"] == "keep"  # preserved
+
+    def test_no_vars_dirs(self, tmp_path):
+        inv_file = tmp_path / "hosts.yml"
+        inv_file.write_text(
+            "webservers:\n  hosts:\n    web01:\n      ansible_host: 10.0.0.1\n"
+        )
+        inv = load_inventory(inv_file)
+        assert inv.get_group("webservers") is not None
+
+    def test_fqdn_host_vars(self, tmp_path):
+        """FQDN hostnames like db.example.com must not be truncated by Path.stem."""
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "all:\n  hosts:\n    db.example.com:\n      ansible_host: 10.0.0.1\n"
+        )
+        hv = inv_dir / "host_vars"
+        hv.mkdir()
+        # Directory form — name is the full FQDN
+        fqdn_dir = hv / "db.example.com"
+        fqdn_dir.mkdir()
+        (fqdn_dir / "settings.yml").write_text("db_port: 5432\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        host = inv.get_all_hosts()["db.example.com"]
+        assert host.vars["db_port"] == 5432
+
+    def test_fqdn_group_vars(self, tmp_path):
+        """Group names with dots in extensionless files must not be truncated."""
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "us.east:\n  hosts:\n    web01:\n      ansible_host: 10.0.0.1\n"
+        )
+        gv = inv_dir / "group_vars"
+        gv.mkdir()
+        (gv / "us.east").write_text("region: us-east-1\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        assert inv.get_group("us.east").vars["region"] == "us-east-1"
+
+    def test_host_vars_promotes_standard_fields(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "all:\n  hosts:\n    myhost:\n      ansible_host: 10.0.0.1\n"
+        )
+        hv = inv_dir / "host_vars"
+        hv.mkdir()
+        (hv / "myhost.yml").write_text("ansible_user: deploy\ncustom_var: hello\n")
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        host = inv.get_group("all").get_host("myhost")
+        assert host.ansible_user == "deploy"
+        assert host.vars["custom_var"] == "hello"
+        assert "ansible_user" not in host.vars
+
+    def test_host_vars_promotes_become_fields(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "all:\n  hosts:\n    myhost:\n      ansible_host: 10.0.0.1\n"
+        )
+        hv = inv_dir / "host_vars"
+        hv.mkdir()
+        (hv / "myhost.yml").write_text(
+            "ansible_become: true\nansible_become_user: admin\n"
+        )
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        host = inv.get_group("all").get_host("myhost")
+        assert host.ansible_become is True
+        assert host.ansible_become_user == "admin"
+        assert "ansible_become" not in host.vars
+        assert "ansible_become_user" not in host.vars
