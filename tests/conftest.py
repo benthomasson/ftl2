@@ -149,10 +149,88 @@ def ssh_test_inventory(ssh_test_host):
     return inventory
 
 
+# --- Localhost SSH fixtures (Layer 2 — no Docker needed) ---
+
+
+def _localhost_ssh_available() -> bool:
+    """Check if sshd is listening on localhost:22."""
+    import socket
+
+    try:
+        s = socket.create_connection(("127.0.0.1", 22), timeout=2)
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
+LOCALHOST_SSH_AVAILABLE = _localhost_ssh_available()
+
+
+@pytest.fixture(scope="session")
+def require_localhost_ssh():
+    """Skip the entire test if localhost SSH is not available.
+
+    Also ensures 127.0.0.1 is in ~/.ssh/known_hosts so that asyncssh
+    host key verification succeeds (it looks up by IP, not hostname).
+    """
+    if not LOCALHOST_SSH_AVAILABLE:
+        pytest.skip("sshd not listening on localhost:22")
+
+    # Ensure host key for 127.0.0.1 (port 22) is in known_hosts.
+    # Entries for other ports (e.g. [127.0.0.1]:2222) don't count.
+    known_hosts = os.path.expanduser("~/.ssh/known_hosts")
+    needs_keyscan = True
+    if os.path.exists(known_hosts):
+        with open(known_hosts) as f:
+            for line in f:
+                if line.startswith("127.0.0.1 "):
+                    needs_keyscan = False
+                    break
+    if needs_keyscan:
+        subprocess.run(
+            "ssh-keyscan 127.0.0.1 >> ~/.ssh/known_hosts 2>/dev/null",
+            shell=True,
+            check=False,
+        )
+
+
+@pytest.fixture
+def localhost_ssh_host(require_localhost_ssh) -> HostConfig:
+    """HostConfig for the current user on localhost via SSH."""
+    import sys
+
+    user = os.getenv("USER") or os.getlogin()
+    return HostConfig(
+        name="localhost-ssh",
+        ansible_host="127.0.0.1",
+        ansible_port=22,
+        ansible_user=user,
+        ansible_connection="ssh",
+        ansible_python_interpreter=sys.executable,
+    )
+
+
+@pytest.fixture
+def localhost_ssh_inventory(localhost_ssh_host):
+    """Inventory containing a single localhost SSH host."""
+    from ftl2.inventory import HostGroup, Inventory
+
+    inventory = Inventory()
+    group = HostGroup(name="ci_hosts")
+    group.add_host(localhost_ssh_host)
+    inventory.add_group(group)
+    return inventory
+
+
 # Pytest markers for SSH tests
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line(
         "markers",
         "ssh_integration: mark test as SSH integration test (requires Docker)"
+    )
+    config.addinivalue_line(
+        "markers",
+        "integration: mark test as integration test (requires localhost SSH)"
     )
