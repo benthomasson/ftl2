@@ -1186,3 +1186,22 @@ class TestExternalVars:
         assert host.ansible_user == "deploy"
         assert host.vars["custom_var"] == "hello"
         assert "ansible_user" not in host.vars
+
+    def test_host_vars_promotes_become_fields(self, tmp_path):
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts.yml").write_text(
+            "all:\n  hosts:\n    myhost:\n      ansible_host: 10.0.0.1\n"
+        )
+        hv = inv_dir / "host_vars"
+        hv.mkdir()
+        (hv / "myhost.yml").write_text(
+            "ansible_become: true\nansible_become_user: admin\n"
+        )
+
+        inv = load_inventory(inv_dir / "hosts.yml")
+        host = inv.get_group("all").get_host("myhost")
+        assert host.ansible_become is True
+        assert host.ansible_become_user == "admin"
+        assert "ansible_become" not in host.vars
+        assert "ansible_become_user" not in host.vars
