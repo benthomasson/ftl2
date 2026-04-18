@@ -142,8 +142,10 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
         data = json.loads(content)
         return load_inventory_json(data, require_hosts=require_hosts)
 
-    # INI — detect by extension or content heuristic
-    if path.suffix in (".ini", ".cfg") or _is_ini_content(stripped):
+    # INI — detect by extension or content heuristic (skip YAML extensions)
+    if path.suffix in (".ini", ".cfg") or (
+        path.suffix not in (".yml", ".yaml") and _is_ini_content(stripped)
+    ):
         return load_inventory_ini(content, require_hosts=require_hosts)
 
     # YAML — existing format
@@ -296,10 +298,10 @@ def load_inventory_ini(content: str, require_hosts: bool = True) -> Inventory:
             hostname = tokens[0]
             host_vars: dict[str, Any] = {}
             for token in tokens[1:]:
-                key, _, value = token.partition("=")
+                key, sep, value = token.partition("=")
                 if value:
                     host_vars[key] = _parse_ini_host_value(value)
-                elif _ == "=":
+                elif sep:
                     host_vars[key] = ""
             for expanded in expand_host_range(hostname):
                 group.add_host(_host_from_vars(expanded, host_vars))
