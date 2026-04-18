@@ -247,7 +247,7 @@ def _host_from_vars(host_name: str, host_data: dict[str, Any]) -> HostConfig:
     )
 
 
-_RANGE_RE = re.compile(r"\[([^\]]+)\]")
+_RANGE_RE = re.compile(r"\[([a-zA-Z0-9]+:[a-zA-Z0-9]+(?::[0-9]+)?)\]")
 
 
 def expand_host_range(pattern: str) -> list[str]:

@@ -778,6 +778,14 @@ class TestExpandHostRange:
         result = expand_host_range("host[5:5]")
         assert result == ["host5"]
 
+    def test_non_range_brackets_passthrough(self):
+        """Brackets without colon are not range syntax — pass through literally."""
+        assert expand_host_range("host[tag]") == ["host[tag]"]
+
+    def test_descending_range_empty(self):
+        """Descending range produces no values — returns empty list."""
+        assert expand_host_range("host[5:1]") == []
+
 
 class TestHostRangeIntegration:
     """Test host range expansion through YAML inventory loading."""
