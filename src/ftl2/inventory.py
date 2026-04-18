@@ -299,6 +299,8 @@ def load_inventory_ini(content: str, require_hosts: bool = True) -> Inventory:
                 key, _, value = token.partition("=")
                 if value:
                     host_vars[key] = _parse_ini_host_value(value)
+                elif _ == "=":
+                    host_vars[key] = ""
             for expanded in expand_host_range(hostname):
                 group.add_host(_host_from_vars(expanded, host_vars))
 

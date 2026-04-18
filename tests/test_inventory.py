@@ -997,3 +997,13 @@ server1 description="web server" port=8080
         h = inv.get_group("app").get_host("server1")
         assert h.vars["description"] == "web server"
         assert h.vars["port"] == 8080
+
+    def test_empty_variable_value(self):
+        content = """\
+[web]
+host1 flag= port=80
+"""
+        inv = load_inventory_ini(content)
+        h = inv.get_group("web").get_host("host1")
+        assert h.vars["flag"] == ""
+        assert h.vars["port"] == 80
