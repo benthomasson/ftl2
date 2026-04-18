@@ -15,16 +15,11 @@ import sys
 
 
 def state_to_inventory(state: dict) -> str:
-    """Convert state dict to YAML inventory string.
-
-    Outputs groups at the top level (not nested under all.children)
-    so the result can be loaded by ftl2's inventory loader.
-    """
+    """Convert state dict to YAML inventory string."""
     hosts = state.get("hosts", {})
     if not hosts:
         return "all:\n  hosts: {}\n"
 
-    # Group hosts by their groups
     groups: dict[str, dict[str, dict]] = {}
     for host_name, host_data in hosts.items():
         host_groups = host_data.get("groups", ["ungrouped"])
@@ -33,7 +28,6 @@ def state_to_inventory(state: dict) -> str:
                      "ansible_connection", "ansible_python_interpreter"):
             if key in host_data:
                 val = host_data[key]
-                # Skip defaults
                 if key == "ansible_port" and val == 22:
                     continue
                 if key == "ansible_connection" and val == "ssh":
@@ -44,14 +38,13 @@ def state_to_inventory(state: dict) -> str:
         for group in host_groups:
             groups.setdefault(group, {})[host_name] = host_vars
 
-    # Build YAML with groups at the top level (compatible with ftl2 loader)
-    lines = []
+    lines = ["all:", "  children:"]
     for group_name in sorted(groups):
         group_hosts = groups[group_name]
-        lines.append(f"{group_name}:")
-        lines.append(f"  hosts:")
+        lines.append(f"    {group_name}:")
+        lines.append(f"      hosts:")
         for host_name in sorted(group_hosts):
-            _append_host(lines, host_name, group_hosts[host_name], indent=4)
+            _append_host(lines, host_name, group_hosts[host_name], indent=8)
 
     return "\n".join(lines) + "\n"
 
