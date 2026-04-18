@@ -3,9 +3,7 @@
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from ftl2.inventory import Inventory, _load_inventory_yaml, load_inventory
+from ftl2.inventory import _load_inventory_yaml, load_inventory
 
 
 class TestNestedInventoryEdgeCases:
