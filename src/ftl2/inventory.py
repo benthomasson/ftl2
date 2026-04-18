@@ -142,10 +142,44 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
     return _load_inventory_yaml(data, require_hosts=require_hosts)
 
 
+def _process_group(
+    group_name: str,
+    group_data: dict[str, Any] | None,
+    inventory: Inventory,
+    seen: set[str],
+) -> None:
+    """Recursively process a group and its children into the inventory."""
+    if group_name in seen:
+        raise ValueError(f"Circular group: {group_name}")
+    seen.add(group_name)
+
+    group = HostGroup(name=group_name)
+
+    if isinstance(group_data, dict):
+        if "hosts" in group_data and isinstance(group_data["hosts"], dict):
+            for host_name, host_data in group_data["hosts"].items():
+                if not isinstance(host_data, dict):
+                    host_data = {}
+                group.add_host(_host_from_vars(host_name, host_data))
+
+        if "vars" in group_data and isinstance(group_data["vars"], dict):
+            group.vars = group_data["vars"]
+
+        if "children" in group_data:
+            if isinstance(group_data["children"], list):
+                group.children = group_data["children"]
+            elif isinstance(group_data["children"], dict):
+                group.children = list(group_data["children"].keys())
+                for child_name, child_data in group_data["children"].items():
+                    _process_group(child_name, child_data, inventory, seen)
+
+    inventory.add_group(group)
+
+
 def _load_inventory_yaml(
     data: dict[str, Any] | None, require_hosts: bool = True
 ) -> Inventory:
-    """Load inventory from parsed YAML data.
+    """Load inventory from parsed YAML data, supporting nested all.children hierarchy.
 
     Args:
         data: Parsed YAML inventory data
@@ -153,53 +187,14 @@ def _load_inventory_yaml(
 
     Returns:
         Inventory object with typed groups and hosts
-
-    Note:
-        Expected structure (groups at top level, NOT nested under 'all'):
-
-            webservers:
-              hosts:
-                web01:
-                  ansible_host: 127.0.0.1
-                  ansible_port: 2222
-
-            databases:
-              hosts:
-                db01:
-                  ansible_host: 127.0.0.1
-
-        Nested structure like 'all.children.webservers' is NOT supported.
-        FTL2 only processes top-level group names.
     """
     inventory = Inventory()
 
-    # Process each group in the inventory (skip if data is None/empty)
     if data:
+        seen: set[str] = set()
         for group_name, group_data in data.items():
-            if not isinstance(group_data, dict):
-                continue
-
-            group = HostGroup(name=group_name)
-
-            # Process hosts in this group (YAML format: hosts is a dict)
-            if "hosts" in group_data and isinstance(group_data["hosts"], dict):
-                for host_name, host_data in group_data["hosts"].items():
-                    if not isinstance(host_data, dict):
-                        host_data = {}
-                    group.add_host(_host_from_vars(host_name, host_data))
-
-            # Process group vars
-            if "vars" in group_data and isinstance(group_data["vars"], dict):
-                group.vars = group_data["vars"]
-
-            # Process children
-            if "children" in group_data:
-                if isinstance(group_data["children"], list):
-                    group.children = group_data["children"]
-                elif isinstance(group_data["children"], dict):
-                    group.children = list(group_data["children"].keys())
-
-            inventory.add_group(group)
+            if group_name not in seen:
+                _process_group(group_name, group_data, inventory, seen)
 
     if require_hosts and not inventory.get_all_hosts():
         raise ValueError("No hosts loaded from inventory")

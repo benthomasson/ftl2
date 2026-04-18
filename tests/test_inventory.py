@@ -320,13 +320,7 @@ databases:
             path.unlink()
 
     def test_load_inventory_with_nested_structure(self):
-        """Test loading inventory with nested all.children structure raises ValueError.
-
-        This test captures the multi-host example issue where hosts were defined
-        under all.children.webservers instead of webservers directly.
-        """
-        import pytest
-
+        """Test loading inventory with nested all.children structure."""
         yaml_content = """
 all:
   children:
@@ -341,12 +335,101 @@ all:
             path = Path(f.name)
 
         try:
-            # This should raise ValueError because FTL2 doesn't process
-            # nested children - it only looks at top-level groups
-            with pytest.raises(ValueError, match="No hosts loaded from inventory"):
-                load_inventory(path)
+            inventory = load_inventory(path)
+
+            web_group = inventory.get_group("webservers")
+            assert web_group is not None
+            assert len(web_group.hosts) == 1
+
+            web01 = web_group.get_host("web01")
+            assert web01 is not None
+            assert web01.ansible_host == "192.168.1.10"
+
+            all_group = inventory.get_group("all")
+            assert all_group is not None
+            assert "webservers" in all_group.children
         finally:
             path.unlink()
+
+    def test_load_inventory_deeply_nested(self):
+        """Test loading inventory with deeply nested group hierarchy."""
+        yaml_content = """
+all:
+  vars:
+    global_var: value
+  children:
+    usa:
+      children:
+        southeast:
+          children:
+            atlanta:
+              hosts:
+                host1:
+                  http_port: 80
+                host2:
+            raleigh:
+              hosts:
+                host3:
+          vars:
+            some_server: foo.southeast.example.com
+        northeast:
+        northwest:
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            f.write(yaml_content)
+            f.flush()
+            path = Path(f.name)
+
+        try:
+            inventory = load_inventory(path)
+
+            assert inventory.get_group("all") is not None
+            assert inventory.get_group("usa") is not None
+            assert inventory.get_group("southeast") is not None
+            assert inventory.get_group("atlanta") is not None
+            assert inventory.get_group("raleigh") is not None
+            assert inventory.get_group("northeast") is not None
+            assert inventory.get_group("northwest") is not None
+
+            atlanta = inventory.get_group("atlanta")
+            assert len(atlanta.hosts) == 2
+            assert atlanta.get_host("host1") is not None
+            assert atlanta.get_host("host1").vars == {"http_port": 80}
+            assert atlanta.get_host("host2") is not None
+
+            raleigh = inventory.get_group("raleigh")
+            assert len(raleigh.hosts) == 1
+
+            southeast = inventory.get_group("southeast")
+            assert southeast.vars == {"some_server": "foo.southeast.example.com"}
+            assert set(southeast.children) == {"atlanta", "raleigh"}
+
+            usa = inventory.get_group("usa")
+            assert set(usa.children) == {"southeast", "northeast", "northwest"}
+        finally:
+            path.unlink()
+
+    def test_load_inventory_circular_groups(self):
+        """Test that circular group references raise ValueError."""
+        import pytest
+
+        from ftl2.inventory import _load_inventory_yaml
+
+        data = {
+            "parent": {
+                "children": {
+                    "child": {
+                        "children": {
+                            "parent": {
+                                "hosts": {"h1": {"ansible_host": "1.2.3.4"}}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        with pytest.raises(ValueError, match="Circular group: parent"):
+            _load_inventory_yaml(data)
 
 
 class TestLoadLocalhost:
