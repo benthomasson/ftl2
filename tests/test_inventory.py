@@ -12,6 +12,7 @@ from ftl2.inventory import (
     Inventory,
     expand_host_range,
     load_inventory,
+    load_inventory_ini,
     load_inventory_json,
     load_inventory_script,
     load_localhost,
@@ -858,3 +859,151 @@ class TestHostRangeIntegration:
         assert sorted(grp.hosts.keys()) == [
             "bastion", "node1", "node2", "node3",
         ]
+
+
+class TestLoadInventoryIni:
+    """Tests for INI inventory format parsing."""
+
+    def test_full_example_from_issue(self):
+        content = """\
+mail.example.com
+
+[webservers]
+foo.example.com
+bar.example.com http_port=80 maxRequestsPerChild=808
+
+[dbservers]
+one.example.com
+two.example.com
+
+[dbservers:vars]
+ansible_port=5432
+
+[southeast:children]
+atlanta
+raleigh
+
+[southeast:vars]
+some_server=foo.southeast.example.com
+
+[usa:children]
+southeast
+northeast
+"""
+        inv = load_inventory_ini(content, require_hosts=True)
+
+        ungrouped = inv.get_group("ungrouped")
+        assert ungrouped is not None
+        assert "mail.example.com" in ungrouped.hosts
+
+        ws = inv.get_group("webservers")
+        assert sorted(ws.hosts.keys()) == ["bar.example.com", "foo.example.com"]
+
+        bar = ws.get_host("bar.example.com")
+        assert bar.vars["http_port"] == 80
+        assert bar.vars["maxRequestsPerChild"] == 808
+
+        db = inv.get_group("dbservers")
+        assert sorted(db.hosts.keys()) == ["one.example.com", "two.example.com"]
+        assert db.vars["ansible_port"] == "5432"
+
+        se = inv.get_group("southeast")
+        assert set(se.children) == {"atlanta", "raleigh"}
+        assert se.vars["some_server"] == "foo.southeast.example.com"
+
+        usa = inv.get_group("usa")
+        assert set(usa.children) == {"southeast", "northeast"}
+
+    def test_host_variables_parsed_as_literals(self):
+        content = """\
+[web]
+host1 http_port=80 active=True name="quoted"
+"""
+        inv = load_inventory_ini(content)
+        h = inv.get_group("web").get_host("host1")
+        assert h.vars["http_port"] == 80
+        assert h.vars["active"] is True
+        assert h.vars["name"] == "quoted"
+
+    def test_vars_section_values_are_strings(self):
+        content = """\
+[db]
+db1
+
+[db:vars]
+ansible_port=5432
+flag=True
+"""
+        inv = load_inventory_ini(content)
+        db = inv.get_group("db")
+        assert db.vars["ansible_port"] == "5432"
+        assert db.vars["flag"] == "True"
+
+    def test_comments_and_blank_lines(self):
+        content = """\
+# This is a comment
+; This is also a comment
+
+[web]
+host1
+# another comment
+host2
+"""
+        inv = load_inventory_ini(content)
+        ws = inv.get_group("web")
+        assert sorted(ws.hosts.keys()) == ["host1", "host2"]
+
+    def test_host_range_expansion(self):
+        content = """\
+[web]
+www[01:03].example.com
+"""
+        inv = load_inventory_ini(content)
+        ws = inv.get_group("web")
+        assert sorted(ws.hosts.keys()) == [
+            "www01.example.com",
+            "www02.example.com",
+            "www03.example.com",
+        ]
+
+    def test_empty_ini_require_hosts_raises(self):
+        content = "# just a comment\n"
+        with pytest.raises(ValueError, match="No hosts loaded"):
+            load_inventory_ini(content, require_hosts=True)
+
+    def test_empty_ini_require_hosts_false(self):
+        content = "# just a comment\n"
+        inv = load_inventory_ini(content, require_hosts=False)
+        assert inv.get_all_hosts() == {}
+
+    def test_autodetect_ini_extension(self, tmp_path):
+        ini_file = tmp_path / "hosts.ini"
+        ini_file.write_text("[web]\nhost1\n")
+        inv = load_inventory(str(ini_file))
+        assert inv.get_group("web").get_host("host1") is not None
+
+    def test_autodetect_ini_content_no_extension(self, tmp_path):
+        ini_file = tmp_path / "hosts"
+        ini_file.write_text("[web]\nhost1\n")
+        inv = load_inventory(str(ini_file))
+        assert inv.get_group("web").get_host("host1") is not None
+
+    def test_quoted_values_with_spaces(self):
+        content = """\
+[app]
+server1 description="web server" port=8080
+"""
+        inv = load_inventory_ini(content)
+        h = inv.get_group("app").get_host("server1")
+        assert h.vars["description"] == "web server"
+        assert h.vars["port"] == 8080
+
+    def test_empty_variable_value(self):
+        content = """\
+[web]
+host1 flag= port=80
+"""
+        inv = load_inventory_ini(content)
+        h = inv.get_group("web").get_host("host1")
+        assert h.vars["flag"] == ""
+        assert h.vars["port"] == 80

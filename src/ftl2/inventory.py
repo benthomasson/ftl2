@@ -4,10 +4,12 @@ This module provides typed inventory management with dataclasses, replacing
 dictionary-based inventory structures with strongly-typed classes.
 """
 
+import ast
 import itertools
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -100,9 +102,10 @@ class Inventory:
 def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> Inventory:
     """Load inventory from a file, auto-detecting the format.
 
-    Supports three formats:
+    Supports four formats:
     - Executable scripts: run with --list, parse JSON output
     - JSON files: Ansible --list format (groups with host lists + _meta.hostvars)
+    - INI files: Ansible INI format (detected by .ini/.cfg extension or [section] headers)
     - YAML files: Ansible inventory format (groups with host dicts)
 
     Args:
@@ -128,7 +131,7 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
         raise FileNotFoundError(f"Inventory file not found: {path}")
 
     # Executable script — run with --list
-    if os.access(path, os.X_OK) and path.suffix not in (".yml", ".yaml", ".json"):
+    if os.access(path, os.X_OK) and path.suffix not in (".yml", ".yaml", ".json", ".ini", ".cfg"):
         return load_inventory_script(path, require_hosts=require_hosts)
 
     content = path.read_text()
@@ -138,6 +141,12 @@ def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> In
     if stripped.startswith("{"):
         data = json.loads(content)
         return load_inventory_json(data, require_hosts=require_hosts)
+
+    # INI — detect by extension or content heuristic (skip YAML extensions)
+    if path.suffix in (".ini", ".cfg") or (
+        path.suffix not in (".yml", ".yaml") and _is_ini_content(stripped)
+    ):
+        return load_inventory_ini(content, require_hosts=require_hosts)
 
     # YAML — existing format
     data = yaml.safe_load(content) or {}
@@ -209,6 +218,93 @@ def _load_inventory_yaml(
     if data:
         for group_name, group_data in data.items():
             _process_group(group_name, group_data, inventory)
+
+    if require_hosts and not inventory.get_all_hosts():
+        raise ValueError("No hosts loaded from inventory")
+
+    return inventory
+
+
+def _is_ini_content(content: str) -> bool:
+    """Return True if content looks like an INI inventory (has [section] headers)."""
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+        if _INI_SECTION_RE.match(line):
+            return True
+    return False
+
+
+def _parse_ini_host_value(value: str) -> Any:
+    """Parse a host-line value using ast.literal_eval, falling back to string."""
+    try:
+        return ast.literal_eval(value)
+    except (ValueError, SyntaxError):
+        return value
+
+
+_INI_SECTION_RE = re.compile(r"^\[([^\]]+)\]$")
+
+
+def load_inventory_ini(content: str, require_hosts: bool = True) -> Inventory:
+    """Parse an Ansible INI inventory string into an Inventory."""
+    inventory = Inventory()
+    current_group_name: str | None = None
+    section_type = "hosts"
+
+    def _ensure_group(name: str) -> HostGroup:
+        group = inventory.get_group(name)
+        if group is None:
+            group = HostGroup(name=name)
+            inventory.add_group(group)
+        return group
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+
+        section_match = _INI_SECTION_RE.match(line)
+        if section_match:
+            header = section_match.group(1)
+            if header.endswith(":vars"):
+                current_group_name = header[: -len(":vars")]
+                section_type = "vars"
+                _ensure_group(current_group_name)
+            elif header.endswith(":children"):
+                current_group_name = header[: -len(":children")]
+                section_type = "children"
+                _ensure_group(current_group_name)
+            else:
+                current_group_name = header
+                section_type = "hosts"
+                _ensure_group(current_group_name)
+            continue
+
+        group_name = current_group_name if current_group_name is not None else "ungrouped"
+        group = _ensure_group(group_name)
+
+        if section_type == "vars":
+            key, _, value = line.partition("=")
+            group.vars[key.strip()] = value.strip()
+        elif section_type == "children":
+            child_name = line.strip()
+            if child_name not in group.children:
+                group.children.append(child_name)
+            _ensure_group(child_name)
+        else:
+            tokens = shlex.split(line)
+            hostname = tokens[0]
+            host_vars: dict[str, Any] = {}
+            for token in tokens[1:]:
+                key, sep, value = token.partition("=")
+                if value:
+                    host_vars[key] = _parse_ini_host_value(value)
+                elif sep:
+                    host_vars[key] = ""
+            for expanded in expand_host_range(hostname):
+                group.add_host(_host_from_vars(expanded, host_vars))
 
     if require_hosts and not inventory.get_all_hosts():
         raise ValueError("No hosts loaded from inventory")
