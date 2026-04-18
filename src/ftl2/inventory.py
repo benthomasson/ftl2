@@ -102,9 +102,10 @@ class Inventory:
 def load_inventory(inventory_file: str | Path, require_hosts: bool = True) -> Inventory:
     """Load inventory from a file, auto-detecting the format.
 
-    Supports three formats:
+    Supports four formats:
     - Executable scripts: run with --list, parse JSON output
     - JSON files: Ansible --list format (groups with host lists + _meta.hostvars)
+    - INI files: Ansible INI format (detected by .ini/.cfg extension or [section] headers)
     - YAML files: Ansible inventory format (groups with host dicts)
 
     Args:
@@ -250,8 +251,15 @@ def load_inventory_ini(content: str, require_hosts: bool = True) -> Inventory:
     current_group_name: str | None = None
     section_type = "hosts"
 
-    for line in content.splitlines():
-        line = line.strip()
+    def _ensure_group(name: str) -> HostGroup:
+        group = inventory.get_group(name)
+        if group is None:
+            group = HostGroup(name=name)
+            inventory.add_group(group)
+        return group
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
         if not line or line.startswith("#") or line.startswith(";"):
             continue
 
@@ -261,21 +269,19 @@ def load_inventory_ini(content: str, require_hosts: bool = True) -> Inventory:
             if header.endswith(":vars"):
                 current_group_name = header[: -len(":vars")]
                 section_type = "vars"
+                _ensure_group(current_group_name)
             elif header.endswith(":children"):
                 current_group_name = header[: -len(":children")]
                 section_type = "children"
+                _ensure_group(current_group_name)
             else:
                 current_group_name = header
                 section_type = "hosts"
-            if inventory.get_group(current_group_name) is None:
-                inventory.add_group(HostGroup(name=current_group_name))
+                _ensure_group(current_group_name)
             continue
 
-        group_name = current_group_name or "ungrouped"
-        group = inventory.get_group(group_name)
-        if group is None:
-            group = HostGroup(name=group_name)
-            inventory.add_group(group)
+        group_name = current_group_name if current_group_name is not None else "ungrouped"
+        group = _ensure_group(group_name)
 
         if section_type == "vars":
             key, _, value = line.partition("=")
@@ -284,16 +290,15 @@ def load_inventory_ini(content: str, require_hosts: bool = True) -> Inventory:
             child_name = line.strip()
             if child_name not in group.children:
                 group.children.append(child_name)
-            if inventory.get_group(child_name) is None:
-                inventory.add_group(HostGroup(name=child_name))
+            _ensure_group(child_name)
         else:
             tokens = shlex.split(line)
             hostname = tokens[0]
             host_vars: dict[str, Any] = {}
             for token in tokens[1:]:
-                if "=" in token:
-                    k, _, v = token.partition("=")
-                    host_vars[k] = _parse_ini_host_value(v)
+                key, _, value = token.partition("=")
+                if value:
+                    host_vars[key] = _parse_ini_host_value(value)
             for expanded in expand_host_range(hostname):
                 group.add_host(_host_from_vars(expanded, host_vars))
 
