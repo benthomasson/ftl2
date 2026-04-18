@@ -410,16 +410,6 @@ def _host_from_vars(host_name: str, host_data: dict[str, Any]) -> HostConfig:
     Returns:
         HostConfig with standard fields extracted and remainder in vars
     """
-    _STANDARD_HOST_FIELDS = {
-        "ansible_host",
-        "ansible_port",
-        "ansible_user",
-        "ansible_connection",
-        "ansible_python_interpreter",
-        "ansible_become",
-        "ansible_become_user",
-    }
-
     return HostConfig(
         name=host_name,
         ansible_host=host_data.get("ansible_host", host_name),
