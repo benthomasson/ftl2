@@ -4,8 +4,10 @@ This module provides typed inventory management with dataclasses, replacing
 dictionary-based inventory structures with strongly-typed classes.
 """
 
+import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -166,7 +168,8 @@ def _process_group(
             for host_name, host_data in group_data["hosts"].items():
                 if not isinstance(host_data, dict):
                     host_data = {}
-                group.add_host(_host_from_vars(host_name, host_data))
+                for expanded in expand_host_range(host_name):
+                    group.add_host(_host_from_vars(expanded, host_data))
 
         if "vars" in group_data and isinstance(group_data["vars"], dict):
             group.vars.update(group_data["vars"])
@@ -242,6 +245,53 @@ def _host_from_vars(host_name: str, host_data: dict[str, Any]) -> HostConfig:
         ),
         vars={k: v for k, v in host_data.items() if k not in standard_fields},
     )
+
+
+_RANGE_RE = re.compile(
+    r"\[([0-9]+):([0-9]+)(?::([0-9]+))?\]"
+    r"|"
+    r"\[([a-zA-Z]):([a-zA-Z])(?::([0-9]+))?\]"
+)
+
+
+def expand_host_range(pattern: str) -> list[str]:
+    """Expand Ansible host range patterns like ``www[01:50].example.com``.
+
+    Supports numeric ranges (``[01:50]``), alphabetic ranges (``[a:f]``),
+    and stride (``[01:50:2]``).  Multiple bracket groups produce a cartesian
+    product.  Brackets that don't match valid range syntax are left as
+    literal characters.
+    """
+    matches = list(_RANGE_RE.finditer(pattern))
+    if not matches:
+        return [pattern]
+
+    segments: list[list[str]] = []
+    last_end = 0
+    for m in matches:
+        segments.append([pattern[last_end : m.start()]])
+
+        if m.group(1) is not None:
+            # Numeric range
+            start, end = m.group(1), m.group(2)
+            stride = int(m.group(3)) if m.group(3) else 1
+            if stride == 0:
+                raise ValueError(f"Invalid host range stride of 0 in '{pattern}'")
+            width = max(len(start), len(end))
+            vals = [str(i).zfill(width) for i in range(int(start), int(end) + 1, stride)]
+        else:
+            # Alpha range
+            start, end = m.group(4), m.group(5)
+            stride = int(m.group(6)) if m.group(6) else 1
+            if stride == 0:
+                raise ValueError(f"Invalid host range stride of 0 in '{pattern}'")
+            vals = [chr(c) for c in range(ord(start), ord(end) + 1, stride)]
+
+        segments.append(vals)
+        last_end = m.end()
+
+    segments.append([pattern[last_end:]])
+    return ["".join(combo) for combo in itertools.product(*segments)]
 
 
 def load_inventory_json(data: dict[str, Any], require_hosts: bool = True) -> Inventory:
