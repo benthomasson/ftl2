@@ -344,7 +344,7 @@ def _stop_gate_coverage() -> str:
     Returns empty string if coverage was not active.
     Resets global state so subsequent calls are no-ops.
     """
-    global _gate_cov
+    global _gate_cov, _gate_coverage_file
     path = ""
     if _gate_cov is not None:
         try:
