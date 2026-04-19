@@ -941,10 +941,15 @@ class RemoteModuleRunner(ModuleRunner):
         """
         # Build gate executable
         assert self.gate_builder is not None
+        from ftl2.coverage import is_coverage_enabled
+
+        deps = list(context.execution_config.dependencies)
+        if is_coverage_enabled():
+            deps.append("coverage")
         gate_config = GateBuildConfig(
             modules=context.execution_config.modules,
             module_dirs=context.execution_config.module_dirs,
-            dependencies=context.execution_config.dependencies,
+            dependencies=deps,
             interpreter=interpreter,
         )
         gate_path, gate_hash = self.gate_builder.build(gate_config)
@@ -995,12 +1000,20 @@ class RemoteModuleRunner(ModuleRunner):
             Exception: If gate fails to start or handshake fails
         """
         used_subsystem = False
+        from ftl2.coverage import is_coverage_enabled
+
+        cov_enabled = is_coverage_enabled()
+        cov_prefix = "FTL2_COVERAGE=1 " if cov_enabled else ""
 
         if become and become.effective:
             # Cannot use SSH subsystem with become — always use exec
-            gate_cmd = become.become_prefix(f"{interpreter} {gate_file}")
+            gate_cmd = become.become_prefix(f"{cov_prefix}{interpreter} {gate_file}")
             process = await conn.create_process(gate_cmd, encoding=None)
             logger.info(f"Connected via SSH exec with {become.become_method} (become_user={become.become_user})")
+        elif cov_enabled:
+            # Skip subsystem when coverage enabled — env vars can't be passed via subsystem
+            process = await conn.create_process(f"{cov_prefix}{interpreter} {gate_file}", encoding=None)
+            logger.info("Connected via SSH exec (subsystem skipped for coverage)")
         else:
             # Try SSH subsystem first — no shell startup, no PATH lookup
             try:
@@ -1442,6 +1455,15 @@ class RemoteModuleRunner(ModuleRunner):
         Args:
             gate: Gate connection to close
         """
+        # Retrieve coverage data before shutdown (reader task must be alive)
+        from ftl2.coverage import is_coverage_enabled
+
+        if is_coverage_enabled() and gate.healthy:
+            try:
+                await self._retrieve_gate_coverage(gate)
+            except Exception:
+                logger.debug("Failed to retrieve gate coverage", exc_info=True)
+
         # Mark unhealthy to stop keepalive loop promptly
         gate.healthy = False
 
@@ -1484,6 +1506,38 @@ class RemoteModuleRunner(ModuleRunner):
             pass  # Ignore errors during shutdown
         finally:
             gate.conn.close()
+
+    async def _retrieve_gate_coverage(self, gate: Gate) -> None:
+        """Request coverage data from gate and retrieve via SFTP."""
+        from ftl2.coverage import retrieve_gate_coverage
+
+        if gate.multiplexed:
+            msg_type, data = await self._send_and_wait(
+                gate, "GetCoverage", {}, timeout=30,
+            )
+        else:
+            await self.protocol.send_message(
+                gate.gate_process.stdin, "GetCoverage", {},  # type: ignore[arg-type]
+            )
+            response = await asyncio.wait_for(
+                self.protocol.read_message(gate.gate_process.stdout),  # type: ignore[arg-type]
+                timeout=30,
+            )
+            if response is None:
+                return
+            msg_type, data = response[0], response[1]
+
+        if msg_type != "GetCoverageResult":
+            logger.debug("Unexpected response to GetCoverage: %s", msg_type)
+            return
+
+        remote_path = data.get("path", "") if isinstance(data, dict) else ""
+        if not remote_path:
+            return
+
+        # Use temp_dir basename as host identifier (unique per gate)
+        host_id = gate.temp_dir.rsplit("/", 1)[-1] if gate.temp_dir else "unknown"
+        await retrieve_gate_coverage(gate.conn, remote_path, host_id)
 
     async def close_all(self) -> None:
         """Close all cached gate connections.
