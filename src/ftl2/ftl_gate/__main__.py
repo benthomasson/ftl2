@@ -59,6 +59,13 @@ try:
 except ImportError:
     HAS_POLICY = False
 
+# Try to import coverage (bundled into gate .pyz when FTL2_COVERAGE=1)
+try:
+    import coverage as _coverage_mod
+    HAS_COVERAGE = True
+except ImportError:
+    HAS_COVERAGE = False
+
 logger = logging.getLogger("ftl_gate")
 
 
@@ -327,6 +334,27 @@ _last_error: str | None = None
 _start_time: float = 0.0
 _active_tasks: set | None = None
 _draining: bool = False
+_gate_cov: Any = None
+_gate_coverage_file: str | None = None
+
+
+def _stop_gate_coverage() -> str:
+    """Stop coverage collection and return the data file path.
+
+    Returns empty string if coverage was not active.
+    Resets global state so subsequent calls are no-ops.
+    """
+    global _gate_cov, _gate_coverage_file
+    path = ""
+    if _gate_cov is not None:
+        try:
+            _gate_cov.stop()
+            _gate_cov.save()
+            path = _gate_coverage_file or ""
+        except Exception:
+            logger.debug("Failed to save gate coverage", exc_info=True)
+        _gate_cov = None
+    return path
 
 
 def _module_cache_set(name: str, data: bytes) -> None:
@@ -1106,6 +1134,17 @@ async def main(args: list[str]) -> int | None:
     global _draining
     _draining = False
 
+    # Start coverage collection if enabled
+    global _gate_cov, _gate_coverage_file
+    _gate_cov = None
+    _gate_coverage_file = None
+    if HAS_COVERAGE and os.environ.get("FTL2_COVERAGE") == "1":
+        cov_dir = tempfile.mkdtemp(prefix="ftl2-cov-")
+        _gate_coverage_file = f"{cov_dir}/.coverage.gate.{os.getpid()}"
+        _gate_cov = _coverage_mod.Coverage(data_file=_gate_coverage_file)
+        _gate_cov.start()
+        logger.info(f"Coverage started: {_gate_coverage_file}")
+
     # Message processing loop
     while True:
         try:
@@ -1399,11 +1438,19 @@ async def main(args: list[str]) -> int | None:
                     "in_flight": 0,
                 })
 
+            elif msg_type == "GetCoverage":
+                logger.info("GetCoverage requested")
+                cov_path = _stop_gate_coverage()
+                await protocol.send_message(
+                    writer, "GetCoverageResult", {"path": cov_path}
+                )
+
             elif msg_type == "Shutdown":
                 logger.info("Shutdown requested")
                 watcher.stop()
                 monitor.stop()
                 gate_status_monitor.stop()
+                _stop_gate_coverage()
                 await protocol.send_message(writer, "Goodbye", {})
                 return None
 
@@ -1703,7 +1750,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
 
     # Main reader loop
     tasks = set()
-    global _active_tasks
+    global _active_tasks, _gate_cov, _gate_coverage_file
     _active_tasks = tasks
     draining = False
     try:
@@ -1723,9 +1770,20 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
 
             logger.debug(f"Multiplexed request: {msg_type} msg_id={msg_id}")
 
+            # Handle GetCoverage synchronously
+            if msg_type == "GetCoverage":
+                logger.info("GetCoverage requested in multiplexed mode")
+                cov_path = _stop_gate_coverage()
+                await protocol.send_message_with_id(
+                    writer, "GetCoverageResult", {"path": cov_path},
+                    msg_id, write_lock=write_lock,
+                )
+                continue
+
             # Handle Shutdown synchronously
             if msg_type == "Shutdown":
                 logger.info("Shutdown requested in multiplexed mode")
+                _stop_gate_coverage()
                 await protocol.send_message_with_id(
                     writer, "Goodbye", {}, msg_id, write_lock=write_lock,
                 )
@@ -1781,6 +1839,8 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
         monitor.stop()
         if gate_status_monitor is not None:
             gate_status_monitor.stop()
+        # Safety-net: stop coverage if still active (e.g. EOF without Shutdown)
+        _stop_gate_coverage()
 
     return None
 

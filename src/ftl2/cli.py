@@ -2161,7 +2161,15 @@ def main() -> None:
     from ftl2.telemetry import phone_home
 
     phone_home()
-    cli()
+
+    # To collect coverage, set FTL2_COVERAGE=1 in your environment.
+    from ftl2.coverage import ControllerCoverage, is_coverage_enabled
+
+    if is_coverage_enabled():
+        with ControllerCoverage():
+            cli()
+    else:
+        cli()
 
 
 def entry_point() -> None:

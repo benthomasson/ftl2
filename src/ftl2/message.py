@@ -74,6 +74,8 @@ class GateProtocol:
         "GateDrain",  # Request gate to stop accepting new work
         "GateDrainResult",  # Response to GateDrain with completion counts
         "Goodbye",  # Final acknowledgement before gate exit
+        "GetCoverage",  # Request coverage data from gate
+        "GetCoverageResult",  # Response with coverage file path
     }
 
     EVENT_TYPES = {
