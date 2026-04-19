@@ -1003,7 +1003,7 @@ class RemoteModuleRunner(ModuleRunner):
         from ftl2.coverage import is_coverage_enabled
 
         cov_enabled = is_coverage_enabled()
-        cov_prefix = "FTL2_COVERAGE=1 " if cov_enabled else ""
+        cov_prefix = "env FTL2_COVERAGE=1 " if cov_enabled else ""
 
         if become and become.effective:
             # Cannot use SSH subsystem with become — always use exec

@@ -338,6 +338,25 @@ _gate_cov: Any = None
 _gate_coverage_file: str | None = None
 
 
+def _stop_gate_coverage() -> str:
+    """Stop coverage collection and return the data file path.
+
+    Returns empty string if coverage was not active.
+    Resets global state so subsequent calls are no-ops.
+    """
+    global _gate_cov
+    path = ""
+    if _gate_cov is not None:
+        try:
+            _gate_cov.stop()
+            _gate_cov.save()
+            path = _gate_coverage_file or ""
+        except Exception:
+            logger.debug("Failed to save gate coverage", exc_info=True)
+        _gate_cov = None
+    return path
+
+
 def _module_cache_set(name: str, data: bytes) -> None:
     """Store a module in the bounded cache, evicting the oldest entry if full."""
     if name in _module_cache:
@@ -1120,7 +1139,8 @@ async def main(args: list[str]) -> int | None:
     _gate_cov = None
     _gate_coverage_file = None
     if HAS_COVERAGE and os.environ.get("FTL2_COVERAGE") == "1":
-        _gate_coverage_file = f"/tmp/.coverage.gate.{os.getpid()}"
+        cov_dir = tempfile.mkdtemp(prefix="ftl2-cov-")
+        _gate_coverage_file = f"{cov_dir}/.coverage.gate.{os.getpid()}"
         _gate_cov = _coverage_mod.Coverage(data_file=_gate_coverage_file)
         _gate_cov.start()
         logger.info(f"Coverage started: {_gate_coverage_file}")
@@ -1420,12 +1440,7 @@ async def main(args: list[str]) -> int | None:
 
             elif msg_type == "GetCoverage":
                 logger.info("GetCoverage requested")
-                cov_path = ""
-                if _gate_cov is not None:
-                    _gate_cov.stop()
-                    _gate_cov.save()
-                    cov_path = _gate_coverage_file or ""
-                    _gate_cov = None
+                cov_path = _stop_gate_coverage()
                 await protocol.send_message(
                     writer, "GetCoverageResult", {"path": cov_path}
                 )
@@ -1435,10 +1450,7 @@ async def main(args: list[str]) -> int | None:
                 watcher.stop()
                 monitor.stop()
                 gate_status_monitor.stop()
-                if _gate_cov is not None:
-                    _gate_cov.stop()
-                    _gate_cov.save()
-                    _gate_cov = None
+                _stop_gate_coverage()
                 await protocol.send_message(writer, "Goodbye", {})
                 return None
 
@@ -1761,12 +1773,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
             # Handle GetCoverage synchronously
             if msg_type == "GetCoverage":
                 logger.info("GetCoverage requested in multiplexed mode")
-                cov_path = ""
-                if _gate_cov is not None:
-                    _gate_cov.stop()
-                    _gate_cov.save()
-                    cov_path = _gate_coverage_file or ""
-                    _gate_cov = None
+                cov_path = _stop_gate_coverage()
                 await protocol.send_message_with_id(
                     writer, "GetCoverageResult", {"path": cov_path},
                     msg_id, write_lock=write_lock,
@@ -1776,10 +1783,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
             # Handle Shutdown synchronously
             if msg_type == "Shutdown":
                 logger.info("Shutdown requested in multiplexed mode")
-                if _gate_cov is not None:
-                    _gate_cov.stop()
-                    _gate_cov.save()
-                    _gate_cov = None
+                _stop_gate_coverage()
                 await protocol.send_message_with_id(
                     writer, "Goodbye", {}, msg_id, write_lock=write_lock,
                 )
@@ -1836,12 +1840,7 @@ async def main_multiplexed(reader, writer, protocol, watcher, monitor, gate_hash
         if gate_status_monitor is not None:
             gate_status_monitor.stop()
         # Safety-net: stop coverage if still active (e.g. EOF without Shutdown)
-        if _gate_cov is not None:
-            try:
-                _gate_cov.stop()
-                _gate_cov.save()
-            except Exception:
-                pass
+        _stop_gate_coverage()
 
     return None
 
