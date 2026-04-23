@@ -744,6 +744,7 @@ class RemoteModuleRunner(ModuleRunner):
         event_callback: Any = None,
         host_name: str = "localhost",
         cache_key: str = "",
+        disable_host_key_checking: bool = False,
     ) -> Gate:
         """Establish SSH connection and create gate.
 
@@ -780,7 +781,7 @@ class RemoteModuleRunner(ModuleRunner):
                     "host": ssh_host,
                     "port": ssh_port,
                     "username": ssh_user,
-                    "known_hosts": (),  # Use system known_hosts
+                    "known_hosts": None if disable_host_key_checking else (),
                     "connect_timeout": 30,  # 30 seconds per attempt
                     "keepalive_interval": 30,  # prevent firewall/NAT drops during long operations
                 }

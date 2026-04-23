@@ -1955,12 +1955,14 @@ class AutomationContext:
             await self._dispatch_event(host.name, event_type, data)
 
         use_subsystem = register_subsystem if register_subsystem is not None else self._gate_subsystem
+        disable_host_key_checking = host.vars.get("disable_host_key_checking", False)
         return await self._remote_runner._connect_gate(
             ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context,
             register_subsystem=use_subsystem,
             become=become,
             event_callback=_event_cb,
             host_name=host.name,
+            disable_host_key_checking=disable_host_key_checking,
         )
 
     async def _get_ssh_connection(self, host: HostConfig) -> SSHHost:
