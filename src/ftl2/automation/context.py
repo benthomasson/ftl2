@@ -280,6 +280,7 @@ class AutomationContext:
         deps_file: str | Path = ".ftl2-deps.txt",
         modules_file: str | Path = ".ftl2-modules.txt",
         gate_modules: list[str] | str | None = None,
+        gate_dependencies: list[str] | None = None,
         gate_subsystem: bool = False,
         state_file: str | Path | None = ".ftl2-state.json",
         record: str | Path | None = None,
@@ -399,6 +400,7 @@ class AutomationContext:
         self._modules_file = Path(modules_file)
         self._gate_modules_input = gate_modules
         self._gate_modules: list[str] | None = None  # resolved in __aenter__
+        self._gate_dependencies = gate_dependencies or []
         self._gate_subsystem = gate_subsystem
         self._recorded_modules: set[str] = set()
         self._record_file = Path(record) if record else None
@@ -1945,6 +1947,7 @@ class AutomationContext:
             execution_config=ExecutionConfig(
                 module_name="ping",
                 modules=self._gate_modules or [],
+                dependencies=self._gate_dependencies,
                 dry_run=self.check_mode,
             ),
             gate_config=GateConfig(),
