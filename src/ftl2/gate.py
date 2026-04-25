@@ -100,6 +100,7 @@ class GateBuildConfig:
                 ftl2_dir / "ftl_gate" / "__main__.py",
                 ftl2_dir / "message.py",
                 ftl2_dir / "ftl_modules" / "exceptions.py",
+                ftl2_dir / "events.py",
                 ftl2_dir / "policy.py",
                 ftl2_dir / "exceptions.py",
             ]:
@@ -229,6 +230,9 @@ class GateBuilder:
 
             # Copy FTL module exceptions (needed by FTL modules sent via FTLModule messages)
             self._copy_ftl_module_exceptions(ftl2_dir)
+
+            # Copy events module (needed by FTL modules that emit progress events)
+            self._copy_events_module(ftl2_dir)
 
             # Copy policy engine and its dependency (exceptions.py) for gate-side enforcement
             self._copy_policy_module(ftl2_dir)
@@ -469,6 +473,24 @@ class GateBuilder:
 
         except Exception as e:
             logger.warning(f"Failed to copy ftl_modules exceptions: {e}")
+
+    def _copy_events_module(self, ftl2_dir: Path) -> None:
+        """Copy events module into gate for FTL modules that emit progress."""
+        try:
+            import ftl2
+
+            ftl2_package_dir = Path(ftl2.__file__).parent
+            events_path = ftl2_package_dir / "events.py"
+
+            if not events_path.exists():
+                logger.warning(f"events.py not found at {events_path}")
+                return
+
+            shutil.copy(events_path, ftl2_dir / "events.py")
+            logger.debug(f"Copied events module to {ftl2_dir}")
+
+        except Exception as e:
+            logger.warning(f"Failed to copy events module: {e}")
 
     def _copy_policy_module(self, ftl2_dir: Path) -> None:
         """Copy policy engine module into gate for gate-side enforcement.
