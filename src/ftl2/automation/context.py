@@ -1971,11 +1971,13 @@ class AutomationContext:
             # Get password from host vars if available
             password = host.vars.get("ansible_password") or host.vars.get("ansible_ssh_pass")
 
+            disable_host_key_checking = host.vars.get("disable_host_key_checking", False)
             ssh_host = SSHHost(
                 hostname=host.ansible_host,
                 port=host.ansible_port,
                 username=host.ansible_user or None,
                 password=password,
+                disable_host_key_checking=disable_host_key_checking,
             )
             await ssh_host.connect()
             self._ssh_connections[host.name] = ssh_host
