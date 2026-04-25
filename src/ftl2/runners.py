@@ -564,7 +564,7 @@ class RemoteModuleRunner(ModuleRunner):
     REQUEST_TIMEOUT: float = 300.0       # Per-request timeout for _send_and_wait
     HANDSHAKE_TIMEOUT: float = 30.0      # Hello handshake timeout during gate startup
     KEEPALIVE_INTERVAL: float = 30.0     # Seconds between keepalive pings
-    KEEPALIVE_TIMEOUT: float = 15.0      # Max wait for keepalive response
+    KEEPALIVE_TIMEOUT: float = 60.0      # Max wait for keepalive response
 
     def __init__(self) -> None:
         """Initialize the remote runner with empty gate cache."""
