@@ -157,3 +157,8 @@ tests/ssh_test_config/
 .ftl2-deps.txt
 .ftl2-modules.txt
 *.pyz
+
+# FTL2 runtime state
+.ftl2-state.json
+.code-expert/
+reviews/
