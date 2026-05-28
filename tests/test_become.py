@@ -28,16 +28,16 @@ class TestBecomeConfig:
 
     def test_become_prefix_root(self):
         bc = BecomeConfig(become=True)
-        assert bc.become_prefix("whoami") == "sudo -n whoami"
+        assert bc.become_prefix("whoami") == "sudo -n -H whoami"
 
     def test_become_prefix_nonroot_user(self):
         bc = BecomeConfig(become=True, become_user="catbeez")
-        assert bc.become_prefix("whoami") == "sudo -n -u catbeez whoami"
+        assert bc.become_prefix("whoami") == "sudo -n -H -u catbeez whoami"
 
     def test_become_prefix_preserves_command(self):
         bc = BecomeConfig(become=True)
         cmd = "/bin/sh -c 'firewall-cmd --reload'"
-        assert bc.become_prefix(cmd) == f"sudo -n {cmd}"
+        assert bc.become_prefix(cmd) == f"sudo -n -H {cmd}"
 
     def test_become_prefix_doas_root(self):
         bc = BecomeConfig(become=True, become_method="doas")
