@@ -12,7 +12,7 @@ class TestBecomeEdgeCases:
         """Deprecated sudo_prefix() still works and returns same result."""
         bc = BecomeConfig(become=True)
         assert bc.sudo_prefix("whoami") == bc.become_prefix("whoami")
-        assert bc.sudo_prefix("whoami") == "sudo -n whoami"
+        assert bc.sudo_prefix("whoami") == "sudo -n -H whoami"
 
     def test_su_single_quote_in_command(self):
         """su -c properly escapes commands containing single quotes via shlex.quote."""
@@ -44,7 +44,7 @@ class TestBecomeEdgeCases:
     def test_empty_command(self):
         """Empty command string doesn't crash."""
         bc = BecomeConfig(become=True)
-        assert bc.become_prefix("") == "sudo -n "
+        assert bc.become_prefix("") == "sudo -n -H "
 
     def test_doas_complex_command(self):
         """doas with a multi-part command."""
