@@ -68,8 +68,8 @@ class BecomeConfig:
 
         if method == "sudo":
             if user == "root":
-                return f"sudo -n {cmd}"
-            return f"sudo -n -u {user} {cmd}"
+                return f"sudo -n -H {cmd}"
+            return f"sudo -n -H -u {user} {cmd}"
         elif method == "doas":
             if user == "root":
                 return f"doas -n {cmd}"
