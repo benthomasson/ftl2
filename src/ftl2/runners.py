@@ -817,6 +817,8 @@ class RemoteModuleRunner(ModuleRunner):
                 # the file while a gate is running corrupts it.
                 if register_subsystem:
                     await self._register_gate_subsystem(conn, gate_local_path, interpreter)
+                else:
+                    await self._update_gate_stable_path(conn, gate_local_path)
 
                 # Start gate process (subsystem now uses the updated .pyz)
                 gate_process, remote_gate_hash, used_subsystem, supports_multiplex = await self._open_gate(conn, gate_file, interpreter, become=become, host_name=host_name)
@@ -1323,7 +1325,36 @@ class RemoteModuleRunner(ModuleRunner):
             raise ModuleExecutionError(f"Unexpected response type for FTLModule: {msg_type}")
 
     GATE_SUBSYSTEM_PATH = "/usr/local/lib/ftl2/gate.pyz"
+    GATE_USER_PATH = ".local/lib/ftl2/gate.pyz"
     GATE_SUBSYSTEM_NAME = "ftl2-gate"
+
+    async def _update_gate_stable_path(
+        self,
+        conn: SSHClientConnection,
+        gate_local_path: str,
+    ) -> None:
+        """Update the gate binary at a user-writable stable path.
+
+        Uploads the new gate to ~/.local/lib/ftl2/gate.pyz so the next
+        connection can reuse it without re-uploading. No root required.
+
+        Args:
+            conn: Active SSH connection
+            gate_local_path: Local path to the new gate .pyz file
+        """
+        dest = f"$HOME/{self.GATE_USER_PATH}"
+        result = await conn.run(f"echo {dest}", check=True)
+        dest = result.stdout.strip()
+        tmp_dest = dest + ".tmp"
+        try:
+            await conn.run(f"mkdir -p $(dirname {dest})", check=True)
+            async with conn.start_sftp_client() as sftp:
+                await sftp.put(gate_local_path, tmp_dest)
+            await conn.run(f"chmod 755 {tmp_dest}", check=True)
+            await conn.run(f"mv {tmp_dest} {dest}", check=True)
+            logger.info(f"Updated gate at {dest}")
+        except Exception as e:
+            logger.warning(f"Failed to update gate at stable path: {e}")
 
     async def _register_gate_subsystem(
         self,
