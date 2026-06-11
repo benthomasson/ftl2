@@ -435,7 +435,8 @@ class HostScopedProxy:
                     # Idempotency check via hash comparison (cat crashes on binary files)
                     local_hash = hashlib.sha256(file_content).hexdigest()
                     stdout, _, rc = await ssh.run(become_cfg.become_prefix(f"sha256sum {quoted_dest}"))
-                    if rc == 0 and stdout.split()[0] == local_hash:
+                    parts = stdout.split()
+                    if rc == 0 and parts and parts[0] == local_hash:
                         changed = False
 
                     if changed:
