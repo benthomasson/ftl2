@@ -635,7 +635,7 @@ class RemoteModuleRunner(ModuleRunner):
 
             # Get or create gate connection
             gate = await self._get_or_create_gate(
-                cache_key, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host.name
+                cache_key, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host.name, become=become
             )
 
             try:
@@ -689,6 +689,7 @@ class RemoteModuleRunner(ModuleRunner):
         interpreter: str,
         context: ExecutionContext,
         host_name: str = "localhost",
+        become: "BecomeConfig | None" = None,
     ) -> Gate:
         """Get cached gate or create new one.
 
@@ -702,6 +703,7 @@ class RemoteModuleRunner(ModuleRunner):
             interpreter: Remote Python interpreter path
             context: Execution context with gate config
             host_name: Logical host name for gate-side policy enforcement
+            become: Privilege escalation config (starts gate under sudo)
 
         Returns:
             Active Gate connection
@@ -727,7 +729,7 @@ class RemoteModuleRunner(ModuleRunner):
 
         # Create new gate connection
         logger.info(f"Creating new gate for {cache_key}")
-        return await self._connect_gate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host_name, cache_key=cache_key)
+        return await self._connect_gate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host_name, cache_key=cache_key, become=become)
 
     async def _connect_gate(
         self,
@@ -818,7 +820,7 @@ class RemoteModuleRunner(ModuleRunner):
                 if register_subsystem:
                     await self._register_gate_subsystem(conn, gate_local_path, interpreter)
                 else:
-                    await self._update_gate_stable_path(conn, gate_local_path)
+                    await self._update_gate_stable_path(conn, gate_local_path, become=become)
 
                 # Start gate process (subsystem now uses the updated .pyz)
                 gate_process, remote_gate_hash, used_subsystem, supports_multiplex = await self._open_gate(conn, gate_file, interpreter, become=become, host_name=host_name)
@@ -1331,6 +1333,7 @@ class RemoteModuleRunner(ModuleRunner):
         self,
         conn: SSHClientConnection,
         gate_local_path: str,
+        become: "BecomeConfig | None" = None,
     ) -> None:
         """Update the gate binary at the stable subsystem path.
 
@@ -1340,17 +1343,32 @@ class RemoteModuleRunner(ModuleRunner):
         Args:
             conn: Active SSH connection
             gate_local_path: Local path to the new gate .pyz file
+            become: Privilege escalation config (wraps commands with sudo)
         """
         import os
         dest = self.GATE_SUBSYSTEM_PATH
-        tmp_dest = dest + ".tmp"
+        use_become = become and become.effective
+
+        def _cmd(cmd: str) -> str:
+            if use_become:
+                return become.become_prefix(cmd)
+            return cmd
+
         try:
-            await conn.run(f"mkdir -p {os.path.dirname(dest)}", check=True)
-            async with conn.start_sftp_client() as sftp:
-                await sftp.put(gate_local_path, tmp_dest)
-            await conn.run(f"chmod 755 {tmp_dest}", check=True)
-            # Atomic rename — running gate keeps its fd to the old inode
-            await conn.run(f"mv {tmp_dest} {dest}", check=True)
+            await conn.run(_cmd(f"mkdir -p {os.path.dirname(dest)}"), check=True)
+            if use_become:
+                # SFTP runs as connecting user — upload to temp, then sudo mv
+                sftp_tmp = f"/tmp/ftl2-gate-{os.getpid()}.pyz.tmp"
+                async with conn.start_sftp_client() as sftp:
+                    await sftp.put(gate_local_path, sftp_tmp)
+                await conn.run(_cmd(f"chmod 755 {sftp_tmp}"), check=True)
+                await conn.run(_cmd(f"mv {sftp_tmp} {dest}"), check=True)
+            else:
+                tmp_dest = dest + ".tmp"
+                async with conn.start_sftp_client() as sftp:
+                    await sftp.put(gate_local_path, tmp_dest)
+                await conn.run(f"chmod 755 {tmp_dest}", check=True)
+                await conn.run(f"mv {tmp_dest} {dest}", check=True)
             logger.info(f"Updated gate at {dest}")
         except Exception as e:
             logger.warning(f"Failed to update gate at stable path: {e}")
