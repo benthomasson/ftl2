@@ -141,6 +141,7 @@ def _get_module(name: str) -> Any:
     """
     # Import here to avoid circular import
     from ftl2.ftl_modules.aws.ec2 import ftl_ec2_instance, ftl_ec2_instance_info
+    from ftl2.ftl_modules.aws.route53 import ftl_route53_info, ftl_route53_record
     from ftl2.ftl_modules.command import ftl_command, ftl_shell
     from ftl2.ftl_modules.dnf import ftl_dnf
     from ftl2.ftl_modules.file import ftl_copy, ftl_file, ftl_template
@@ -161,6 +162,8 @@ def _get_module(name: str) -> Any:
         "swap": ftl_swap,
         "ec2_instance": ftl_ec2_instance,
         "ec2_instance_info": ftl_ec2_instance_info,
+        "route53_record": ftl_route53_record,
+        "route53_info": ftl_route53_info,
         "dnf": ftl_dnf,
         "dnf5": ftl_dnf,
         # FQCN mappings
@@ -176,6 +179,8 @@ def _get_module(name: str) -> Any:
         "ansible.builtin.dnf5": ftl_dnf,
         "amazon.aws.ec2_instance": ftl_ec2_instance,
         "amazon.aws.ec2_instance_info": ftl_ec2_instance_info,
+        "amazon.aws.route53": ftl_route53_record,
+        "amazon.aws.route53_info": ftl_route53_info,
     }
     return modules.get(name)
 
