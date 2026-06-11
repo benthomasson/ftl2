@@ -40,10 +40,12 @@ def _extract_instance(instance: dict) -> dict[str, Any]:
 
 async def _find_instance(ec2, instance_id: str | None, name: str | None) -> dict | None:
     """Find an existing instance by ID or Name tag, skipping terminated."""
+    from botocore.exceptions import ClientError
+
     if instance_id:
         try:
             resp = await ec2.describe_instances(InstanceIds=[instance_id])
-        except ec2.exceptions.ClientError:
+        except ClientError:
             return None
         for res in resp.get("Reservations", []):
             for inst in res.get("Instances", []):
@@ -162,6 +164,13 @@ async def ftl_ec2_instance(
                             "state": inst["State"]["Name"],
                             "instance": _extract_instance(inst),
                         }
+                    if current == "stopping":
+                        if wait:
+                            await _wait_for_state(
+                                ec2, existing["InstanceId"], "stopped", wait_timeout,
+                            )
+                        # Fall through to start it below
+                        current = "stopped"
                     if current in _STOPPED_STATES:
                         await ec2.start_instances(
                             InstanceIds=[existing["InstanceId"]],
@@ -180,6 +189,11 @@ async def ftl_ec2_instance(
                             "state": inst["State"]["Name"],
                             "instance": _extract_instance(inst),
                         }
+                    raise FTLModuleError(
+                        f"Instance {existing['InstanceId']} is in unexpected state: {current}",
+                        instance_id=existing["InstanceId"],
+                        current_state=current,
+                    )
 
                 if not image_id:
                     raise FTLModuleError(
