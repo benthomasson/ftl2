@@ -1728,11 +1728,19 @@ class AutomationContext:
 
             # Convert to ExecuteResult (outside lock — no gate access needed)
             failed = result_data.get("failed", False) or result_data.get("rc", 0) != 0
+            if failed:
+                error_msg = result_data.get("msg", "")
+                if not error_msg:
+                    error_msg = result_data.get("stderr", "") or result_data.get("_stderr", "")
+                if not error_msg and result_data.get("rc", 0) != 0:
+                    error_msg = f"exit code {result_data['rc']}"
+            else:
+                error_msg = ""
             return ExecuteResult(
                 success=not failed,
                 changed=result_data.get("changed", False),
                 output=result_data,
-                error=result_data.get("msg", "") if failed else "",
+                error=error_msg,
                 module=module_name,
                 host=host.name,
                 used_ftl=is_ftl_module(module_name),
