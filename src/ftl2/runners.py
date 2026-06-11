@@ -1325,6 +1325,7 @@ class RemoteModuleRunner(ModuleRunner):
             raise ModuleExecutionError(f"Unexpected response type for FTLModule: {msg_type}")
 
     GATE_SUBSYSTEM_PATH = "/usr/local/lib/ftl2/gate.pyz"
+    GATE_USER_PATH = ".local/lib/ftl2/gate.pyz"
     GATE_SUBSYSTEM_NAME = "ftl2-gate"
 
     async def _update_gate_stable_path(
@@ -1332,24 +1333,24 @@ class RemoteModuleRunner(ModuleRunner):
         conn: SSHClientConnection,
         gate_local_path: str,
     ) -> None:
-        """Update the gate binary at the stable subsystem path.
+        """Update the gate binary at a user-writable stable path.
 
-        Uploads the new gate so the next subsystem connection uses it.
-        No sshd reload needed — sshd forks and execs fresh each time.
+        Uploads the new gate to ~/.local/lib/ftl2/gate.pyz so the next
+        connection can reuse it without re-uploading. No root required.
 
         Args:
             conn: Active SSH connection
             gate_local_path: Local path to the new gate .pyz file
         """
-        import os
-        dest = self.GATE_SUBSYSTEM_PATH
+        dest = f"$HOME/{self.GATE_USER_PATH}"
+        result = await conn.run(f"echo {dest}", check=True)
+        dest = result.stdout.strip()
         tmp_dest = dest + ".tmp"
         try:
-            await conn.run(f"mkdir -p {os.path.dirname(dest)}", check=True)
+            await conn.run(f"mkdir -p $(dirname {dest})", check=True)
             async with conn.start_sftp_client() as sftp:
                 await sftp.put(gate_local_path, tmp_dest)
             await conn.run(f"chmod 755 {tmp_dest}", check=True)
-            # Atomic rename — running gate keeps its fd to the old inode
             await conn.run(f"mv {tmp_dest} {dest}", check=True)
             logger.info(f"Updated gate at {dest}")
         except Exception as e:
