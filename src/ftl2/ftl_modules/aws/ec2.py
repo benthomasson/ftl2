@@ -29,7 +29,7 @@ def _extract_instance(instance: dict) -> dict[str, Any]:
         "subnet_id": instance.get("SubnetId"),
         "image_id": instance.get("ImageId"),
         "key_name": instance.get("KeyName"),
-        "launch_time": instance.get("LaunchTime", ""),
+        "launch_time": lt.isoformat() if (lt := instance.get("LaunchTime")) else "",
         "tags": tags,
         "security_groups": [
             {"id": sg["GroupId"], "name": sg["GroupName"]}
@@ -165,11 +165,9 @@ async def ftl_ec2_instance(
                             "instance": _extract_instance(inst),
                         }
                     if current == "stopping":
-                        if wait:
-                            await _wait_for_state(
-                                ec2, existing["InstanceId"], "stopped", wait_timeout,
-                            )
-                        # Fall through to start it below
+                        await _wait_for_state(
+                            ec2, existing["InstanceId"], "stopped", wait_timeout,
+                        )
                         current = "stopped"
                     if current in _STOPPED_STATES:
                         await ec2.start_instances(
