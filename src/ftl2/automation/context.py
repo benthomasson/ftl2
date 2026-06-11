@@ -1635,6 +1635,8 @@ class AutomationContext:
                             result_data = {"failed": True, "msg": f"Gate policy denied: {response[1].get('reason', '')}"}
                         elif response is not None and response[0] == "Error":
                             result_data = {"failed": True, "msg": response[1].get("message", "Unknown FTL module error")}
+                        elif response is not None and response[0] == "GateSystemError":
+                            result_data = {"failed": True, "msg": f"Gate error: {response[1].get('message', 'Unknown')}"}
                         else:
                             result_data = {"failed": True, "msg": f"Unexpected response: {response}"}
 
@@ -1720,6 +1722,8 @@ class AutomationContext:
                             result_data = {"failed": True, "msg": f"Gate policy denied: {data.get('reason', '')}"}
                         elif msg_type == "Error":
                             result_data = {"failed": True, "msg": data.get("message", "Unknown error")}
+                        elif msg_type == "GateSystemError":
+                            result_data = {"failed": True, "msg": f"Gate error: {data.get('message', 'Unknown')}"}
                         else:
                             result_data = {"failed": True, "msg": f"Unexpected response: {msg_type}"}
 
@@ -1734,6 +1738,8 @@ class AutomationContext:
                     error_msg = result_data.get("stderr", "") or result_data.get("_stderr", "")
                 if not error_msg and result_data.get("rc", 0) != 0:
                     error_msg = f"exit code {result_data['rc']}"
+                if not error_msg:
+                    error_msg = str({k: v for k, v in result_data.items() if k not in ("invocation",)})
             else:
                 error_msg = ""
             return ExecuteResult(
@@ -1808,6 +1814,8 @@ class AutomationContext:
                         result_data = {"failed": True, "msg": f"Gate policy denied: {resp_data.get('reason', '')}"}
                     elif resp_type == "Error":
                         result_data = {"failed": True, "msg": resp_data.get("message", "Unknown FTL module error")}
+                    elif resp_type == "GateSystemError":
+                        result_data = {"failed": True, "msg": f"Gate error: {resp_data.get('message', 'Unknown')}"}
                     else:
                         result_data = {"failed": True, "msg": f"Unexpected response: {resp_type}"}
 
@@ -1875,6 +1883,8 @@ class AutomationContext:
                     result_data = {"failed": True, "msg": f"Gate policy denied: {resp_data.get('reason', '')}"}
                 elif resp_type == "Error":
                     result_data = {"failed": True, "msg": resp_data.get("message", "Unknown error")}
+                elif resp_type == "GateSystemError":
+                    result_data = {"failed": True, "msg": f"Gate error: {resp_data.get('message', 'Unknown')}"}
                 else:
                     result_data = {"failed": True, "msg": f"Unexpected response: {resp_type}"}
 
@@ -1885,6 +1895,8 @@ class AutomationContext:
                     error_msg = result_data.get("stderr", "") or result_data.get("_stderr", "")
                 if not error_msg and result_data.get("rc", 0) != 0:
                     error_msg = f"exit code {result_data['rc']}"
+                if not error_msg:
+                    error_msg = str({k: v for k, v in result_data.items() if k not in ("invocation",)})
             else:
                 error_msg = ""
             return ExecuteResult(

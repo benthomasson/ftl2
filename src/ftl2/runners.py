@@ -1122,6 +1122,8 @@ class RemoteModuleRunner(ModuleRunner):
                 )
             elif msg_type == "Error":
                 raise ModuleExecutionError(f"Gate error: {data.get('message', 'Unknown error')}")
+            elif msg_type == "GateSystemError":
+                raise ModuleExecutionError(f"Gate system error: {data.get('message', 'Unknown')}")
             else:
                 raise ModuleExecutionError(f"Unexpected response type: {msg_type}")
 
@@ -1267,6 +1269,8 @@ class RemoteModuleRunner(ModuleRunner):
             )
         elif msg_type == "Error":
             raise ModuleExecutionError(f"Gate error: {data.get('message', 'Unknown error')}")
+        elif msg_type == "GateSystemError":
+            raise ModuleExecutionError(f"Gate system error: {data.get('message', 'Unknown')}")
         else:
             raise ModuleExecutionError(f"Unexpected response type: {msg_type}")
 
@@ -1326,6 +1330,8 @@ class RemoteModuleRunner(ModuleRunner):
             )
         elif msg_type == "Error":
             raise ModuleExecutionError(f"FTL module error: {data.get('message', 'Unknown error')}")
+        elif msg_type == "GateSystemError":
+            raise ModuleExecutionError(f"Gate system error: {data.get('message', 'Unknown')}")
         else:
             raise ModuleExecutionError(f"Unexpected response type for FTLModule: {msg_type}")
 
