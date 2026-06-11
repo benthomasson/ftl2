@@ -147,6 +147,21 @@ async def ftl_ec2_instance(
                             "state": current,
                             "instance": _extract_instance(existing),
                         }
+                    if current == "pending":
+                        if wait:
+                            await _wait_for_state(
+                                ec2, existing["InstanceId"], "running", wait_timeout,
+                            )
+                        resp = await ec2.describe_instances(
+                            InstanceIds=[existing["InstanceId"]],
+                        )
+                        inst = resp["Reservations"][0]["Instances"][0]
+                        return {
+                            "changed": False,
+                            "instance_id": inst["InstanceId"],
+                            "state": inst["State"]["Name"],
+                            "instance": _extract_instance(inst),
+                        }
                     if current in _STOPPED_STATES:
                         await ec2.start_instances(
                             InstanceIds=[existing["InstanceId"]],
@@ -197,6 +212,7 @@ async def ftl_ec2_instance(
                         ],
                     }]
 
+                run_params.update(kwargs)
                 resp = await ec2.run_instances(**run_params)
                 inst = resp["Instances"][0]
                 new_id = inst["InstanceId"]

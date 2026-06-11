@@ -90,6 +90,20 @@ async def ftl_route53_record(
             zone_id = hosted_zone_id or await _resolve_zone_id(r53, zone)
 
             if state == "present":
+                existing = await _find_record(r53, zone_id, record_name, record_type)
+                if existing:
+                    existing_values = sorted(
+                        r["Value"] for r in existing.get("ResourceRecords", [])
+                    )
+                    if existing_values == sorted(values) and existing.get("TTL") == ttl:
+                        return {
+                            "changed": False,
+                            "record": record,
+                            "type": record_type,
+                            "value": values,
+                            "ttl": ttl,
+                            "zone_id": zone_id,
+                        }
                 action = "UPSERT"
                 resource_records = [{"Value": v} for v in values]
             else:
