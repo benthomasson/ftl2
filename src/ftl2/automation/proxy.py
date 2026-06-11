@@ -11,6 +11,7 @@ Supports both simple modules and FQCN (Fully Qualified Collection Name):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 import warnings
@@ -431,9 +432,10 @@ class HostScopedProxy:
 
                     quoted_dest = _shlex.quote(dest)
 
-                    # Idempotency check via sudo cat (SFTP can't read root-owned files)
-                    stdout, _, rc = await ssh.run(become_cfg.become_prefix(f"cat {quoted_dest}"))
-                    if rc == 0 and stdout.encode() == file_content:
+                    # Idempotency check via hash comparison (cat crashes on binary files)
+                    local_hash = hashlib.sha256(file_content).hexdigest()
+                    stdout, _, rc = await ssh.run(become_cfg.become_prefix(f"sha256sum {quoted_dest}"))
+                    if rc == 0 and stdout.split()[0] == local_hash:
                         changed = False
 
                     if changed:
