@@ -632,10 +632,11 @@ class RemoteModuleRunner(ModuleRunner):
             # Build composite cache key including become config
             become = host.become_config
             cache_key = gate_cache_key(host.name, become)
+            disable_host_key_checking = host.get_var("disable_host_key_checking", False)
 
             # Get or create gate connection
             gate = await self._get_or_create_gate(
-                cache_key, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host.name, become=become
+                cache_key, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host.name, become=become, disable_host_key_checking=disable_host_key_checking
             )
 
             try:
@@ -690,6 +691,7 @@ class RemoteModuleRunner(ModuleRunner):
         context: ExecutionContext,
         host_name: str = "localhost",
         become: "BecomeConfig | None" = None,
+        disable_host_key_checking: bool = False,
     ) -> Gate:
         """Get cached gate or create new one.
 
@@ -704,6 +706,7 @@ class RemoteModuleRunner(ModuleRunner):
             context: Execution context with gate config
             host_name: Logical host name for gate-side policy enforcement
             become: Privilege escalation config (starts gate under sudo)
+            disable_host_key_checking: Skip SSH host key verification
 
         Returns:
             Active Gate connection
@@ -729,7 +732,7 @@ class RemoteModuleRunner(ModuleRunner):
 
         # Create new gate connection
         logger.info(f"Creating new gate for {cache_key}")
-        return await self._connect_gate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host_name, cache_key=cache_key, become=become)
+        return await self._connect_gate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_file, interpreter, context, host_name=host_name, cache_key=cache_key, become=become, disable_host_key_checking=disable_host_key_checking)
 
     async def _connect_gate(
         self,
