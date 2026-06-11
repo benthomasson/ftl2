@@ -45,8 +45,11 @@ async def _find_instance(ec2, instance_id: str | None, name: str | None) -> dict
     if instance_id:
         try:
             resp = await ec2.describe_instances(InstanceIds=[instance_id])
-        except ClientError:
-            return None
+        except ClientError as e:
+            code = e.response["Error"]["Code"]
+            if code in ("InvalidInstanceID.NotFound", "InvalidInstanceID.Malformed"):
+                return None
+            raise
         for res in resp.get("Reservations", []):
             for inst in res.get("Instances", []):
                 if inst["State"]["Name"] not in _TERMINATED_STATES:
