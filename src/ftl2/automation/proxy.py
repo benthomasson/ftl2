@@ -460,13 +460,12 @@ class HostScopedProxy:
                     if mode:
                         await ssh.run(become_cfg.become_prefix(f"chmod {mode} {quoted_dest}"))
 
-                    # Set ownership via sudo
-                    if owner and group:
-                        await ssh.run(become_cfg.become_prefix(f"chown {owner}:{group} {quoted_dest}"))
-                    elif owner:
-                        await ssh.run(become_cfg.become_prefix(f"chown {owner} {quoted_dest}"))
-                    elif group:
-                        await ssh.run(become_cfg.become_prefix(f"chgrp {group} {quoted_dest}"))
+                    # Set ownership via sudo — default to become_user when not specified
+                    effective_owner = owner or become_cfg.become_user
+                    effective_group = group or become_cfg.become_user
+                    await ssh.run(become_cfg.become_prefix(
+                        f"chown {effective_owner}:{effective_group} {quoted_dest}"
+                    ))
                 else:
                     # Direct SFTP path (original behavior, no sudo needed)
 
