@@ -70,11 +70,19 @@ async def _find_instance(ec2, instance_id: str | None, name: str | None) -> dict
 async def _wait_for_state(ec2, instance_id: str, target: str, timeout: int) -> None:
     """Wait for an instance to reach a target state."""
     import asyncio
+    from botocore.exceptions import ClientError
 
     waited = 0
     interval = 5
     while waited < timeout:
-        resp = await ec2.describe_instances(InstanceIds=[instance_id])
+        try:
+            resp = await ec2.describe_instances(InstanceIds=[instance_id])
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "InvalidInstanceID.NotFound":
+                await asyncio.sleep(interval)
+                waited += interval
+                continue
+            raise
         state = resp["Reservations"][0]["Instances"][0]["State"]["Name"]
         if state == target:
             return
