@@ -1358,7 +1358,8 @@ class RemoteModuleRunner(ModuleRunner):
             await conn.run(_cmd(f"mkdir -p {os.path.dirname(dest)}"), check=True)
             if use_become:
                 # SFTP runs as connecting user — upload to temp, then sudo mv
-                sftp_tmp = f"/tmp/ftl2-gate-{os.getpid()}.pyz.tmp"
+                import uuid
+                sftp_tmp = f"/tmp/ftl2-gate-{uuid.uuid4().hex}.pyz.tmp"
                 async with conn.start_sftp_client() as sftp:
                     await sftp.put(gate_local_path, sftp_tmp)
                 await conn.run(_cmd(f"chmod 755 {sftp_tmp}"), check=True)
