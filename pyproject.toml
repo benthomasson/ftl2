@@ -1,6 +1,6 @@
 [project]
 name = "ftl2"
-version = "0.3.3"
+version = "0.3.4"
 description = "Refactored faster-than-light automation framework with dataclasses and composition"
 authors = [{name = "Ben Thomasson", email = "ben.thomasson@gmail.com"}]
 readme = "README.md"

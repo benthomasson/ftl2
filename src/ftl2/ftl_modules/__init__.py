@@ -20,7 +20,7 @@ Usage:
 from collections.abc import Callable
 from typing import Any
 
-from ftl2.ftl_modules.aws import ftl_ec2_instance
+from ftl2.ftl_modules.aws import ftl_ec2_instance, ftl_ec2_instance_info
 from ftl2.ftl_modules.command import ftl_command, ftl_shell
 from ftl2.ftl_modules.dnf import ftl_dnf
 from ftl2.ftl_modules.exceptions import (
@@ -59,6 +59,7 @@ FTL_MODULES: dict[str, ModuleFunc] = {
     "dnf5": ftl_dnf,
     "wait_for": ftl_wait_for,
     "ec2_instance": ftl_ec2_instance,
+    "ec2_instance_info": ftl_ec2_instance_info,
 }
 
 # Maps Ansible FQCNs to FTL module functions for compatibility
@@ -77,6 +78,7 @@ ANSIBLE_COMPAT: dict[str, ModuleFunc] = {
     "ansible.builtin.wait_for": ftl_wait_for,
     # AWS modules
     "amazon.aws.ec2_instance": ftl_ec2_instance,
+    "amazon.aws.ec2_instance_info": ftl_ec2_instance_info,
 }
 
 
@@ -166,4 +168,5 @@ __all__ = [
     "ftl_wait_for",
     # AWS modules
     "ftl_ec2_instance",
+    "ftl_ec2_instance_info",
 ]

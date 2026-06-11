@@ -140,7 +140,7 @@ def _get_module(name: str) -> Any:
     circular import issues with the main __init__.py.
     """
     # Import here to avoid circular import
-    from ftl2.ftl_modules.aws.ec2 import ftl_ec2_instance
+    from ftl2.ftl_modules.aws.ec2 import ftl_ec2_instance, ftl_ec2_instance_info
     from ftl2.ftl_modules.command import ftl_command, ftl_shell
     from ftl2.ftl_modules.dnf import ftl_dnf
     from ftl2.ftl_modules.file import ftl_copy, ftl_file, ftl_template
@@ -160,6 +160,7 @@ def _get_module(name: str) -> Any:
         "pip": ftl_pip,
         "swap": ftl_swap,
         "ec2_instance": ftl_ec2_instance,
+        "ec2_instance_info": ftl_ec2_instance_info,
         "dnf": ftl_dnf,
         "dnf5": ftl_dnf,
         # FQCN mappings
@@ -174,6 +175,7 @@ def _get_module(name: str) -> Any:
         "ansible.builtin.dnf": ftl_dnf,
         "ansible.builtin.dnf5": ftl_dnf,
         "amazon.aws.ec2_instance": ftl_ec2_instance,
+        "amazon.aws.ec2_instance_info": ftl_ec2_instance_info,
     }
     return modules.get(name)
 
