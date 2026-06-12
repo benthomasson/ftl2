@@ -1407,9 +1407,13 @@ class AutomationContext:
             for obs_name, obs_data in observations.items():
                 if "error" in obs_data:
                     print(f"  [{obs_name}] error: {obs_data['error']}")
-                elif obs_data.get("stdout"):
-                    for line in obs_data["stdout"].splitlines():
-                        print(f"  [{obs_name}] {line}")
+                else:
+                    if obs_data.get("stdout"):
+                        for line in obs_data["stdout"].splitlines():
+                            print(f"  [{obs_name}] {line}")
+                    if obs_data.get("stderr"):
+                        for line in obs_data["stderr"].splitlines():
+                            print(f"  [{obs_name}] (stderr) {line}")
 
     def _log_error(self, module_name: str, result: ExecuteResult) -> None:
         """Log error in normal mode."""
@@ -1418,12 +1422,13 @@ class AutomationContext:
         for obs_name, obs_data in observations.items():
             if "error" in obs_data:
                 print(f"  [{obs_name}] error: {obs_data['error']}")
-            elif obs_data.get("stdout"):
-                for line in obs_data["stdout"].splitlines():
-                    print(f"  [{obs_name}] {line}")
-            elif obs_data.get("stderr"):
-                for line in obs_data["stderr"].splitlines():
-                    print(f"  [{obs_name}] {line}")
+            else:
+                if obs_data.get("stdout"):
+                    for line in obs_data["stdout"].splitlines():
+                        print(f"  [{obs_name}] {line}")
+                if obs_data.get("stderr"):
+                    for line in obs_data["stderr"].splitlines():
+                        print(f"  [{obs_name}] (stderr) {line}")
 
     async def run_on(
         self,
@@ -1516,12 +1521,12 @@ class AutomationContext:
         for obs in obs_list:
             try:
                 cmd = obs["cmd"].format_map(params)
-            except KeyError:
+            except (KeyError, ValueError, IndexError):
                 continue
             try:
                 if become and become.effective:
                     cmd = become.become_prefix(cmd)
-                stdout, stderr, rc = await ssh.run(cmd)
+                stdout, stderr, rc = await ssh.run(cmd, timeout=30)
                 results[obs["name"]] = {"stdout": stdout.strip(), "stderr": stderr.strip(), "rc": rc}
             except Exception as e:
                 results[obs["name"]] = {"error": str(e)}

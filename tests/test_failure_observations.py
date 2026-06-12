@@ -93,6 +93,19 @@ class TestCollectFailureObservations:
         assert "dest_stat" not in results
         assert "getenforce" in results
 
+    async def test_skips_malformed_format_string(self, ctx_with_ssh):
+        ctx, mock_ssh = ctx_with_ssh
+        ctx._failure_observations["test_mod"] = [
+            {"name": "bad_fmt", "cmd": "echo {unclosed"},
+            {"name": "good", "cmd": "echo hello"},
+        ]
+        host = _make_host()
+        results = await ctx._collect_failure_observations(
+            host, "test_mod", {}
+        )
+        assert "bad_fmt" not in results
+        assert "good" in results
+
     async def test_returns_empty_for_unknown_module(self, ctx_with_ssh):
         ctx, mock_ssh = ctx_with_ssh
         host = _make_host()
@@ -249,3 +262,50 @@ class TestObservationDisplay:
         captured = capsys.readouterr()
         assert "FAILED" in captured.out
         assert "Unit not found" in captured.out
+
+    def test_log_error_shows_both_stdout_and_stderr(self, capsys):
+        ctx = _make_context()
+        result = ExecuteResult(
+            success=False,
+            output={
+                "failed": True,
+                "msg": "service failed",
+                "observations": {
+                    "systemctl_status": {
+                        "stdout": "inactive (dead)",
+                        "stderr": "Warning: unit changed on disk",
+                        "rc": 3,
+                    },
+                },
+            },
+            error="service failed",
+            module="service",
+            host="web01",
+        )
+        ctx._log_error("web01:service", result)
+        captured = capsys.readouterr()
+        assert "inactive (dead)" in captured.out
+        assert "Warning: unit changed on disk" in captured.out
+
+    def test_log_result_shows_stderr(self, capsys):
+        ctx = _make_context()
+        result = ExecuteResult(
+            success=False,
+            output={
+                "failed": True,
+                "msg": "service failed",
+                "observations": {
+                    "systemctl_status": {
+                        "stdout": "",
+                        "stderr": "error from stderr",
+                        "rc": 1,
+                    },
+                },
+            },
+            error="service failed",
+            module="service",
+            host="web01",
+        )
+        ctx._log_result("web01:service", result, duration=0.5)
+        captured = capsys.readouterr()
+        assert "error from stderr" in captured.out
