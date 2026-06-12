@@ -438,6 +438,36 @@ class AutomationContext:
         self._gate_locks: dict[str, asyncio.Lock] = {}
         self._bundle_cache: BundleCache | None = None
         self._start_time: float | None = None
+        self._failure_observations: dict[str, list[dict[str, str]]] = {
+            "service": [
+                {"name": "systemctl_status", "cmd": "systemctl status {name} --no-pager"},
+                {"name": "journalctl", "cmd": "journalctl -u {name} -n 20 --no-pager"},
+            ],
+            "copy": [
+                {"name": "dest_stat", "cmd": "ls -laZ {dest}"},
+                {"name": "getenforce", "cmd": "getenforce"},
+            ],
+            "file": [
+                {"name": "path_stat", "cmd": "ls -laZ {path}"},
+                {"name": "getenforce", "cmd": "getenforce"},
+            ],
+            "shell": [
+                {"name": "getenforce", "cmd": "getenforce"},
+            ],
+        }
+
+    def observe_on_failure(
+        self, module_type: str, observations: list[dict[str, str]]
+    ) -> None:
+        """Register additional failure observations for a module type.
+
+        Args:
+            module_type: Module short name (e.g. "service", "copy")
+            observations: List of {"name": ..., "cmd": ...} dicts.
+                Commands can use {param_name} placeholders substituted
+                from the module's parameters.
+        """
+        self._failure_observations.setdefault(module_type, []).extend(observations)
 
     def _load_bound_secrets(self) -> None:
         """Load all secrets referenced in secret_bindings from environment or Vault."""
@@ -1372,10 +1402,33 @@ class AutomationContext:
         print(f"[{module_name}] {status}{changed}{check}{timing}")
         if result.error:
             print(f"  Error: {result.error}")
+        if not result.success:
+            observations = result.output.get("observations", {})
+            for obs_name, obs_data in observations.items():
+                if "error" in obs_data:
+                    print(f"  [{obs_name}] error: {obs_data['error']}")
+                else:
+                    if obs_data.get("stdout"):
+                        for line in obs_data["stdout"].splitlines():
+                            print(f"  [{obs_name}] {line}")
+                    if obs_data.get("stderr"):
+                        for line in obs_data["stderr"].splitlines():
+                            print(f"  [{obs_name}] (stderr) {line}")
 
     def _log_error(self, module_name: str, result: ExecuteResult) -> None:
         """Log error in normal mode."""
         print(f"[{module_name}] FAILED: {result.error}")
+        observations = result.output.get("observations", {})
+        for obs_name, obs_data in observations.items():
+            if "error" in obs_data:
+                print(f"  [{obs_name}] error: {obs_data['error']}")
+            else:
+                if obs_data.get("stdout"):
+                    for line in obs_data["stdout"].splitlines():
+                        print(f"  [{obs_name}] {line}")
+                if obs_data.get("stderr"):
+                    for line in obs_data["stderr"].splitlines():
+                        print(f"  [{obs_name}] (stderr) {line}")
 
     async def run_on(
         self,
@@ -1441,6 +1494,43 @@ class AutomationContext:
 
         self._results.extend(final_results)
         return final_results
+
+    async def _collect_failure_observations(
+        self,
+        host: HostConfig,
+        module_name: str,
+        params: dict[str, Any],
+        become: "BecomeConfig | None" = None,
+    ) -> dict[str, Any]:
+        """Run registered diagnostic observations after a module failure.
+
+        Returns dict of {observation_name: {stdout, stderr, rc}} results.
+        Never raises — observation failures are captured in the result.
+        """
+        short_name = module_name.rsplit(".", 1)[-1]
+        obs_list = self._failure_observations.get(short_name, [])
+        if not obs_list:
+            return {}
+
+        try:
+            ssh = await self._get_ssh_connection(host)
+        except Exception:
+            return {}
+
+        results: dict[str, Any] = {}
+        for obs in obs_list:
+            try:
+                cmd = obs["cmd"].format_map(params)
+            except (KeyError, ValueError, IndexError):
+                continue
+            try:
+                if become and become.effective:
+                    cmd = become.become_prefix(cmd)
+                stdout, stderr, rc = await ssh.run(cmd, timeout=30)
+                results[obs["name"]] = {"stdout": stdout.strip(), "stderr": stderr.strip(), "rc": rc}
+            except Exception as e:
+                results[obs["name"]] = {"error": str(e)}
+        return results
 
     async def _execute_on_host(
         self,
@@ -1518,6 +1608,14 @@ class AutomationContext:
         result.params = self._redact_params(module_name, original_params)
         result.timestamp = start_time
         result.duration = duration
+
+        # Collect failure observations for remote hosts
+        if not result.success and not host.is_local:
+            observations = await self._collect_failure_observations(
+                host, module_name, original_params, become
+            )
+            if observations:
+                result.output["observations"] = observations
 
         # Emit complete event
         self._emit_event({
