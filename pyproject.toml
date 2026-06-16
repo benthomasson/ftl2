@@ -38,6 +38,12 @@ dev = [
 aws = [
     "aioboto3>=11.0.0",
 ]
+gcp = [
+    "google-cloud-run>=0.10.0",
+    "google-cloud-artifact-registry>=1.0.0",
+    "google-cloud-secret-manager>=2.0.0",
+    "google-auth>=2.0.0",
+]
 vault = [
     "hvac>=2.1.0",
 ]
@@ -74,6 +80,7 @@ source = ["src"]
 branch = true
 omit = [
     "src/ftl2/ftl_gate/__main__.py",  # Gate runtime runs as subprocess, not unit tested
+    "src/ftl2/ftl_modules/gcp/*",  # GCP modules require SDK + credentials for integration testing
 ]
 
 [tool.coverage.report]
