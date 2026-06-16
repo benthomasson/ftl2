@@ -26,6 +26,11 @@ from ftl2.ftl_modules.aws import (
     ftl_route53_info,
     ftl_route53_record,
 )
+from ftl2.ftl_modules.gcp import (
+    ftl_artifact_registry_repository,
+    ftl_cloud_run_service,
+    ftl_secret_manager_secret,
+)
 from ftl2.ftl_modules.command import ftl_command, ftl_shell
 from ftl2.ftl_modules.dnf import ftl_dnf
 from ftl2.ftl_modules.exceptions import (
@@ -67,6 +72,10 @@ FTL_MODULES: dict[str, ModuleFunc] = {
     "ec2_instance_info": ftl_ec2_instance_info,
     "route53_record": ftl_route53_record,
     "route53_info": ftl_route53_info,
+    # GCP modules
+    "cloud_run_service": ftl_cloud_run_service,
+    "artifact_registry_repository": ftl_artifact_registry_repository,
+    "secret_manager_secret": ftl_secret_manager_secret,
 }
 
 # Maps Ansible FQCNs to FTL module functions for compatibility
@@ -88,6 +97,10 @@ ANSIBLE_COMPAT: dict[str, ModuleFunc] = {
     "amazon.aws.ec2_instance_info": ftl_ec2_instance_info,
     "amazon.aws.route53": ftl_route53_record,
     "amazon.aws.route53_info": ftl_route53_info,
+    # GCP modules
+    "google.cloud.cloud_run_service": ftl_cloud_run_service,
+    "google.cloud.artifact_registry_repository": ftl_artifact_registry_repository,
+    "google.cloud.secret_manager_secret": ftl_secret_manager_secret,
 }
 
 
@@ -180,4 +193,8 @@ __all__ = [
     "ftl_ec2_instance_info",
     "ftl_route53_record",
     "ftl_route53_info",
+    # GCP modules
+    "ftl_cloud_run_service",
+    "ftl_artifact_registry_repository",
+    "ftl_secret_manager_secret",
 ]
