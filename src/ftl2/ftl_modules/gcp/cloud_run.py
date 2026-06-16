@@ -23,7 +23,8 @@ def _extract_service(service: Any) -> dict[str, Any]:
         for env in container.env:
             if env.value_source and env.value_source.secret_key_ref:
                 ref = env.value_source.secret_key_ref
-                secrets[env.name] = f"{ref.secret}:{ref.version}"
+                secret_name = ref.secret.rsplit("/", 1)[-1] if "/" in ref.secret else ref.secret
+                secrets[env.name] = f"{secret_name}:{ref.version}"
             else:
                 env_vars[env.name] = env.value
 
