@@ -35,7 +35,7 @@ async def ftl_secret_manager_secret(
     When secret_data is provided, a new version is added if the data differs
     from the latest version (compared by SHA256 hash).
     """
-    from google.api_core.exceptions import NotFound
+    from google.api_core.exceptions import NotFound, PermissionDenied
     from google.cloud.secretmanager_v1 import SecretManagerServiceAsyncClient
     from google.cloud.secretmanager_v1 import types
 
@@ -88,7 +88,7 @@ async def ftl_secret_manager_secret(
                 current_hash = hashlib.sha256(latest.payload.data).hexdigest()
                 if current_hash == desired_hash:
                     needs_version = False
-            except NotFound:
+            except (NotFound, PermissionDenied):
                 pass
 
         if needs_version:
@@ -100,5 +100,4 @@ async def ftl_secret_manager_secret(
             )
             changed = True
 
-    result["changed"] = changed
     return {"changed": changed, "secret": result}

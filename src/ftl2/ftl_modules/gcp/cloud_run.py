@@ -24,7 +24,7 @@ def _extract_service(service: Any) -> dict[str, Any]:
             if env.value_source and env.value_source.secret_key_ref:
                 ref = env.value_source.secret_key_ref
                 secrets[env.name] = f"{ref.secret}:{ref.version}"
-            elif env.value:
+            else:
                 env_vars[env.name] = env.value
 
     result: dict[str, Any] = {
@@ -74,8 +74,9 @@ def _needs_update(current: dict[str, Any], **desired: Any) -> bool:
             return True
 
     desired_sa = desired.get("service_account", _SENTINEL)
-    if desired_sa is not _SENTINEL and desired_sa is not None and current.get("service_account") != desired_sa:
-        return True
+    if desired_sa is not _SENTINEL and desired_sa is not None:
+        if current.get("service_account") != desired_sa:
+            return True
 
     return False
 
