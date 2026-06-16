@@ -9,6 +9,8 @@ from ftl2.ftl_modules.exceptions import FTLModuleError, requires_extra
 
 __all__ = ["ftl_cloud_run_service"]
 
+_SENTINEL = object()
+
 
 def _extract_service(service: Any) -> dict[str, Any]:
     """Normalize a Cloud Run Service proto to a flat result dict."""
@@ -16,9 +18,13 @@ def _extract_service(service: Any) -> dict[str, Any]:
     container = containers[0] if containers else None
 
     env_vars = {}
+    secrets = {}
     if container:
         for env in container.env:
-            if env.value:
+            if env.value_source and env.value_source.secret_key_ref:
+                ref = env.value_source.secret_key_ref
+                secrets[env.name] = f"{ref.secret}:{ref.version}"
+            elif env.value:
                 env_vars[env.name] = env.value
 
     result: dict[str, Any] = {
@@ -28,6 +34,7 @@ def _extract_service(service: Any) -> dict[str, Any]:
         "image": container.image if container else None,
         "port": None,
         "env_vars": env_vars,
+        "secrets": secrets,
         "min_instances": None,
         "max_instances": None,
         "memory": None,
@@ -51,44 +58,68 @@ def _extract_service(service: Any) -> dict[str, Any]:
 
 
 def _needs_update(current: dict[str, Any], **desired: Any) -> bool:
-    """Check if the current service state differs from desired."""
-    checks = [
-        ("image", desired.get("image")),
-        ("port", desired.get("port")),
-        ("min_instances", desired.get("min_instances")),
-        ("max_instances", desired.get("max_instances")),
-        ("memory", desired.get("memory")),
-        ("cpu", desired.get("cpu")),
-    ]
-    for key, val in checks:
-        if val is not None and current.get(key) != val:
+    """Check if the current service state differs from desired.
+
+    Only compares fields that were explicitly provided (not None/sentinel).
+    """
+    checks = ["image", "port", "min_instances", "max_instances", "memory", "cpu"]
+    for key in checks:
+        val = desired.get(key, _SENTINEL)
+        if val is not _SENTINEL and val is not None and current.get(key) != val:
             return True
 
-    desired_env = desired.get("env_vars")
-    if desired_env is not None and current.get("env_vars") != desired_env:
-        return True
+    for key in ("env_vars", "secrets"):
+        val = desired.get(key, _SENTINEL)
+        if val is not _SENTINEL and val is not None and current.get(key) != val:
+            return True
 
-    desired_sa = desired.get("service_account")
-    if desired_sa is not None and current.get("service_account") != desired_sa:
+    desired_sa = desired.get("service_account", _SENTINEL)
+    if desired_sa is not _SENTINEL and desired_sa is not None and current.get("service_account") != desired_sa:
         return True
 
     return False
 
 
 def _build_service(
+    existing: Any | None,
     *,
     image: str,
-    port: int,
+    port: int | None,
     env_vars: dict[str, str] | None,
     secrets: dict[str, str] | None,
-    min_instances: int,
-    max_instances: int,
-    memory: str,
-    cpu: str,
+    min_instances: int | None,
+    max_instances: int | None,
+    memory: str | None,
+    cpu: str | None,
     service_account: str | None,
 ) -> Any:
-    """Build a Cloud Run Service proto from parameters."""
+    """Build a Cloud Run Service proto, merging with existing state if updating."""
     from google.cloud.run_v2 import types
+
+    if existing:
+        current = _extract_service(existing)
+        if port is None:
+            port = current.get("port", 8080)
+        if env_vars is None:
+            env_vars = current.get("env_vars")
+        if secrets is None:
+            secrets = current.get("secrets")
+        if min_instances is None:
+            min_instances = current.get("min_instances", 0)
+        if max_instances is None:
+            max_instances = current.get("max_instances", 100)
+        if memory is None:
+            memory = current.get("memory", "512Mi")
+        if cpu is None:
+            cpu = current.get("cpu", "1")
+        if service_account is None:
+            service_account = current.get("service_account")
+
+    port = port or 8080
+    min_instances = min_instances if min_instances is not None else 0
+    max_instances = max_instances if max_instances is not None else 100
+    memory = memory or "512Mi"
+    cpu = cpu or "1"
 
     env = []
     if env_vars:
@@ -142,11 +173,11 @@ async def ftl_cloud_run_service(
     image: str | None = None,
     env_vars: dict[str, str] | None = None,
     secrets: dict[str, str] | None = None,
-    port: int = 8080,
-    min_instances: int = 0,
-    max_instances: int = 100,
-    memory: str = "512Mi",
-    cpu: str = "1",
+    port: int | None = None,
+    min_instances: int | None = None,
+    max_instances: int | None = None,
+    memory: str | None = None,
+    cpu: str | None = None,
     service_account: str | None = None,
     state: str = "present",
     check_mode: bool = False,
@@ -155,6 +186,9 @@ async def ftl_cloud_run_service(
     """Create, update, or delete a Cloud Run service.
 
     Uses Application Default Credentials (ADC) for authentication.
+    Unspecified parameters preserve existing values on update.
+    On create, defaults are: port=8080, min_instances=0, max_instances=100,
+    memory=512Mi, cpu=1.
     """
     from google.api_core.exceptions import NotFound
     from google.cloud.run_v2 import ServicesAsyncClient
@@ -178,10 +212,13 @@ async def ftl_cloud_run_service(
         await operation.result()
         return {"changed": True, "state": "absent"}
 
-    if image is None:
-        raise FTLModuleError("'image' is required when state=present")
+    if image is None and existing is None:
+        raise FTLModuleError("'image' is required when creating a new service")
 
-    build_kwargs = dict(
+    if existing is not None and image is None:
+        image = _extract_service(existing)["image"]
+
+    desired = dict(
         image=image, port=port, env_vars=env_vars, secrets=secrets,
         min_instances=min_instances, max_instances=max_instances,
         memory=memory, cpu=cpu, service_account=service_account,
@@ -190,7 +227,7 @@ async def ftl_cloud_run_service(
     if existing is None:
         if check_mode:
             return {"changed": True, "service": {"name": name, "state": "present"}}
-        service_obj = _build_service(**build_kwargs)
+        service_obj = _build_service(None, **desired)
         operation = await client.create_service(
             parent=parent, service=service_obj, service_id=name,
         )
@@ -198,14 +235,13 @@ async def ftl_cloud_run_service(
         return {"changed": True, "service": _extract_service(result)}
 
     current = _extract_service(existing)
-    if not _needs_update(current, **build_kwargs):
-        current["changed"] = False
+    if not _needs_update(current, **desired):
         return {"changed": False, "service": current}
 
     if check_mode:
         return {"changed": True, "service": current}
 
-    service_obj = _build_service(**build_kwargs)
+    service_obj = _build_service(existing, **desired)
     service_obj.name = full_name
     operation = await client.update_service(service=service_obj)
     result = await operation.result()
