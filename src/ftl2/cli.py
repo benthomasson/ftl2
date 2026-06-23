@@ -2192,6 +2192,7 @@ def _parse_exec_targets(targets: str, user: str | None) -> list[HostConfig]:
     "--inventory", "-i", default=None,
     help="Inventory file (optional — targets are parsed as hostnames if omitted)",
 )
+@click.option("--no-host-key-check", is_flag=True, help="Disable SSH host key verification")
 def exec_cmd(
     targets: str,
     command: str,
@@ -2201,6 +2202,7 @@ def exec_cmd(
     become_method: str,
     timeout: int,
     inventory: str | None,
+    no_host_key_check: bool,
 ) -> None:
     """Execute a command on remote host(s) via the gate protocol.
 
@@ -2256,18 +2258,17 @@ def exec_cmd(
 
     async def run() -> int:
         if inv_source is None:
-            inv_for_ctx: Any = {
-                "all": {
-                    "hosts": {
-                        h.name: {
-                            "ansible_host": h.ansible_host,
-                            "ansible_port": h.ansible_port,
-                            "ansible_user": h.ansible_user,
-                        }
-                        for h in host_list
-                    }
+            host_vars: dict[str, dict[str, Any]] = {}
+            for h in host_list:
+                hv: dict[str, Any] = {
+                    "ansible_host": h.ansible_host,
+                    "ansible_port": h.ansible_port,
+                    "ansible_user": h.ansible_user,
                 }
-            }
+                if no_host_key_check:
+                    hv["disable_host_key_checking"] = True
+                host_vars[h.name] = hv
+            inv_for_ctx: Any = {"all": {"hosts": host_vars}}
         else:
             inv_for_ctx = inv_source
 
