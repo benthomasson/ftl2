@@ -67,7 +67,7 @@ from ftl2.state import (
     load_state,
     save_state,
 )
-from ftl2.types import ExecutionConfig, GateConfig
+from ftl2.types import ExecutionConfig, GateConfig, HostConfig
 from ftl2.vars import (
     collect_host_variables,
     format_all_hosts_json,
@@ -2153,6 +2153,169 @@ def run_module(
                 raise SystemExit(1)
             else:
                 raise click.ClickException(f"{results.failed} host(s) failed execution")
+
+
+def _parse_exec_targets(targets: str, user: str | None) -> list[HostConfig]:
+    """Parse 'host1,user@host2:port' into HostConfig objects."""
+    from getpass import getuser
+
+    hosts = []
+    for target in targets.split(","):
+        target = target.strip()
+        if not target:
+            continue
+        ssh_user = user
+        port = 22
+        if "@" in target:
+            ssh_user, target = target.rsplit("@", 1)
+        if ":" in target:
+            target, port_str = target.rsplit(":", 1)
+            port = int(port_str)
+        hosts.append(HostConfig(
+            name=target,
+            ansible_host=target,
+            ansible_port=port,
+            ansible_user=ssh_user or getuser(),
+        ))
+    return hosts
+
+
+@cli.command("exec")
+@click.argument("targets")
+@click.argument("command")
+@click.option("--user", "-u", default=None, help="SSH username")
+@click.option("--become", "-b", is_flag=True, help="Use sudo for privilege escalation")
+@click.option("--become-user", default="root", help="Target user for sudo (default: root)")
+@click.option("--become-method", default="sudo", help="Escalation method: sudo, su, doas")
+@click.option("--timeout", "-t", type=int, default=300, help="Command timeout in seconds")
+@click.option(
+    "--inventory", "-i", default=None,
+    help="Inventory file (optional — targets are parsed as hostnames if omitted)",
+)
+def exec_cmd(
+    targets: str,
+    command: str,
+    user: str | None,
+    become: bool,
+    become_user: str,
+    become_method: str,
+    timeout: int,
+    inventory: str | None,
+) -> None:
+    """Execute a command on remote host(s) via the gate protocol.
+
+    Runs COMMAND on TARGETS with optional sudo/become support. Unlike raw SSH,
+    this uses the FTL2 gate protocol which handles privilege escalation cleanly.
+
+    TARGETS can be hostnames, user@host:port, or comma-separated lists.
+
+    Examples:
+
+        ftl2 exec web01 "uptime"
+
+        ftl2 exec web01 "systemctl status caddy" --become
+
+        ftl2 exec web01 "journalctl -u app" --become --become-user appuser
+
+        ftl2 exec ec2-user@10.0.1.5 "whoami" --become
+
+        ftl2 exec web01,web02 "df -h"
+    """
+    from ftl2.automation import AutomationContext
+
+    inv_source: Any = None
+    if inventory:
+        try:
+            inv_source = load_inventory(inventory)
+        except (ValueError, FileNotFoundError) as e:
+            raise click.ClickException(str(e)) from e
+        all_hosts = inv_source.get_all_hosts()
+        target_names = [t.strip() for t in targets.split(",") if t.strip()]
+        host_list = []
+        for name in target_names:
+            if name in all_hosts:
+                host_list.append(all_hosts[name])
+            else:
+                raise click.ClickException(f"Host '{name}' not found in inventory")
+    else:
+        try:
+            host_list = _parse_exec_targets(targets, user)
+        except ValueError as e:
+            raise click.ClickException(f"Invalid target: {e}") from e
+
+    if not host_list:
+        raise click.ClickException("No targets specified")
+
+    become_overrides = {
+        "become": become,
+        "become_user": become_user,
+        "become_method": become_method,
+    } if become else None
+
+    multi = len(host_list) > 1
+
+    async def run() -> int:
+        if inv_source is None:
+            inv_for_ctx: Any = {
+                "all": {
+                    "hosts": {
+                        h.name: {
+                            "ansible_host": h.ansible_host,
+                            "ansible_port": h.ansible_port,
+                            "ansible_user": h.ansible_user,
+                        }
+                        for h in host_list
+                    }
+                }
+            }
+        else:
+            inv_for_ctx = inv_source
+
+        async with AutomationContext(
+            inventory=inv_for_ctx,
+            quiet=True,
+            print_summary=False,
+            print_errors=False,
+            state_file=None,
+        ) as ftl:
+            results = await ftl.run_on(
+                host_list,
+                "shell",
+                _become_overrides=become_overrides,
+                cmd=command,
+                timeout=timeout,
+            )
+
+        exit_code = 0
+        for result in results:
+            stdout = result.output.get("stdout", "")
+            stderr = result.output.get("stderr", "")
+
+            if multi:
+                for line in stdout.splitlines():
+                    click.echo(f"[{result.host}] {line}")
+                for line in stderr.splitlines():
+                    click.echo(f"[{result.host}] {line}", err=True)
+                if not result.success and not stdout and not stderr:
+                    msg = result.error or "Command failed"
+                    click.echo(f"[{result.host}] {msg}", err=True)
+            else:
+                if stdout:
+                    click.echo(stdout, nl=not stdout.endswith("\n"))
+                if stderr:
+                    click.echo(stderr, err=True, nl=not stderr.endswith("\n"))
+                if not result.success and not stdout and not stderr:
+                    click.echo(result.error or "Command failed", err=True)
+
+            if not result.success:
+                rc = result.output.get("rc", 1)
+                if exit_code == 0:
+                    exit_code = rc
+
+        return exit_code
+
+    rc = asyncio.run(run())
+    raise SystemExit(rc)
 
 
 def main() -> None:
