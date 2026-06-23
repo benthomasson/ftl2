@@ -2221,8 +2221,6 @@ def exec_cmd(
 
         ftl2 exec web01,web02 "df -h"
     """
-    import sys
-
     from ftl2.automation import AutomationContext
 
     inv_source: Any = None
