@@ -1381,7 +1381,7 @@ class RemoteModuleRunner(ModuleRunner):
                 await conn.run(f"mv {tmp_dest} {dest}", check=True)
             logger.info(f"Updated gate at {dest}")
         except Exception as e:
-            logger.warning(f"Failed to update gate at stable path: {e}")
+            logger.debug(f"Failed to update gate at stable path: {e}")
 
     async def _register_gate_subsystem(
         self,
