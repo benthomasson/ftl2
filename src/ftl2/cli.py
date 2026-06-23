@@ -2225,12 +2225,13 @@ def exec_cmd(
 
     from ftl2.automation import AutomationContext
 
+    inv_source: Any = None
     if inventory:
         try:
-            inv = load_inventory(inventory)
-        except ValueError as e:
+            inv_source = load_inventory(inventory)
+        except (ValueError, FileNotFoundError) as e:
             raise click.ClickException(str(e)) from e
-        all_hosts = inv.get_all_hosts()
+        all_hosts = inv_source.get_all_hosts()
         target_names = [t.strip() for t in targets.split(",") if t.strip()]
         host_list = []
         for name in target_names:
@@ -2256,20 +2257,24 @@ def exec_cmd(
     multi = len(host_list) > 1
 
     async def run() -> int:
-        inv_dict = {
-            "all": {
-                "hosts": {
-                    h.name: {
-                        "ansible_host": h.ansible_host,
-                        "ansible_port": h.ansible_port,
-                        "ansible_user": h.ansible_user,
+        if inv_source is None:
+            inv_for_ctx: Any = {
+                "all": {
+                    "hosts": {
+                        h.name: {
+                            "ansible_host": h.ansible_host,
+                            "ansible_port": h.ansible_port,
+                            "ansible_user": h.ansible_user,
+                        }
+                        for h in host_list
                     }
-                    for h in host_list
                 }
             }
-        }
+        else:
+            inv_for_ctx = inv_source
+
         async with AutomationContext(
-            inventory=inv_dict,
+            inventory=inv_for_ctx,
             quiet=True,
             print_summary=False,
             print_errors=False,
@@ -2280,15 +2285,13 @@ def exec_cmd(
                 "shell",
                 _become_overrides=become_overrides,
                 cmd=command,
+                timeout=timeout,
             )
 
         exit_code = 0
         for result in results:
             stdout = result.output.get("stdout", "")
             stderr = result.output.get("stderr", "")
-
-            if not result.success:
-                exit_code = result.output.get("rc", 1)
 
             if multi:
                 for line in stdout.splitlines():
@@ -2297,12 +2300,16 @@ def exec_cmd(
                     click.echo(f"[{result.host}] {line}", err=True)
             else:
                 if stdout:
-                    click.echo(stdout)
+                    click.echo(stdout, nl=not stdout.endswith("\n"))
                 if stderr:
-                    click.echo(stderr, err=True)
+                    click.echo(stderr, err=True, nl=not stderr.endswith("\n"))
                 if not result.success and not stdout and not stderr:
                     click.echo(result.error or "Command failed", err=True)
-                exit_code = result.output.get("rc", 1 if not result.success else 0)
+
+            if not result.success:
+                rc = result.output.get("rc", 1)
+                if exit_code == 0:
+                    exit_code = rc
 
         return exit_code
 
