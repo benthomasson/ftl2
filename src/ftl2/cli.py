@@ -2298,6 +2298,9 @@ def exec_cmd(
                     click.echo(f"[{result.host}] {line}")
                 for line in stderr.splitlines():
                     click.echo(f"[{result.host}] {line}", err=True)
+                if not result.success and not stdout and not stderr:
+                    msg = result.error or "Command failed"
+                    click.echo(f"[{result.host}] {msg}", err=True)
             else:
                 if stdout:
                     click.echo(stdout, nl=not stdout.endswith("\n"))
