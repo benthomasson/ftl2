@@ -2193,6 +2193,7 @@ def _parse_exec_targets(targets: str, user: str | None) -> list[HostConfig]:
     help="Inventory file (optional — targets are parsed as hostnames if omitted)",
 )
 @click.option("--no-host-key-check", is_flag=True, help="Disable SSH host key verification")
+@click.option("--state", "-s", default=None, help="State file to load hosts from (.ftl2-state.json)")
 def exec_cmd(
     targets: str,
     command: str,
@@ -2203,6 +2204,7 @@ def exec_cmd(
     timeout: int,
     inventory: str | None,
     no_host_key_check: bool,
+    state: str | None,
 ) -> None:
     """Execute a command on remote host(s) via the gate protocol.
 
@@ -2225,12 +2227,29 @@ def exec_cmd(
     """
     from ftl2.automation import AutomationContext
 
+    def _load_hosts_from_state(state_path: str) -> "Inventory":
+        from ftl2.inventory import Inventory
+        from ftl2.state.merge import merge_state_into_inventory
+        from ftl2.state.state import State
+
+        s = State(state_path)
+        inv = Inventory()
+        merge_state_into_inventory(s, inv)
+        return inv
+
     inv_source: Any = None
     if inventory:
         try:
             inv_source = load_inventory(inventory)
         except (ValueError, FileNotFoundError) as e:
             raise click.ClickException(str(e)) from e
+    elif state:
+        try:
+            inv_source = _load_hosts_from_state(state)
+        except (ValueError, FileNotFoundError) as e:
+            raise click.ClickException(str(e)) from e
+
+    if inv_source is not None:
         all_hosts = inv_source.get_all_hosts()
         target_names = [t.strip() for t in targets.split(",") if t.strip()]
         host_list = []
@@ -2240,10 +2259,21 @@ def exec_cmd(
             else:
                 raise click.ClickException(f"Host '{name}' not found in inventory")
     else:
-        try:
-            host_list = _parse_exec_targets(targets, user)
-        except ValueError as e:
-            raise click.ClickException(f"Invalid target: {e}") from e
+        # Auto-detect: try .ftl2-state.json in cwd before raw hostname parsing
+        host_list = []
+        state_auto = Path(".ftl2-state.json")
+        if state_auto.exists():
+            auto_inv = _load_hosts_from_state(str(state_auto))
+            all_hosts = auto_inv.get_all_hosts()
+            target_names = [t.strip() for t in targets.split(",") if t.strip()]
+            for name in target_names:
+                if name in all_hosts:
+                    host_list.append(all_hosts[name])
+        if not host_list:
+            try:
+                host_list = _parse_exec_targets(targets, user)
+            except ValueError as e:
+                raise click.ClickException(f"Invalid target: {e}") from e
 
     if not host_list:
         raise click.ClickException("No targets specified")
