@@ -1349,9 +1349,13 @@ class AutomationContext:
     async def listen(self, timeout: float | None = None) -> None:
         """Listen for events from all active gate connections.
 
-        Reads event messages from gates and dispatches them to
-        registered handlers. Blocks until timeout expires or all
-        gate connections close.
+        For multiplexed gates, events already flow through the background
+        reader task (_gate_reader_loop) via event_callback. This method
+        blocks until those reader tasks complete or timeout.
+
+        For serial gates without an existing reader, creates a single
+        event reader. Note: serial gates do not support concurrent
+        listen() and command execution — use multiplexed gates for that.
 
         Args:
             timeout: Maximum time in seconds to listen, or None for
@@ -1368,28 +1372,57 @@ class AutomationContext:
         if not gates:
             return
 
-        async def _listen_one(host_name: str, gate: Gate) -> None:
-            while True:
-                msg = await self._remote_runner.protocol.read_message(
-                    gate.gate_process.stdout
-                )
-                if msg is None:
-                    break
-                msg_type, data = msg
-                if msg_type in GateProtocol.EVENT_TYPES:
-                    await self._dispatch_event(host_name, msg_type, data)
+        reader_tasks: list[_asyncio.Task] = []
 
-        tasks = [_listen_one(name, gate) for name, gate in gates.items()]
+        for cache_key, gate in gates.items():
+            if gate._reader_task is not None:
+                reader_tasks.append(gate._reader_task)
+            else:
+                host_name = cache_key.split(":")[0]
 
+                async def _serial_reader(
+                    _host: str = host_name, _gate: "Gate" = gate,
+                ) -> None:
+                    try:
+                        while True:
+                            msg = await self._remote_runner.protocol.read_message(
+                                _gate.gate_process.stdout
+                            )
+                            if msg is None:
+                                break
+                            msg_type, data = msg[:2]
+                            if msg_type in GateProtocol.EVENT_TYPES:
+                                await self._dispatch_event(
+                                    _host, msg_type, data,
+                                )
+                    except _asyncio.CancelledError:
+                        return
+                    except Exception:
+                        logger.exception("Serial event reader error")
+
+                task = _asyncio.create_task(_serial_reader())
+                gate._reader_task = task
+                reader_tasks.append(task)
+
+        if not reader_tasks:
+            return
+
+        done = _asyncio.Event()
+
+        async def _watch() -> None:
+            await _asyncio.gather(*reader_tasks, return_exceptions=True)
+            done.set()
+
+        watcher = _asyncio.create_task(_watch())
         try:
             if timeout is not None:
-                await _asyncio.wait_for(
-                    _asyncio.gather(*tasks), timeout=timeout
-                )
+                await _asyncio.wait_for(done.wait(), timeout=timeout)
             else:
-                await _asyncio.gather(*tasks)
+                await done.wait()
         except (TimeoutError, _asyncio.CancelledError, KeyboardInterrupt):
             pass
+        finally:
+            watcher.cancel()
 
     def _log_result(
         self, module_name: str, result: ExecuteResult, duration: float | None = None
