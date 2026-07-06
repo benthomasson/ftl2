@@ -142,6 +142,7 @@ def _get_module(name: str) -> Any:
     # Import here to avoid circular import
     from ftl2.ftl_modules.aws.ec2 import ftl_ec2_instance, ftl_ec2_instance_info
     from ftl2.ftl_modules.aws.route53 import ftl_route53_info, ftl_route53_record
+    from ftl2.ftl_modules.gcp.compute import ftl_gcp_compute_instance, ftl_gcp_compute_instance_info
     from ftl2.ftl_modules.command import ftl_command, ftl_shell
     from ftl2.ftl_modules.gcp.artifact_registry import ftl_artifact_registry_repository
     from ftl2.ftl_modules.gcp.cloud_run import ftl_cloud_run_service
@@ -167,6 +168,8 @@ def _get_module(name: str) -> Any:
         "ec2_instance_info": ftl_ec2_instance_info,
         "route53_record": ftl_route53_record,
         "route53_info": ftl_route53_info,
+        "gcp_compute_instance": ftl_gcp_compute_instance,
+        "gcp_compute_instance_info": ftl_gcp_compute_instance_info,
         "dnf": ftl_dnf,
         "dnf5": ftl_dnf,
         # FQCN mappings
@@ -188,9 +191,13 @@ def _get_module(name: str) -> Any:
         "cloud_run_service": ftl_cloud_run_service,
         "artifact_registry_repository": ftl_artifact_registry_repository,
         "secret_manager_secret": ftl_secret_manager_secret,
+        "gcp_compute_instance": ftl_gcp_compute_instance,
+        "gcp_compute_instance_info": ftl_gcp_compute_instance_info,
         "google.cloud.cloud_run_service": ftl_cloud_run_service,
         "google.cloud.artifact_registry_repository": ftl_artifact_registry_repository,
         "google.cloud.secret_manager_secret": ftl_secret_manager_secret,
+        "google.cloud.gcp_compute_instance": ftl_gcp_compute_instance,
+        "google.cloud.gcp_compute_instance_info": ftl_gcp_compute_instance_info,
     }
     return modules.get(name)
 
