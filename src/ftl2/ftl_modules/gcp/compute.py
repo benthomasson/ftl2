@@ -196,13 +196,28 @@ async def ftl_gcp_compute_instance(
                         "state": current,
                         "instance": _extract_instance(existing),
                     }
-                if current in ("STOPPING", "SUSPENDING", "SUSPENDED"):
+                if current == "SUSPENDED":
+                    op = await asyncio.to_thread(
+                        client.resume, project=project, zone=zone, instance=name,
+                    )
+                    if wait:
+                        await _wait_for_operation(project, zone, op.name, wait_timeout)
+                    inst = await asyncio.to_thread(
+                        client.get, project=project, zone=zone, instance=name,
+                    )
+                    return {
+                        "changed": True,
+                        "instance_id": str(inst.id),
+                        "state": inst.status,
+                        "instance": _extract_instance(inst),
+                    }
+                if current in ("STOPPING", "SUSPENDING"):
                     waited = 0
                     while waited < wait_timeout:
                         inst = await asyncio.to_thread(
                             client.get, project=project, zone=zone, instance=name,
                         )
-                        if inst.status in _STOPPED_STATES:
+                        if inst.status in (*_STOPPED_STATES, "SUSPENDED"):
                             current = inst.status
                             break
                         await asyncio.sleep(5)
@@ -213,6 +228,21 @@ async def ftl_gcp_compute_instance(
                             instance=name,
                             current_state=current,
                         )
+                    if current == "SUSPENDED":
+                        op = await asyncio.to_thread(
+                            client.resume, project=project, zone=zone, instance=name,
+                        )
+                        if wait:
+                            await _wait_for_operation(project, zone, op.name, wait_timeout)
+                        inst = await asyncio.to_thread(
+                            client.get, project=project, zone=zone, instance=name,
+                        )
+                        return {
+                            "changed": True,
+                            "instance_id": str(inst.id),
+                            "state": inst.status,
+                            "instance": _extract_instance(inst),
+                        }
                 if current in _STOPPED_STATES:
                     op = await asyncio.to_thread(
                         client.start, project=project, zone=zone, instance=name,
