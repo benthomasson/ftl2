@@ -13,8 +13,6 @@ __all__ = ["ftl_gcp_compute_instance", "ftl_gcp_compute_instance_info"]
 
 _RUNNING_STATES = ("RUNNING",)
 _STOPPED_STATES = ("TERMINATED", "STOPPED")
-_ACTIVE_STATES = ("RUNNING", "STAGING", "PROVISIONING", "STOPPING", "SUSPENDING", "SUSPENDED",
-                   "REPAIRING", "TERMINATED", "STOPPED")
 
 
 def _extract_instance(instance: Any) -> dict[str, Any]:
@@ -198,17 +196,23 @@ async def ftl_gcp_compute_instance(
                         "state": current,
                         "instance": _extract_instance(existing),
                     }
-                if current in ("STOPPING", "SUSPENDING"):
+                if current in ("STOPPING", "SUSPENDING", "SUSPENDED"):
                     waited = 0
                     while waited < wait_timeout:
                         inst = await asyncio.to_thread(
                             client.get, project=project, zone=zone, instance=name,
                         )
                         if inst.status in _STOPPED_STATES:
+                            current = inst.status
                             break
                         await asyncio.sleep(5)
                         waited += 5
-                    current = "TERMINATED"
+                    else:
+                        raise FTLModuleError(
+                            f"Timed out waiting for {name} to stop after {wait_timeout}s",
+                            instance=name,
+                            current_state=current,
+                        )
                 if current in _STOPPED_STATES:
                     op = await asyncio.to_thread(
                         client.start, project=project, zone=zone, instance=name,
@@ -417,10 +421,10 @@ async def ftl_gcp_compute_instance_info(
         if filter_expr:
             request.filter = filter_expr
 
-        instances = []
-        page_result = await asyncio.to_thread(client.list, request=request)
-        for inst in page_result:
-            instances.append(_extract_instance(inst))
+        raw_instances = await asyncio.to_thread(
+            lambda: list(client.list(request=request)),
+        )
+        instances = [_extract_instance(inst) for inst in raw_instances]
 
         return {
             "changed": False,
