@@ -29,6 +29,8 @@ from ftl2.ftl_modules.aws import (
 from ftl2.ftl_modules.gcp import (
     ftl_artifact_registry_repository,
     ftl_cloud_run_service,
+    ftl_gcp_compute_instance,
+    ftl_gcp_compute_instance_info,
     ftl_secret_manager_secret,
 )
 from ftl2.ftl_modules.command import ftl_command, ftl_shell
@@ -76,6 +78,8 @@ FTL_MODULES: dict[str, ModuleFunc] = {
     "cloud_run_service": ftl_cloud_run_service,
     "artifact_registry_repository": ftl_artifact_registry_repository,
     "secret_manager_secret": ftl_secret_manager_secret,
+    "gcp_compute_instance": ftl_gcp_compute_instance,
+    "gcp_compute_instance_info": ftl_gcp_compute_instance_info,
 }
 
 # Maps Ansible FQCNs to FTL module functions for compatibility
@@ -101,6 +105,8 @@ ANSIBLE_COMPAT: dict[str, ModuleFunc] = {
     "google.cloud.cloud_run_service": ftl_cloud_run_service,
     "google.cloud.artifact_registry_repository": ftl_artifact_registry_repository,
     "google.cloud.secret_manager_secret": ftl_secret_manager_secret,
+    "google.cloud.gcp_compute_instance": ftl_gcp_compute_instance,
+    "google.cloud.gcp_compute_instance_info": ftl_gcp_compute_instance_info,
 }
 
 
@@ -197,4 +203,6 @@ __all__ = [
     "ftl_cloud_run_service",
     "ftl_artifact_registry_repository",
     "ftl_secret_manager_secret",
+    "ftl_gcp_compute_instance",
+    "ftl_gcp_compute_instance_info",
 ]

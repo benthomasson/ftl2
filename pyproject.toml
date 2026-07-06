@@ -42,6 +42,7 @@ gcp = [
     "google-cloud-run>=0.10.0",
     "google-cloud-artifact-registry>=1.0.0",
     "google-cloud-secret-manager>=2.0.0",
+    "google-cloud-compute>=1.14.0",
     "google-auth>=2.0.0",
 ]
 vault = [
