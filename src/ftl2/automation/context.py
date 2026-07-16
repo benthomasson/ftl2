@@ -957,15 +957,15 @@ class AutomationContext:
         self._hosts_proxy = None
         self._gate_locks.pop(hostname, None)
         self._event_handlers.pop(hostname, None)
-        ssh = self._ssh_connections.pop(hostname, None)
-        if ssh is not None:
-            await ssh.disconnect()
-
         if self._remote_runner:
             for key in list(self._remote_runner.gate_cache.keys()):
                 if key == hostname or key.startswith(f"{hostname}:"):
                     gate = self._remote_runner.gate_cache.pop(key)
                     await self._remote_runner._close_gate(gate)
+
+        ssh = self._ssh_connections.pop(hostname, None)
+        if ssh is not None:
+            await ssh.disconnect()
 
         if self._state is not None:
             self._state.remove_host(hostname)
