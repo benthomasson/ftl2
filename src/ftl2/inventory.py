@@ -48,6 +48,10 @@ class HostGroup:
         """Add a host to this group."""
         self.hosts[host.name] = host
 
+    def remove_host(self, name: str) -> bool:
+        """Remove a host from this group by name. Returns True if found."""
+        return self.hosts.pop(name, None) is not None
+
     def get_host(self, name: str) -> HostConfig | None:
         """Get a host by name."""
         return self.hosts.get(name)
@@ -88,6 +92,14 @@ class Inventory:
     def list_groups(self) -> list[HostGroup]:
         """Get all groups."""
         return list(self.groups.values())
+
+    def remove_host(self, name: str) -> bool:
+        """Remove a host from all groups. Returns True if found in any group."""
+        found = False
+        for group in self.groups.values():
+            if group.remove_host(name):
+                found = True
+        return found
 
     def get_all_hosts(self) -> dict[str, HostConfig]:
         """Get all unique hosts across all groups."""

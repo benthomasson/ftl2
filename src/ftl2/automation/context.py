@@ -951,6 +951,23 @@ class AutomationContext:
 
         return host
 
+    async def remove_host(self, hostname: str) -> None:
+        """Remove a host, closing its gate connections and cleaning up all state."""
+        self._inventory.remove_host(hostname)
+        self._hosts_proxy = None
+        self._gate_locks.pop(hostname, None)
+        self._event_handlers.pop(hostname, None)
+        self._ssh_connections.pop(hostname, None)
+
+        if self._remote_runner:
+            for key in list(self._remote_runner.gate_cache.keys()):
+                if key == hostname or key.startswith(f"{hostname}:"):
+                    gate = self._remote_runner.gate_cache.pop(key)
+                    await self._remote_runner._close_gate(gate)
+
+        if self._state is not None:
+            self._state.remove_host(hostname)
+
     @property
     def secrets(self) -> SecretsProxy:
         """Access secrets loaded from environment variables.
