@@ -175,6 +175,72 @@ class TestInventory:
         assert "shared01" in all_hosts
 
 
+class TestRemoveHost:
+    """Tests for removing hosts from groups and inventory."""
+
+    def test_remove_host_from_group(self):
+        group = HostGroup(name="webservers")
+        host = HostConfig(name="web01", ansible_host="192.168.1.10")
+        group.add_host(host)
+
+        assert group.remove_host("web01") is True
+        assert group.get_host("web01") is None
+        assert len(group.hosts) == 0
+
+    def test_remove_host_from_group_not_found(self):
+        group = HostGroup(name="webservers")
+
+        assert group.remove_host("nonexistent") is False
+
+    def test_remove_host_from_inventory_single_group(self):
+        inventory = Inventory()
+        group = HostGroup(name="webservers")
+        host = HostConfig(name="web01", ansible_host="192.168.1.10")
+        group.add_host(host)
+        inventory.add_group(group)
+
+        assert inventory.remove_host("web01") is True
+        assert "web01" not in inventory.get_all_hosts()
+
+    def test_remove_host_from_inventory_multiple_groups(self):
+        inventory = Inventory()
+        host = HostConfig(name="shared", ansible_host="192.168.1.50")
+
+        group1 = HostGroup(name="web")
+        group1.add_host(host)
+        group2 = HostGroup(name="app")
+        group2.add_host(host)
+
+        inventory.add_group(group1)
+        inventory.add_group(group2)
+
+        assert inventory.remove_host("shared") is True
+        assert group1.get_host("shared") is None
+        assert group2.get_host("shared") is None
+        assert "shared" not in inventory.get_all_hosts()
+
+    def test_remove_host_from_inventory_not_found(self):
+        inventory = Inventory()
+        group = HostGroup(name="webservers")
+        inventory.add_group(group)
+
+        assert inventory.remove_host("nonexistent") is False
+
+    def test_remove_host_leaves_other_hosts(self):
+        inventory = Inventory()
+        group = HostGroup(name="webservers")
+        host1 = HostConfig(name="web01", ansible_host="192.168.1.10")
+        host2 = HostConfig(name="web02", ansible_host="192.168.1.11")
+        group.add_host(host1)
+        group.add_host(host2)
+        inventory.add_group(group)
+
+        inventory.remove_host("web01")
+
+        assert "web01" not in inventory.get_all_hosts()
+        assert "web02" in inventory.get_all_hosts()
+
+
 class TestLoadInventory:
     """Tests for load_inventory function."""
 
