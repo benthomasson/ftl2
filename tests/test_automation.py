@@ -886,6 +886,86 @@ class TestHostScopedProxy:
         assert proxy._target == "minecraft-9"
 
 
+class TestRemoveHost:
+    """Tests for dynamic host removal with remove_host()."""
+
+    @pytest.mark.asyncio
+    async def test_remove_host_from_inventory(self):
+        context = AutomationContext(inventory={
+            "webservers": {
+                "hosts": {
+                    "web01": {"ansible_host": "192.168.1.10"},
+                    "web02": {"ansible_host": "192.168.1.11"},
+                }
+            }
+        })
+
+        await context.remove_host("web01")
+
+        assert "web01" not in context.hosts
+        assert "web02" in context.hosts
+
+    @pytest.mark.asyncio
+    async def test_remove_host_invalidates_proxy_cache(self):
+        context = AutomationContext(inventory={
+            "servers": {
+                "hosts": {
+                    "s1": {"ansible_host": "10.0.0.1"},
+                    "s2": {"ansible_host": "10.0.0.2"},
+                }
+            }
+        })
+
+        _ = context.hosts.all
+        await context.remove_host("s1")
+
+        assert "s1" not in context.hosts
+
+    @pytest.mark.asyncio
+    async def test_remove_host_cleans_up_internal_state(self):
+        context = AutomationContext(inventory={
+            "servers": {
+                "hosts": {
+                    "web01": {"ansible_host": "10.0.0.1"},
+                }
+            }
+        })
+
+        context._gate_locks["web01"] = object()
+        context._event_handlers["web01"] = object()
+
+        await context.remove_host("web01")
+
+        assert "web01" not in context._gate_locks
+        assert "web01" not in context._event_handlers
+
+    @pytest.mark.asyncio
+    async def test_remove_nonexistent_host(self):
+        context = AutomationContext(inventory={
+            "servers": {
+                "hosts": {
+                    "web01": {"ansible_host": "10.0.0.1"},
+                }
+            }
+        })
+
+        await context.remove_host("nonexistent")
+
+        assert "web01" in context.hosts
+
+    @pytest.mark.asyncio
+    async def test_add_then_remove_host(self):
+        context = AutomationContext(inventory={
+            "servers": {"hosts": {}}
+        })
+
+        context.add_host("web01", ansible_host="10.0.0.1", groups=["servers"])
+        assert "web01" in context.hosts
+
+        await context.remove_host("web01")
+        assert "web01" not in context.hosts
+
+
 class TestSecretsManagement:
     """Tests for Phase 3: Secrets Management."""
 
