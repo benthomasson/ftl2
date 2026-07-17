@@ -1740,7 +1740,11 @@ class AutomationContext:
             # Fast path: multiplexed gate already in cache — no lock needed
             cached_gate = self._remote_runner.gate_cache.get(cache_key)
             if cached_gate and cached_gate.multiplexed:
-                return await self._execute_multiplexed(cached_gate, host, module_name, params)
+                if not cached_gate.healthy:
+                    self._remote_runner.gate_cache.pop(cache_key, None)
+                    await self._remote_runner._close_gate(cached_gate)
+                else:
+                    return await self._execute_multiplexed(cached_gate, host, module_name, params)
 
             # Serial path: lock to prevent redundant SSH connections
             async with self._gate_lock(cache_key):
@@ -2107,13 +2111,14 @@ class AutomationContext:
         else:
             interpreter = host.ansible_python_interpreter or "/usr/bin/python3"
 
-        # Check cache — verify interpreter matches
+        # Check cache — verify health and interpreter match
         cache_key = gate_cache_key(host.name, become)
         if cache_key in self._remote_runner.gate_cache:
             gate = self._remote_runner.gate_cache[cache_key]
-            if gate.interpreter == interpreter:
-                # Multiplexed gates stay in cache (shared access).
-                # Serial gates are popped (exclusive access).
+            if not gate.healthy:
+                self._remote_runner.gate_cache.pop(cache_key)
+                await self._remote_runner._close_gate(gate)
+            elif gate.interpreter == interpreter:
                 if not gate.multiplexed:
                     self._remote_runner.gate_cache.pop(cache_key)
                 return gate

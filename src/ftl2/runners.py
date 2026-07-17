@@ -151,7 +151,8 @@ async def _gate_reader_loop(
         while True:
             msg = await protocol.read_message(gate.gate_process.stdout)
             if msg is None:
-                # EOF — fail all pending
+                # EOF — mark unhealthy and fail all pending
+                gate.healthy = False
                 for future in gate._pending.values():
                     if not future.done():
                         future.set_exception(
@@ -179,6 +180,7 @@ async def _gate_reader_loop(
         return
     except Exception as e:
         logger.error(f"Gate reader error: {e}")
+        gate.healthy = False
         for future in gate._pending.values():
             if not future.done():
                 future.set_exception(e)
@@ -1215,7 +1217,8 @@ class RemoteModuleRunner(ModuleRunner):
                         pass
                     break
                 except (ConnectionError, BrokenPipeError, OSError):
-                    # Connection already dead, reader loop will handle cleanup
+                    gate.healthy = False
+                    self.gate_cache.pop(cache_key, None)
                     break
         except asyncio.CancelledError:
             return
