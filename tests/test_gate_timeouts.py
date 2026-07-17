@@ -310,13 +310,15 @@ class TestKeepaliveLoop:
         assert len(gate._pending) == 0
 
     @pytest.mark.asyncio
-    async def test_keepalive_connection_error_exits_cleanly(self):
-        """Keepalive loop exits on BrokenPipeError without marking unhealthy."""
+    async def test_keepalive_connection_error_marks_unhealthy(self):
+        """Keepalive loop marks gate unhealthy and evicts on BrokenPipeError."""
         runner = RemoteModuleRunner()
         runner.KEEPALIVE_INTERVAL = 0.02
         runner.KEEPALIVE_TIMEOUT = 5.0
 
         gate = _make_gate()
+        cache_key = "test:22:user"
+        runner.gate_cache[cache_key] = gate
 
         # _send_and_wait raises a transport error
         async def broken_send(gate, msg_type, data, timeout=None):
@@ -324,10 +326,11 @@ class TestKeepaliveLoop:
 
         with patch.object(runner, "_send_and_wait", side_effect=broken_send):
             await asyncio.wait_for(
-                runner._keepalive_loop(gate, "test:22:user"),
+                runner._keepalive_loop(gate, cache_key),
                 timeout=1.0,
             )
-        # The loop breaks on connection errors — reader loop handles cleanup
+        assert not gate.healthy
+        assert cache_key not in runner.gate_cache
 
 
 class TestUnhealthyGateEviction:
