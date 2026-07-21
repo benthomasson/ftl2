@@ -1321,13 +1321,17 @@ class AutomationContext:
         # Fast path: multiplexed gate — use msg_id future, no lock
         cached_gate = self._remote_runner.gate_cache.get(cache_key)
         if cached_gate and cached_gate.multiplexed:
-            msg_id = cached_gate.next_msg_id()
-            future = cached_gate.create_future(msg_id)
-            await self._remote_runner.protocol.send_message_with_id(
-                cached_gate.gate_process.stdin, msg_type, data,
-                msg_id, write_lock=cached_gate._write_lock,
-            )
-            return await future
+            if not cached_gate.healthy:
+                self._remote_runner.gate_cache.pop(cache_key, None)
+                await self._remote_runner._close_gate(cached_gate)
+            else:
+                msg_id = cached_gate.next_msg_id()
+                future = cached_gate.create_future(msg_id)
+                await self._remote_runner.protocol.send_message_with_id(
+                    cached_gate.gate_process.stdin, msg_type, data,
+                    msg_id, write_lock=cached_gate._write_lock,
+                )
+                return await future
 
         # Serial path
         async with self._gate_lock(cache_key):
