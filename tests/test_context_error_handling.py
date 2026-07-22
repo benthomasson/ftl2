@@ -281,6 +281,174 @@ class TestMultiplexedPathErrorHandling:
         assert "Pipe broken" in result.error
 
 
+class TestGateExitCodePropagation:
+    """Gate subprocess exit codes are carried into ExecuteResult."""
+
+    def _serial_gate(self):
+        gate = MagicMock()
+        gate.multiplexed = False
+        gate.gate_process = MagicMock()
+        gate.gate_process.stdin = MagicMock()
+        gate.gate_process.stdout = MagicMock()
+        return gate
+
+    def _mux_gate(self, resp):
+        gate = MagicMock()
+        gate.multiplexed = True
+        gate.gate_process = MagicMock()
+        gate.gate_process.stdin = MagicMock()
+        gate._write_lock = asyncio.Lock()
+        gate.next_msg_id.return_value = 1
+
+        f = asyncio.get_running_loop().create_future()
+        f.set_result(resp)
+        gate.create_future.return_value = f
+        return gate
+
+    @pytest.mark.asyncio
+    async def test_serial_nonzero_rc_reports_failure(self):
+        """Non-zero gate rc surfaces as failed ExecuteResult."""
+        ctx = _make_context_with_mocks()
+        host = _make_host()
+        gate = self._serial_gate()
+
+        module_json = '{"changed": false}'
+        with patch.object(ctx, '_get_or_create_gate', return_value=gate), patch(
+            'ftl2.ftl_modules.executor.is_ftl_module', return_value=False,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'send_message', new_callable=AsyncMock,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'read_message', new_callable=AsyncMock,
+            return_value=("ModuleResult", {"stdout": module_json, "stderr": "", "rc": 1}),
+        ):
+            result = await ctx._execute_remote_via_gate(host, "command", {})
+
+        assert isinstance(result, ExecuteResult)
+        assert result.success is False
+        assert result.output["rc"] == 1
+
+    @pytest.mark.asyncio
+    async def test_serial_zero_rc_reports_success(self):
+        """Zero gate rc with valid JSON reports success."""
+        ctx = _make_context_with_mocks()
+        host = _make_host()
+        gate = self._serial_gate()
+
+        module_json = '{"changed": true}'
+        with patch.object(ctx, '_get_or_create_gate', return_value=gate), patch(
+            'ftl2.ftl_modules.executor.is_ftl_module', return_value=False,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'send_message', new_callable=AsyncMock,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'read_message', new_callable=AsyncMock,
+            return_value=("ModuleResult", {"stdout": module_json, "stderr": "", "rc": 0}),
+        ):
+            result = await ctx._execute_remote_via_gate(host, "file", {})
+
+        assert isinstance(result, ExecuteResult)
+        assert result.success is True
+        assert result.output["rc"] == 0
+
+    @pytest.mark.asyncio
+    async def test_serial_module_rc_preserved_over_gate_rc(self):
+        """Module JSON with its own rc takes precedence over gate rc."""
+        ctx = _make_context_with_mocks()
+        host = _make_host()
+        gate = self._serial_gate()
+
+        module_json = '{"changed": false, "rc": 2}'
+        with patch.object(ctx, '_get_or_create_gate', return_value=gate), patch(
+            'ftl2.ftl_modules.executor.is_ftl_module', return_value=False,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'send_message', new_callable=AsyncMock,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'read_message', new_callable=AsyncMock,
+            return_value=("ModuleResult", {"stdout": module_json, "stderr": "", "rc": 0}),
+        ):
+            result = await ctx._execute_remote_via_gate(host, "command", {})
+
+        assert result.success is False
+        assert result.output["rc"] == 2
+
+    @pytest.mark.asyncio
+    async def test_serial_empty_stdout_still_fails(self):
+        """Empty stdout with non-zero rc still reports failure."""
+        ctx = _make_context_with_mocks()
+        host = _make_host()
+        gate = self._serial_gate()
+
+        with patch.object(ctx, '_get_or_create_gate', return_value=gate), patch(
+            'ftl2.ftl_modules.executor.is_ftl_module', return_value=False,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'send_message', new_callable=AsyncMock,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'read_message', new_callable=AsyncMock,
+            return_value=("ModuleResult", {"stdout": "", "stderr": "permission denied", "rc": 1}),
+        ):
+            result = await ctx._execute_remote_via_gate(host, "command", {})
+
+        assert result.success is False
+        assert result.output["rc"] == 1
+
+    @pytest.mark.asyncio
+    async def test_multiplexed_nonzero_rc_reports_failure(self):
+        """Non-zero gate rc in multiplexed path surfaces as failure."""
+        ctx = _make_context_with_mocks()
+        host = _make_host()
+
+        module_json = '{"changed": false}'
+        gate = self._mux_gate(("ModuleResult", {"stdout": module_json, "stderr": "", "rc": 1}))
+
+        with patch(
+            'ftl2.ftl_modules.executor.is_ftl_module', return_value=False,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'send_message_with_id', new_callable=AsyncMock,
+        ):
+            result = await ctx._execute_multiplexed(gate, host, "command", {})
+
+        assert isinstance(result, ExecuteResult)
+        assert result.success is False
+        assert result.output["rc"] == 1
+
+    @pytest.mark.asyncio
+    async def test_multiplexed_zero_rc_reports_success(self):
+        """Zero gate rc in multiplexed path reports success."""
+        ctx = _make_context_with_mocks()
+        host = _make_host()
+
+        module_json = '{"changed": true}'
+        gate = self._mux_gate(("ModuleResult", {"stdout": module_json, "stderr": "", "rc": 0}))
+
+        with patch(
+            'ftl2.ftl_modules.executor.is_ftl_module', return_value=False,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'send_message_with_id', new_callable=AsyncMock,
+        ):
+            result = await ctx._execute_multiplexed(gate, host, "file", {})
+
+        assert isinstance(result, ExecuteResult)
+        assert result.success is True
+        assert result.output["rc"] == 0
+
+    @pytest.mark.asyncio
+    async def test_multiplexed_empty_stdout_still_fails(self):
+        """Empty stdout in multiplexed path with non-zero rc still reports failure."""
+        ctx = _make_context_with_mocks()
+        host = _make_host()
+
+        gate = self._mux_gate(("ModuleResult", {"stdout": "", "stderr": "error", "rc": 1}))
+
+        with patch(
+            'ftl2.ftl_modules.executor.is_ftl_module', return_value=False,
+        ), patch.object(
+            ctx._remote_runner.protocol, 'send_message_with_id', new_callable=AsyncMock,
+        ):
+            result = await ctx._execute_multiplexed(gate, host, "command", {})
+
+        assert result.success is False
+        assert result.output["rc"] == 1
+
+
 class TestErrorDataContract:
     """Both paths honour the errors-as-data contract for all exception types."""
 
