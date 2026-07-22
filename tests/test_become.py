@@ -32,7 +32,7 @@ class TestBecomeConfig:
 
     def test_become_prefix_nonroot_user(self):
         bc = BecomeConfig(become=True, become_user="catbeez")
-        assert bc.become_prefix("whoami") == "sudo -n -H -u catbeez whoami"
+        assert bc.become_prefix("whoami") == "sudo -n -H -u catbeez sh -c 'cd ~ && whoami'"
 
     def test_become_prefix_preserves_command(self):
         bc = BecomeConfig(become=True)
