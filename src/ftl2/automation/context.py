@@ -1828,8 +1828,11 @@ class AutomationContext:
                             # Parse the stdout as JSON (Ansible module output)
                             stdout = data.get("stdout", "")
                             stderr = data.get("stderr", "")
+                            gate_rc = data.get("rc", 0)
                             try:
                                 result_data = json.loads(stdout) if stdout.strip() else {}
+                                if "rc" not in result_data:
+                                    result_data["rc"] = gate_rc
                                 if stderr:
                                     result_data["_stderr"] = stderr
                                 if not result_data:
@@ -1991,8 +1994,11 @@ class AutomationContext:
                 if resp_type == "ModuleResult":
                     stdout = resp_data.get("stdout", "")
                     stderr = resp_data.get("stderr", "")
+                    gate_rc = resp_data.get("rc", 0)
                     try:
                         result_data = json.loads(stdout) if stdout.strip() else {}
+                        if "rc" not in result_data:
+                            result_data["rc"] = gate_rc
                         if stderr:
                             result_data["_stderr"] = stderr
                         if not result_data:
