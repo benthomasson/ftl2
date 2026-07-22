@@ -69,7 +69,7 @@ class BecomeConfig:
         if method == "sudo":
             if user == "root":
                 return f"sudo -n -H {cmd}"
-            return f"sudo -n -H -u {user} {cmd}"
+            return f"sudo -n -H -u {user} sh -c {shlex.quote('cd ~ && ' + cmd)}"
         elif method == "doas":
             if user == "root":
                 return f"doas -n {cmd}"
