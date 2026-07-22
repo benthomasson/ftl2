@@ -1831,8 +1831,6 @@ class AutomationContext:
                             gate_rc = data.get("rc", 0)
                             try:
                                 result_data = json.loads(stdout) if stdout.strip() else {}
-                                if "rc" not in result_data:
-                                    result_data["rc"] = gate_rc
                                 if stderr:
                                     result_data["_stderr"] = stderr
                                 if not result_data:
@@ -1845,6 +1843,8 @@ class AutomationContext:
                                 if stderr and "Traceback" in stderr and not result_data.get("failed"):
                                     result_data["failed"] = True
                                     result_data["msg"] = f"Module crashed: {stderr.strip().splitlines()[-1]}"
+                                if "rc" not in result_data:
+                                    result_data["rc"] = gate_rc
                             except json.JSONDecodeError as e:
                                 result_data = {
                                     "failed": True,
@@ -1997,8 +1997,6 @@ class AutomationContext:
                     gate_rc = resp_data.get("rc", 0)
                     try:
                         result_data = json.loads(stdout) if stdout.strip() else {}
-                        if "rc" not in result_data:
-                            result_data["rc"] = gate_rc
                         if stderr:
                             result_data["_stderr"] = stderr
                         if not result_data:
@@ -2009,6 +2007,8 @@ class AutomationContext:
                         if stderr and "Traceback" in stderr and not result_data.get("failed"):
                             result_data["failed"] = True
                             result_data["msg"] = f"Module crashed: {stderr.strip().splitlines()[-1]}"
+                        if "rc" not in result_data:
+                            result_data["rc"] = gate_rc
                     except json.JSONDecodeError as e:
                         result_data = {
                             "failed": True,
