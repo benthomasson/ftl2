@@ -283,6 +283,7 @@ class AutomationContext:
         gate_dependencies: list[str] | None = None,
         gate_subsystem: bool = False,
         state_file: str | Path | None = ".ftl2-state.json",
+        import_state_files: list[str | Path] | None = None,
         record: str | Path | None = None,
         replay: str | Path | None = None,
         vault_secrets: dict[str, str] | None = None,
@@ -380,10 +381,15 @@ class AutomationContext:
 
         # Initialize state if state_file provided
         self._state: State | None = None
-        if state_file is not None:
+        if state_file is not None or import_state_files:
             from ftl2.state import State, merge_state_into_inventory
+        if state_file is not None:
             self._state = State(state_file)
             merge_state_into_inventory(self._state, self._inventory)
+        if import_state_files:
+            for path in import_state_files:
+                imported = State(path)
+                merge_state_into_inventory(imported, self._inventory)
         self._secrets_proxy = SecretsProxy(secrets or [], vault_secrets=vault_secrets)
         self._secret_bindings = secret_bindings or {}
         self._load_bound_secrets()
