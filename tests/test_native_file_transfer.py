@@ -484,6 +484,34 @@ class TestNativeShell:
         assert result["rc"] == 42
 
     @pytest.mark.asyncio
+    async def test_shell_nonzero_rc_tracked_as_failure(self, mock_context):
+        """Non-zero rc is tracked as success=False in the results pipeline."""
+        mock_context._results = []
+        mock_context.verbose = False
+        mock_context.quiet = True
+        proxy = HostScopedProxy(mock_context, "localhost")
+
+        await proxy.shell(cmd="exit 1")
+
+        assert len(mock_context._results) == 1
+        assert mock_context._results[0].success is False
+        assert mock_context._results[0].output["rc"] == 1
+
+    @pytest.mark.asyncio
+    async def test_shell_zero_rc_tracked_as_success(self, mock_context):
+        """Zero rc is tracked as success=True in the results pipeline."""
+        mock_context._results = []
+        mock_context.verbose = False
+        mock_context.quiet = True
+        proxy = HostScopedProxy(mock_context, "localhost")
+
+        await proxy.shell(cmd="echo ok")
+
+        assert len(mock_context._results) == 1
+        assert mock_context._results[0].success is True
+        assert mock_context._results[0].output["rc"] == 0
+
+    @pytest.mark.asyncio
     async def test_shell_captures_stderr(self, mock_context):
         """shell() captures stderr output."""
         proxy = HostScopedProxy(mock_context, "localhost")
