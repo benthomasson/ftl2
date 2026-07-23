@@ -648,3 +648,112 @@ class TestAutomationStateIntegration:
                 await ensure_server(ftl, "server-2")
 
             assert provision_count == 0  # No new provisions
+
+
+class TestImportStateFiles:
+    """Tests for read-only imported state files (#174)."""
+
+    @pytest.mark.asyncio
+    async def test_imported_hosts_appear_in_inventory(self):
+        """Hosts from imported state files are visible in ftl.hosts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            owned = Path(tmpdir) / "owned.json"
+            imported = Path(tmpdir) / "imported.json"
+
+            s_owned = State(owned)
+            s_owned.add_host("web01", ansible_host="10.0.0.1")
+
+            s_imported = State(imported)
+            s_imported.add_host("db01", ansible_host="10.0.0.2")
+
+            async with automation(
+                state_file=owned,
+                import_state_files=[imported],
+                quiet=True,
+                print_summary=False,
+            ) as ftl:
+                host_names = set(ftl.hosts)
+                assert "web01" in host_names
+                assert "db01" in host_names
+
+    @pytest.mark.asyncio
+    async def test_add_host_only_persists_to_owned_file(self):
+        """add_host() writes to the owned state file, not imported ones."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            owned = Path(tmpdir) / "owned.json"
+            imported = Path(tmpdir) / "imported.json"
+
+            s_imported = State(imported)
+            s_imported.add_host("db01", ansible_host="10.0.0.2")
+            imported_before = json.loads(imported.read_text())
+
+            async with automation(
+                state_file=owned,
+                import_state_files=[imported],
+                quiet=True,
+                print_summary=False,
+            ) as ftl:
+                ftl.add_host("web02", ansible_host="10.0.0.3")
+
+            owned_data = json.loads(owned.read_text())
+            assert "web02" in owned_data["hosts"]
+
+            imported_after = json.loads(imported.read_text())
+            assert imported_after["hosts"] == imported_before["hosts"]
+            assert "web02" not in imported_after["hosts"]
+
+    @pytest.mark.asyncio
+    async def test_imported_file_not_modified(self):
+        """Imported state file content is unchanged after context exit."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            owned = Path(tmpdir) / "owned.json"
+            imported = Path(tmpdir) / "imported.json"
+
+            s_imported = State(imported)
+            s_imported.add_host("db01", ansible_host="10.0.0.2")
+            original_content = imported.read_text()
+
+            async with automation(
+                state_file=owned,
+                import_state_files=[imported],
+                quiet=True,
+                print_summary=False,
+            ) as ftl:
+                ftl.add_host("web01", ansible_host="10.0.0.1")
+
+            assert imported.read_text() == original_content
+
+    @pytest.mark.asyncio
+    async def test_multiple_import_files(self):
+        """Hosts from multiple imported files all appear in inventory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            owned = Path(tmpdir) / "owned.json"
+            imp_a = Path(tmpdir) / "a.json"
+            imp_b = Path(tmpdir) / "b.json"
+
+            State(imp_a).add_host("host-a", ansible_host="10.0.0.1")
+            State(imp_b).add_host("host-b", ansible_host="10.0.0.2")
+
+            async with automation(
+                state_file=owned,
+                import_state_files=[imp_a, imp_b],
+                quiet=True,
+                print_summary=False,
+            ) as ftl:
+                host_names = set(ftl.hosts)
+                assert "host-a" in host_names
+                assert "host-b" in host_names
+
+    @pytest.mark.asyncio
+    async def test_empty_import_list(self):
+        """Empty import_state_files behaves same as None."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            owned = Path(tmpdir) / "owned.json"
+
+            async with automation(
+                state_file=owned,
+                import_state_files=[],
+                quiet=True,
+                print_summary=False,
+            ) as ftl:
+                assert "localhost" in ftl.hosts
