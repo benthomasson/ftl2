@@ -283,7 +283,7 @@ class HostScopedProxy:
 
         duration = time.time() - start_time
         exec_result = ExecuteResult(
-            success=not result.get("failed", False),
+            success=not (result.get("failed", False) or result.get("rc", 0) != 0),
             changed=result.get("changed", False),
             output=result,
             module=module_name,
