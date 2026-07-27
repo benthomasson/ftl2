@@ -284,6 +284,7 @@ class AutomationContext:
         gate_subsystem: bool = False,
         state_file: str | Path | None = ".ftl2-state.json",
         import_state_files: list[str | Path] | None = None,
+        log_file: str | Path | None = "ftl2.log",
         record: str | Path | None = None,
         replay: str | Path | None = None,
         vault_secrets: dict[str, str] | None = None,
@@ -393,6 +394,9 @@ class AutomationContext:
         self._secrets_proxy = SecretsProxy(secrets or [], vault_secrets=vault_secrets)
         self._secret_bindings = secret_bindings or {}
         self._load_bound_secrets()
+        if log_file is not None:
+            from ftl2.logging import configure_logging
+            configure_logging(log_file=log_file, file_level=logging.DEBUG)
         self.check_mode = check_mode
         self.verbose = verbose and not quiet
         self.quiet = quiet

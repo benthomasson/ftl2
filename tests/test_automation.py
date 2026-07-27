@@ -1206,6 +1206,62 @@ class TestOutputModes:
         assert events[2]["check_mode"] is True
 
 
+class TestLogFile:
+    """Tests for log_file parameter (Python logging configuration)."""
+
+    def test_log_file_default_configures_logging(self, tmp_path, monkeypatch):
+        """Default log_file='ftl2.log' sets up file handler."""
+        monkeypatch.chdir(tmp_path)
+        context = AutomationContext()
+        log_path = tmp_path / "ftl2.log"
+        import logging
+        logger = logging.getLogger("ftl2.test_log_file_default")
+        logger.debug("test message")
+        assert log_path.exists()
+        content = log_path.read_text()
+        assert "test message" in content
+        del context
+
+    def test_log_file_none_skips_logging(self, tmp_path, monkeypatch):
+        """log_file=None skips logging configuration."""
+        monkeypatch.chdir(tmp_path)
+        import logging
+        root = logging.getLogger()
+        handler_count_before = len(root.handlers)
+        _context = AutomationContext(log_file=None)
+        handler_count_after = len(root.handlers)
+        assert handler_count_after <= handler_count_before + 1
+        assert not (tmp_path / "ftl2.log").exists()
+        del _context
+
+    def test_log_file_custom_path(self, tmp_path):
+        """log_file accepts a custom path."""
+        log_path = tmp_path / "custom.log"
+        context = AutomationContext(log_file=str(log_path))
+        import logging
+        logger = logging.getLogger("ftl2.test_custom_path")
+        logger.debug("custom log test")
+        assert log_path.exists()
+        assert "custom log test" in log_path.read_text()
+        del context
+
+    @pytest.mark.asyncio
+    async def test_log_file_via_automation(self, tmp_path, monkeypatch):
+        """log_file works through the automation() context manager."""
+        monkeypatch.chdir(tmp_path)
+        async with automation(log_file=str(tmp_path / "test.log")) as ftl:
+            await ftl.command(cmd="echo logged")
+        assert (tmp_path / "test.log").exists()
+
+    @pytest.mark.asyncio
+    async def test_log_file_none_via_automation(self, tmp_path, monkeypatch):
+        """log_file=None disables logging through automation()."""
+        monkeypatch.chdir(tmp_path)
+        async with automation(log_file=None) as ftl:
+            await ftl.command(cmd="echo not logged")
+        assert not (tmp_path / "ftl2.log").exists()
+
+
 class TestSecretBindings:
     """Tests for secret bindings (automatic secret injection)."""
 

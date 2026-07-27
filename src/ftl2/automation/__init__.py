@@ -81,6 +81,7 @@ async def automation(
     environment: str = "",
     policy_audit: str | None = None,
     ignore_missing_inventory: bool = True,
+    log_file: str | None = "ftl2.log",
 ) -> AsyncGenerator[AutomationContext]:
     """Create an automation context for running FTL modules.
 
@@ -164,6 +165,9 @@ async def automation(
                 Each policy evaluation (permitted or denied) is appended as a
                 JSON line immediately after evaluation. Crash-safe — survives
                 process termination. Default is None.
+        log_file: Path to log file for Python logging at DEBUG level.
+                Default is "ftl2.log". Pass None to disable automatic
+                logging configuration.
 
     Yields:
         AutomationContext with ftl.module_name() access to all modules
@@ -270,6 +274,7 @@ async def automation(
         gate_subsystem=gate_subsystem,
         state_file=state_file,
         import_state_files=import_state_files,
+        log_file=log_file,
         record=record,
         replay=replay,
         vault_secrets=vault_secrets,
