@@ -269,7 +269,7 @@ class AutomationContext:
         secrets: list[str] | None = None,
         secret_bindings: dict[str, dict[str, str]] | None = None,
         check_mode: bool = False,
-        verbose: bool = False,
+        verbose: bool = True,
         quiet: bool = False,
         on_event: EventCallback | None = None,
         fail_fast: bool = False,

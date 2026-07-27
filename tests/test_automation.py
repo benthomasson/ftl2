@@ -256,7 +256,7 @@ class TestAutomationContext:
         context = AutomationContext()
 
         assert context.check_mode is False
-        assert context.verbose is False
+        assert context.verbose is True
         assert context._enabled_modules is None
 
     def test_context_init_with_options(self):
@@ -1162,13 +1162,13 @@ class TestOutputModes:
         """Test output_mode property returns correct mode."""
         from ftl2.automation import OutputMode
 
-        # Normal mode
+        # Default is now verbose
         context1 = AutomationContext()
-        assert context1.output_mode == OutputMode.NORMAL
+        assert context1.output_mode == OutputMode.VERBOSE
 
-        # Verbose mode
-        context2 = AutomationContext(verbose=True)
-        assert context2.output_mode == OutputMode.VERBOSE
+        # Explicit verbose=False gives normal mode
+        context2 = AutomationContext(verbose=False)
+        assert context2.output_mode == OutputMode.NORMAL
 
         # Quiet mode
         context3 = AutomationContext(quiet=True)
@@ -1182,7 +1182,7 @@ class TestOutputModes:
     async def test_normal_mode_shows_errors(self, capsys):
         """Test that normal mode shows errors but not successes."""
         with tempfile.TemporaryDirectory():
-            async with automation() as ftl:
+            async with automation(verbose=False) as ftl:
                 # This should succeed - no output in normal mode
                 await ftl.command(cmd="echo hello")
 
