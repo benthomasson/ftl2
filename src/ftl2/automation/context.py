@@ -272,7 +272,7 @@ class AutomationContext:
         verbose: bool = True,
         quiet: bool = False,
         on_event: EventCallback | None = None,
-        fail_fast: bool = False,
+        fail_fast: bool = True,
         print_summary: bool = True,
         print_errors: bool = True,
         auto_install_deps: bool = False,

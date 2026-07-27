@@ -1412,15 +1412,15 @@ class TestErrorHandling:
         context = AutomationContext()
         assert context.error_messages == []
 
-    def test_fail_fast_defaults_false(self):
-        """Test that fail_fast defaults to False."""
+    def test_fail_fast_defaults_true(self):
+        """Test that fail_fast defaults to True."""
         context = AutomationContext()
-        assert context.fail_fast is False
-
-    def test_fail_fast_can_be_enabled(self):
-        """Test that fail_fast can be enabled."""
-        context = AutomationContext(fail_fast=True)
         assert context.fail_fast is True
+
+    def test_fail_fast_can_be_disabled(self):
+        """Test that fail_fast can be disabled."""
+        context = AutomationContext(fail_fast=False)
+        assert context.fail_fast is False
 
     @pytest.mark.asyncio
     async def test_failed_after_success(self):
@@ -1440,9 +1440,9 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_continue_after_error(self):
-        """Test that execution continues after error by default."""
+        """Test that execution continues after error when fail_fast=False."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            async with automation() as ftl:
+            async with automation(fail_fast=False) as ftl:
                 # This should work
                 await ftl.file(path=f"{tmpdir}/test.txt", state="touch")
                 # Run another command
@@ -1534,8 +1534,8 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_fail_fast_via_automation_function(self):
-        """Test fail_fast parameter in automation() function."""
-        async with automation(fail_fast=True) as ftl:
+        """Test fail_fast defaults to True in automation() function."""
+        async with automation() as ftl:
             assert ftl.fail_fast is True
 
     @pytest.mark.asyncio
