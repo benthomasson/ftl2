@@ -227,4 +227,4 @@ if __name__ == "__main__":
         args = {"path": "/swapfile", "size": "1G", "state": "present"}
 
     result = asyncio.run(main(args))
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2), flush=True)

@@ -52,7 +52,7 @@ def main():
             "failed": True,
             "msg": f"Failed to parse JSON arguments: {e}",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     # Gather facts
@@ -63,7 +63,7 @@ def main():
             "failed": True,
             "msg": f"Failed to gather facts: {e}",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     # Return success with facts
@@ -72,7 +72,7 @@ def main():
         "ansible_facts": facts,
     }
 
-    print(json.dumps(result))
+    print(json.dumps(result), flush=True)
     sys.exit(0)
 
 

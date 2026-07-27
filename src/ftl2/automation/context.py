@@ -410,7 +410,7 @@ class AutomationContext:
             ftl2_logger.addHandler(handler)
             ftl2_logger.setLevel(logging.DEBUG)
             if not quiet:
-                print(f"Logging to {log_path.resolve()}")
+                print(f"Logging to {log_path.resolve()}", flush=True)
         self.check_mode = check_mode
         self.verbose = verbose and not quiet
         self.quiet = quiet
@@ -1192,7 +1192,7 @@ class AutomationContext:
                 "output": replay_result.output,
             })
             if not self.quiet:
-                print(f"  ↩ {module_name}: replayed (skipped)")
+                print(f"  ↩ {module_name}: replayed (skipped)", flush=True)
             return replay_result.output
 
         # Inject bound secrets (script never sees these values)
@@ -1479,36 +1479,36 @@ class AutomationContext:
         changed = " (changed)" if result.changed else ""
         check = " [CHECK MODE]" if self.check_mode else ""
         timing = f" ({duration:.2f}s)" if duration is not None else ""
-        print(f"[{module_name}] {status}{changed}{check}{timing}")
+        print(f"[{module_name}] {status}{changed}{check}{timing}", flush=True)
         if result.error:
-            print(f"  Error: {result.error}")
+            print(f"  Error: {result.error}", flush=True)
         if not result.success:
             observations = result.output.get("observations", {})
             for obs_name, obs_data in observations.items():
                 if "error" in obs_data:
-                    print(f"  [{obs_name}] error: {obs_data['error']}")
+                    print(f"  [{obs_name}] error: {obs_data['error']}", flush=True)
                 else:
                     if obs_data.get("stdout"):
                         for line in obs_data["stdout"].splitlines():
-                            print(f"  [{obs_name}] {line}")
+                            print(f"  [{obs_name}] {line}", flush=True)
                     if obs_data.get("stderr"):
                         for line in obs_data["stderr"].splitlines():
-                            print(f"  [{obs_name}] (stderr) {line}")
+                            print(f"  [{obs_name}] (stderr) {line}", flush=True)
 
     def _log_error(self, module_name: str, result: ExecuteResult) -> None:
         """Log error in normal mode."""
-        print(f"[{module_name}] FAILED: {result.error}")
+        print(f"[{module_name}] FAILED: {result.error}", flush=True)
         observations = result.output.get("observations", {})
         for obs_name, obs_data in observations.items():
             if "error" in obs_data:
-                print(f"  [{obs_name}] error: {obs_data['error']}")
+                print(f"  [{obs_name}] error: {obs_data['error']}", flush=True)
             else:
                 if obs_data.get("stdout"):
                     for line in obs_data["stdout"].splitlines():
-                        print(f"  [{obs_name}] {line}")
+                        print(f"  [{obs_name}] {line}", flush=True)
                 if obs_data.get("stderr"):
                     for line in obs_data["stderr"].splitlines():
-                        print(f"  [{obs_name}] (stderr) {line}")
+                        print(f"  [{obs_name}] (stderr) {line}", flush=True)
 
     async def run_on(
         self,
@@ -1641,7 +1641,7 @@ class AutomationContext:
                 "output": replay_result.output,
             })
             if not self.quiet:
-                print(f"  ↩ {host.name}:{module_name}: replayed (skipped)")
+                print(f"  ↩ {host.name}:{module_name}: replayed (skipped)", flush=True)
             return replay_result
 
         # Record module for dependency tracking
@@ -2439,7 +2439,7 @@ class AutomationContext:
                 if text:
                     self._gate_modules = text.splitlines()
                     if not self.quiet:
-                        print(f"Loaded {len(self._gate_modules)} modules from {self._modules_file}")
+                        print(f"Loaded {len(self._gate_modules)} modules from {self._modules_file}", flush=True)
                 else:
                     self._gate_modules = None
             else:
@@ -2447,7 +2447,7 @@ class AutomationContext:
                 self._record_deps = True
                 self._gate_modules = None
                 if not self.quiet:
-                    print(f"No {self._modules_file} found, recording modules for next run")
+                    print(f"No {self._modules_file} found, recording modules for next run", flush=True)
         else:
             raise ValueError(
                 f"gate_modules must be a list, 'auto', or None, got: {self._gate_modules_input!r}"
@@ -2472,10 +2472,10 @@ class AutomationContext:
 
         # Print errors if enabled and any occurred
         if self._print_errors and self.failed and not self.quiet:
-            print(f"\nERRORS ({len(self.errors)}):")
+            print(f"\nERRORS ({len(self.errors)}):", flush=True)
             for error in self.errors:
                 host = getattr(error, "host", "localhost") or "localhost"
-                print(f"  {error.module} on {host}: {error.error}")
+                print(f"  {error.module} on {host}: {error.error}", flush=True)
 
         # Write recorded dependencies and module list if enabled
         if self._record_deps and self._recorded_modules:
@@ -2533,7 +2533,7 @@ class AutomationContext:
 
             self._deps_file.write_text("\n".join(lines) + "\n")
             if not self.quiet:
-                print(f"\nRecorded dependencies saved to {self._deps_file}")
+                print(f"\nRecorded dependencies saved to {self._deps_file}", flush=True)
 
     def _write_recorded_modules(self) -> None:
         """Write recorded module names to file for gate building.
@@ -2545,7 +2545,7 @@ class AutomationContext:
         lines = sorted(self._recorded_modules)
         self._modules_file.write_text("\n".join(lines) + "\n")
         if not self.quiet:
-            print(f"Recorded modules saved to {self._modules_file}")
+            print(f"Recorded modules saved to {self._modules_file}", flush=True)
 
     _SENSITIVE_HEADERS = frozenset({
         "authorization",
@@ -2626,7 +2626,7 @@ class AutomationContext:
         current_params = self._redact_params(module_name, params)
         if cached_params != current_params:
             if not self.quiet:
-                print(f"  ⚠ {module_name}: params changed, re-executing (not replaying)")
+                print(f"  ⚠ {module_name}: params changed, re-executing (not replaying)", flush=True)
             self._replay_actions = None  # Stop replaying from here
             return None
 
@@ -2698,7 +2698,7 @@ class AutomationContext:
 
         self._record_file.write_text(json.dumps(recording, indent=2) + "\n")
         if not self.quiet:
-            print(f"Audit recording saved to {self._record_file}")
+            print(f"Audit recording saved to {self._record_file}", flush=True)
 
     @staticmethod
     def _parse_requirement(req: str) -> tuple[str, str]:
@@ -2727,7 +2727,7 @@ class AutomationContext:
             else:
                 by_host[host]["ok"] += 1
 
-        print("\nSUMMARY:")
+        print("\nSUMMARY:", flush=True)
         for host, counts in by_host.items():
             total = counts["changed"] + counts["ok"] + counts["failed"]
             parts = []
@@ -2737,4 +2737,4 @@ class AutomationContext:
                 parts.append(f"{counts['ok']} ok")
             if counts["failed"]:
                 parts.append(f"{counts['failed']} failed")
-            print(f"  {host}: {total} tasks ({', '.join(parts)})")
+            print(f"  {host}: {total} tasks ({', '.join(parts)})", flush=True)

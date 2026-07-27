@@ -41,7 +41,7 @@ def main():
             "failed": True,
             "msg": f"Failed to parse JSON arguments: {e}",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     # Get required arguments
@@ -54,7 +54,7 @@ def main():
             "failed": True,
             "msg": "Missing required argument: path",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     if not state_arg:
@@ -62,7 +62,7 @@ def main():
             "failed": True,
             "msg": "Missing required argument: state",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     changed = False
@@ -79,7 +79,7 @@ def main():
                     "failed": True,
                     "msg": f"Path exists but is a directory: {path}",
                 }
-                print(json.dumps(result))
+                print(json.dumps(result), flush=True)
                 sys.exit(1)
 
         elif state_arg == "file":
@@ -89,14 +89,14 @@ def main():
                     "failed": True,
                     "msg": f"File does not exist: {path}",
                 }
-                print(json.dumps(result))
+                print(json.dumps(result), flush=True)
                 sys.exit(1)
             elif os.path.isdir(path):
                 result = {
                     "failed": True,
                     "msg": f"Path exists but is a directory: {path}",
                 }
-                print(json.dumps(result))
+                print(json.dumps(result), flush=True)
                 sys.exit(1)
 
         elif state_arg == "directory":
@@ -109,7 +109,7 @@ def main():
                     "failed": True,
                     "msg": f"Path exists but is not a directory: {path}",
                 }
-                print(json.dumps(result))
+                print(json.dumps(result), flush=True)
                 sys.exit(1)
 
         elif state_arg == "absent":
@@ -126,7 +126,7 @@ def main():
                 "failed": True,
                 "msg": f"Invalid state: {state_arg}. Must be one of: file, directory, touch, absent",
             }
-            print(json.dumps(result))
+            print(json.dumps(result), flush=True)
             sys.exit(1)
 
         # Set permissions if specified
@@ -145,7 +145,7 @@ def main():
             "state": state_arg,
         }
 
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(0)
 
     except Exception as e:
@@ -153,7 +153,7 @@ def main():
             "failed": True,
             "msg": f"Failed to manage file: {e}",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
 

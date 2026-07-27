@@ -69,7 +69,7 @@ if __name__ == "__main__":
             # FTL2-style: main(args) returns result dict
             result = main(args)
             if result is not None:
-                print(json.dumps(result))
+                print(json.dumps(result), flush=True)
         else:
             # Ansible-style: main() reads args from file via sys.argv[1]
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -85,7 +85,7 @@ if __name__ == "__main__":
                     pass
 
     except Exception as e:
-        print(json.dumps({"failed": True, "msg": str(e)}))
+        print(json.dumps({"failed": True, "msg": str(e)}), flush=True)
         sys.exit(1)
 '''
 

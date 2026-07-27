@@ -31,7 +31,7 @@ def main():
             "failed": True,
             "msg": f"Failed to parse JSON arguments: {e}",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     # Get the command
@@ -41,7 +41,7 @@ def main():
             "failed": True,
             "msg": "Missing required argument: cmd",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     # Execute the command
@@ -66,7 +66,7 @@ def main():
             result["failed"] = True
             result["msg"] = f"Command failed with return code {process.returncode}"
 
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(0 if process.returncode == 0 else 1)
 
     except subprocess.TimeoutExpired:
@@ -75,7 +75,7 @@ def main():
             "msg": "Command timed out after 300 seconds",
             "rc": -1,
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     except Exception as e:
@@ -84,7 +84,7 @@ def main():
             "msg": f"Failed to execute command: {e}",
             "rc": -1,
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
 

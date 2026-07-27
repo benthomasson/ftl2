@@ -29,7 +29,7 @@ def main():
             "failed": True,
             "msg": f"Failed to parse JSON arguments: {e}",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     # Get the data argument, default to "pong"
@@ -41,7 +41,7 @@ def main():
         "ping": data,
     }
 
-    print(json.dumps(result))
+    print(json.dumps(result), flush=True)
     sys.exit(0)
 
 

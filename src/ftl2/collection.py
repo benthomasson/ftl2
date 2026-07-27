@@ -62,10 +62,10 @@ def install_collection(
             info = json.loads(manifest.read_text())
             installed_ver = info.get("collection_info", {}).get("version", "unknown")
             if version and installed_ver == version:
-                print(f"{namespace}.{collection} {installed_ver} already installed (use --force to reinstall)")
+                print(f"{namespace}.{collection} {installed_ver} already installed (use --force to reinstall)", flush=True)
                 return CollectionInfo(namespace, collection, installed_ver, dest)
             if not version:
-                print(f"{namespace}.{collection} {installed_ver} already installed (use --force to reinstall)")
+                print(f"{namespace}.{collection} {installed_ver} already installed (use --force to reinstall)", flush=True)
                 return CollectionInfo(namespace, collection, installed_ver, dest)
 
     # Find version
@@ -94,7 +94,7 @@ def install_collection(
         download_url = version_data["download_url"]
         expected_sha256 = version_data.get("artifact", {}).get("sha256")
 
-        print(f"Downloading {namespace}.{collection} {version}...")
+        print(f"Downloading {namespace}.{collection} {version}...", flush=True)
         resp = client.get(download_url)
         resp.raise_for_status()
         tarball_bytes = resp.content
@@ -123,7 +123,7 @@ def install_collection(
                 continue
             tar.extract(member, dest, filter="data")
 
-    print(f"Installed {namespace}.{collection} {version} to {dest}")
+    print(f"Installed {namespace}.{collection} {version} to {dest}", flush=True)
     return CollectionInfo(namespace, collection, version, dest)
 
 

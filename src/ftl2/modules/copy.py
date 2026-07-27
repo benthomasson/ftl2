@@ -40,7 +40,7 @@ def main():
             "failed": True,
             "msg": f"Failed to parse JSON arguments: {e}",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     # Get arguments
@@ -54,7 +54,7 @@ def main():
             "failed": True,
             "msg": "Missing required argument: dest",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     if not src and not content:
@@ -62,7 +62,7 @@ def main():
             "failed": True,
             "msg": "Either 'src' or 'content' must be provided",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
     changed = False
@@ -102,7 +102,7 @@ def main():
                     "failed": True,
                     "msg": f"Source file not found: {src}",
                 }
-                print(json.dumps(result))
+                print(json.dumps(result), flush=True)
                 sys.exit(1)
 
             # Check if files are different
@@ -130,7 +130,7 @@ def main():
             "src": src if src else "<content>",
         }
 
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(0)
 
     except Exception as e:
@@ -138,7 +138,7 @@ def main():
             "failed": True,
             "msg": f"Failed to copy file: {e}",
         }
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         sys.exit(1)
 
 
