@@ -476,6 +476,7 @@ class TestNativeShell:
     @pytest.mark.asyncio
     async def test_shell_nonzero_exit_code(self, mock_context):
         """shell() captures non-zero exit codes."""
+        mock_context.fail_fast = False
         proxy = HostScopedProxy(mock_context, "localhost")
 
         result = await proxy.shell(cmd="exit 42")
@@ -489,6 +490,7 @@ class TestNativeShell:
         mock_context._results = []
         mock_context.verbose = False
         mock_context.quiet = True
+        mock_context.fail_fast = False
         proxy = HostScopedProxy(mock_context, "localhost")
 
         await proxy.shell(cmd="exit 1")
@@ -531,6 +533,34 @@ class TestNativeShell:
         assert result["changed"] is True
         assert "stdout_lines" in result
         assert len(result["stdout_lines"]) == 3
+
+
+    @pytest.mark.asyncio
+    async def test_shell_fail_fast_raises(self, mock_context):
+        """Non-zero rc raises AutomationError when fail_fast=True."""
+        from ftl2.automation import AutomationError
+
+        mock_context._results = []
+        mock_context.verbose = False
+        mock_context.quiet = True
+        mock_context.fail_fast = True
+        proxy = HostScopedProxy(mock_context, "localhost")
+
+        with pytest.raises(AutomationError, match="shell"):
+            await proxy.shell(cmd="exit 1")
+
+    @pytest.mark.asyncio
+    async def test_shell_fail_fast_false_no_raise(self, mock_context):
+        """Non-zero rc does not raise when fail_fast=False."""
+        mock_context._results = []
+        mock_context.verbose = False
+        mock_context.quiet = True
+        mock_context.fail_fast = False
+        proxy = HostScopedProxy(mock_context, "localhost")
+
+        result = await proxy.shell(cmd="exit 1")
+        assert result["rc"] == 1
+        assert len(mock_context._results) == 1
 
 
 class TestShellShadowed:

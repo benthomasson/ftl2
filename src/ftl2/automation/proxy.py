@@ -300,6 +300,17 @@ class HostScopedProxy:
             self._context._log_result(
                 f"{self._target}:{module_name}", exec_result, duration
             )
+        elif not self._context.quiet and not exec_result.success:
+            self._context._log_error(
+                f"{self._target}:{module_name}", exec_result
+            )
+
+        if self._context.fail_fast and not exec_result.success:
+            from ftl2.automation import AutomationError
+            raise AutomationError(
+                f"Module '{module_name}' failed on {self._target}: {exec_result.error}",
+                result=exec_result,
+            )
 
     async def copy(
         self,
