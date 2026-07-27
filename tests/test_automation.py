@@ -256,7 +256,7 @@ class TestAutomationContext:
         context = AutomationContext()
 
         assert context.check_mode is False
-        assert context.verbose is False
+        assert context.verbose is True
         assert context._enabled_modules is None
 
     def test_context_init_with_options(self):
@@ -1162,13 +1162,13 @@ class TestOutputModes:
         """Test output_mode property returns correct mode."""
         from ftl2.automation import OutputMode
 
-        # Normal mode
+        # Default is now verbose
         context1 = AutomationContext()
-        assert context1.output_mode == OutputMode.NORMAL
+        assert context1.output_mode == OutputMode.VERBOSE
 
-        # Verbose mode
-        context2 = AutomationContext(verbose=True)
-        assert context2.output_mode == OutputMode.VERBOSE
+        # Explicit verbose=False gives normal mode
+        context2 = AutomationContext(verbose=False)
+        assert context2.output_mode == OutputMode.NORMAL
 
         # Quiet mode
         context3 = AutomationContext(quiet=True)
@@ -1182,7 +1182,7 @@ class TestOutputModes:
     async def test_normal_mode_shows_errors(self, capsys):
         """Test that normal mode shows errors but not successes."""
         with tempfile.TemporaryDirectory():
-            async with automation() as ftl:
+            async with automation(verbose=False) as ftl:
                 # This should succeed - no output in normal mode
                 await ftl.command(cmd="echo hello")
 
@@ -1204,6 +1204,85 @@ class TestOutputModes:
         # events[0] is policy_evaluation, events[1] is module_start, events[2] is module_complete
         assert events[1]["check_mode"] is True
         assert events[2]["check_mode"] is True
+
+
+class TestLogFile:
+    """Tests for log_file parameter (Python logging configuration)."""
+
+    def test_log_file_default_configures_logging(self, tmp_path, monkeypatch):
+        """Default log_file='ftl2.log' sets up file handler on ftl2 logger."""
+        monkeypatch.chdir(tmp_path)
+        context = AutomationContext()
+        log_path = tmp_path / "ftl2.log"
+        import logging
+        logger = logging.getLogger("ftl2.test_log_file_default")
+        logger.debug("test message")
+        assert log_path.exists()
+        content = log_path.read_text()
+        assert "test message" in content
+        del context
+
+    def test_log_file_none_skips_logging(self, tmp_path, monkeypatch):
+        """log_file=None does not add a file handler."""
+        monkeypatch.chdir(tmp_path)
+        import logging
+        ftl2_logger = logging.getLogger("ftl2")
+        handler_count_before = len(ftl2_logger.handlers)
+        _context = AutomationContext(log_file=None)
+        handler_count_after = len(ftl2_logger.handlers)
+        assert handler_count_after == handler_count_before
+        assert not (tmp_path / "ftl2.log").exists()
+        del _context
+
+    def test_log_file_custom_path(self, tmp_path):
+        """log_file accepts a custom path."""
+        log_path = tmp_path / "custom.log"
+        context = AutomationContext(log_file=str(log_path))
+        import logging
+        logger = logging.getLogger("ftl2.test_custom_path")
+        logger.debug("custom log test")
+        assert log_path.exists()
+        assert "custom log test" in log_path.read_text()
+        del context
+
+    def test_log_file_idempotent(self, tmp_path):
+        """Multiple contexts don't stack file handlers."""
+        import logging
+        log_path = tmp_path / "test.log"
+        _ctx1 = AutomationContext(log_file=str(log_path))
+        _ctx2 = AutomationContext(log_file=str(log_path))
+        _ctx3 = AutomationContext(log_file=str(log_path))
+        ftl2_logger = logging.getLogger("ftl2")
+        file_handlers = [h for h in ftl2_logger.handlers if getattr(h, "_ftl2_log_file", False)]
+        assert len(file_handlers) == 1
+        del _ctx1, _ctx2, _ctx3
+
+    @pytest.mark.asyncio
+    async def test_log_file_via_automation(self, tmp_path, monkeypatch):
+        """log_file works through the automation() context manager."""
+        monkeypatch.chdir(tmp_path)
+        async with automation(log_file=str(tmp_path / "test.log")) as ftl:
+            await ftl.command(cmd="echo logged")
+        assert (tmp_path / "test.log").exists()
+
+    @pytest.mark.asyncio
+    async def test_log_file_cleaned_up_on_exit(self, tmp_path):
+        """File handler is removed and closed on context exit."""
+        import logging
+        log_path = tmp_path / "cleanup.log"
+        async with automation(log_file=str(log_path)) as ftl:
+            await ftl.command(cmd="echo test")
+        ftl2_logger = logging.getLogger("ftl2")
+        file_handlers = [h for h in ftl2_logger.handlers if getattr(h, "_ftl2_log_file", False)]
+        assert len(file_handlers) == 0
+
+    @pytest.mark.asyncio
+    async def test_log_file_none_via_automation(self, tmp_path, monkeypatch):
+        """log_file=None disables logging through automation()."""
+        monkeypatch.chdir(tmp_path)
+        async with automation(log_file=None) as ftl:
+            await ftl.command(cmd="echo not logged")
+        assert not (tmp_path / "ftl2.log").exists()
 
 
 class TestSecretBindings:
@@ -1356,15 +1435,15 @@ class TestErrorHandling:
         context = AutomationContext()
         assert context.error_messages == []
 
-    def test_fail_fast_defaults_false(self):
-        """Test that fail_fast defaults to False."""
+    def test_fail_fast_defaults_true(self):
+        """Test that fail_fast defaults to True."""
         context = AutomationContext()
-        assert context.fail_fast is False
-
-    def test_fail_fast_can_be_enabled(self):
-        """Test that fail_fast can be enabled."""
-        context = AutomationContext(fail_fast=True)
         assert context.fail_fast is True
+
+    def test_fail_fast_can_be_disabled(self):
+        """Test that fail_fast can be disabled."""
+        context = AutomationContext(fail_fast=False)
+        assert context.fail_fast is False
 
     @pytest.mark.asyncio
     async def test_failed_after_success(self):
@@ -1384,9 +1463,9 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_continue_after_error(self):
-        """Test that execution continues after error by default."""
+        """Test that execution continues after error when fail_fast=False."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            async with automation() as ftl:
+            async with automation(fail_fast=False) as ftl:
                 # This should work
                 await ftl.file(path=f"{tmpdir}/test.txt", state="touch")
                 # Run another command
@@ -1478,8 +1557,8 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_fail_fast_via_automation_function(self):
-        """Test fail_fast parameter in automation() function."""
-        async with automation(fail_fast=True) as ftl:
+        """Test fail_fast defaults to True in automation() function."""
+        async with automation() as ftl:
             assert ftl.fail_fast is True
 
     @pytest.mark.asyncio

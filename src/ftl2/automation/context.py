@@ -269,10 +269,10 @@ class AutomationContext:
         secrets: list[str] | None = None,
         secret_bindings: dict[str, dict[str, str]] | None = None,
         check_mode: bool = False,
-        verbose: bool = False,
+        verbose: bool = True,
         quiet: bool = False,
         on_event: EventCallback | None = None,
-        fail_fast: bool = False,
+        fail_fast: bool = True,
         print_summary: bool = True,
         print_errors: bool = True,
         auto_install_deps: bool = False,
@@ -284,6 +284,7 @@ class AutomationContext:
         gate_subsystem: bool = False,
         state_file: str | Path | None = ".ftl2-state.json",
         import_state_files: list[str | Path] | None = None,
+        log_file: str | Path | None = "ftl2.log",
         record: str | Path | None = None,
         replay: str | Path | None = None,
         vault_secrets: dict[str, str] | None = None,
@@ -326,8 +327,8 @@ class AutomationContext:
             on_event: Callback function for structured events. Receives dict
                 with keys: event, module, host, timestamp, and event-specific data.
             fail_fast: Stop execution on first error. When True, raises
-                AutomationError on first module failure. Default is False
-                (continue and collect errors).
+                AutomationError on first module failure. Default is True.
+                Pass fail_fast=False to collect errors instead.
             print_summary: Print per-host summary on context exit. Default is True.
                 Shows counts of changed/ok/failed tasks per host.
             print_errors: Print error summary on context exit. Default is True.
@@ -393,6 +394,23 @@ class AutomationContext:
         self._secrets_proxy = SecretsProxy(secrets or [], vault_secrets=vault_secrets)
         self._secret_bindings = secret_bindings or {}
         self._load_bound_secrets()
+        if log_file is not None:
+            from ftl2.logging import DEBUG_FORMAT
+            ftl2_logger = logging.getLogger("ftl2")
+            for h in ftl2_logger.handlers[:]:
+                if getattr(h, "_ftl2_log_file", False):
+                    ftl2_logger.removeHandler(h)
+                    h.close()
+            log_path = Path(log_file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(log_path)
+            handler.setLevel(logging.DEBUG)
+            handler.setFormatter(logging.Formatter(DEBUG_FORMAT))
+            handler._ftl2_log_file = True  # type: ignore[attr-defined]
+            ftl2_logger.addHandler(handler)
+            ftl2_logger.setLevel(logging.DEBUG)
+            if not quiet:
+                print(f"Logging to {log_path.resolve()}")
         self.check_mode = check_mode
         self.verbose = verbose and not quiet
         self.quiet = quiet
@@ -2473,6 +2491,12 @@ class AutomationContext:
             await self._remote_runner.close_all()
 
         await self._close_ssh_connections()
+
+        ftl2_logger = logging.getLogger("ftl2")
+        for h in ftl2_logger.handlers[:]:
+            if getattr(h, "_ftl2_log_file", False):
+                ftl2_logger.removeHandler(h)
+                h.close()
 
     def _write_recorded_deps(self) -> None:
         """Write recorded module dependencies to file.

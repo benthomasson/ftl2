@@ -108,13 +108,13 @@ async def example_output_modes():
     print("Example 5: Output Mode Property")
     print("=" * 60)
 
-    # Normal mode (default)
+    # Verbose mode (default)
     context1 = AutomationContext()
     print(f"Default: {context1.output_mode}")
 
-    # Verbose mode
-    context2 = AutomationContext(verbose=True)
-    print(f"Verbose: {context2.output_mode}")
+    # Normal mode
+    context2 = AutomationContext(verbose=False)
+    print(f"Normal: {context2.output_mode}")
 
     # Quiet mode
     context3 = AutomationContext(quiet=True)
@@ -156,16 +156,16 @@ async def example_verbose_vs_normal():
     print("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        print("\nNormal mode (errors only):")
+        print("\nVerbose mode (default):")
         async with automation() as ftl:
             await ftl.file(path=f"{tmpdir}/test.txt", state="touch")
             await ftl.command(cmd="echo 'hello'")
-        print("  (no output for successful operations)")
 
-        print("\nVerbose mode:")
-        async with automation(verbose=True) as ftl:
+        print("\nNormal mode (errors only):")
+        async with automation(verbose=False) as ftl:
             await ftl.file(path=f"{tmpdir}/test2.txt", state="touch")
             await ftl.command(cmd="echo 'hello'")
+        print("  (no output for successful operations)")
 
 
 async def example_custom_progress_display():
@@ -211,7 +211,8 @@ async def main():
     print("All examples completed!")
     print("=" * 60)
     print("\nKey takeaways:")
-    print("- verbose=True: Show all operations with timing")
+    print("- Default: verbose=True shows all operations with timing")
+    print("- verbose=False: Only show errors (normal mode)")
     print("- quiet=True: Suppress all output (for scripts)")
     print("- on_event=callback: Receive structured events")
     print("- Events include: module_start, module_complete")

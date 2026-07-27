@@ -59,10 +59,10 @@ async def automation(
     secrets: list[str] | None = None,
     secret_bindings: dict[str, dict[str, str]] | None = None,
     check_mode: bool = False,
-    verbose: bool = False,
+    verbose: bool = True,
     quiet: bool = False,
     on_event: EventCallback | None = None,
-    fail_fast: bool = False,
+    fail_fast: bool = True,
     print_summary: bool = True,
     print_errors: bool = True,
     auto_install_deps: bool = False,
@@ -81,6 +81,7 @@ async def automation(
     environment: str = "",
     policy_audit: str | None = None,
     ignore_missing_inventory: bool = True,
+    log_file: str | None = "ftl2.log",
 ) -> AsyncGenerator[AutomationContext]:
     """Create an automation context for running FTL modules.
 
@@ -113,8 +114,8 @@ async def automation(
                  event ("module_start" or "module_complete"), module, host,
                  timestamp, and event-specific data (success, changed, duration).
         fail_fast: Stop execution on first error. Raises AutomationError
-                  immediately when a module fails. Default is False (continue
-                  and collect errors in ftl.errors).
+                  immediately when a module fails. Default is True. Pass
+                  fail_fast=False to collect errors in ftl.errors instead.
         print_summary: Print per-host summary on context exit. Default is True.
                       Shows counts of changed/ok/failed tasks per host.
         print_errors: Print error summary on context exit. Default is True.
@@ -164,6 +165,9 @@ async def automation(
                 Each policy evaluation (permitted or denied) is appended as a
                 JSON line immediately after evaluation. Crash-safe — survives
                 process termination. Default is None.
+        log_file: Path to log file for Python logging at DEBUG level.
+                Default is "ftl2.log". Pass None to disable automatic
+                logging configuration.
 
     Yields:
         AutomationContext with ftl.module_name() access to all modules
@@ -218,22 +222,22 @@ async def automation(
             await ftl.file(path="/tmp/test", state="touch")
         print(f"Collected {len(events)} events")
 
+        # Error handling - fail fast (default)
+        try:
+            async with automation() as ftl:
+                await ftl.file(path="/nonexistent/path", state="touch")
+                # Raises AutomationError, stops here
+        except AutomationError as e:
+            print(f"Failed: {e}")
+
         # Error handling - collect and inspect
-        async with automation() as ftl:
+        async with automation(fail_fast=False) as ftl:
             await ftl.file(path="/nonexistent/path", state="touch")  # May fail
             await ftl.file(path="/tmp/test", state="touch")  # Still runs
 
             if ftl.failed:
                 for error in ftl.errors:
                     print(f"Error in {error.module}: {error.error}")
-
-        # Error handling - fail fast
-        try:
-            async with automation(fail_fast=True) as ftl:
-                await ftl.file(path="/nonexistent/path", state="touch")
-                # Raises AutomationError, stops here
-        except AutomationError as e:
-            print(f"Failed: {e}")
 
         # Secret bindings - inject secrets without script access
         async with automation(
@@ -270,6 +274,7 @@ async def automation(
         gate_subsystem=gate_subsystem,
         state_file=state_file,
         import_state_files=import_state_files,
+        log_file=log_file,
         record=record,
         replay=replay,
         vault_secrets=vault_secrets,

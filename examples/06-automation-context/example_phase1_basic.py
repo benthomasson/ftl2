@@ -97,8 +97,8 @@ async def example_verbose_mode():
     with tempfile.TemporaryDirectory() as tmpdir:
         test_file = Path(tmpdir) / "verbose_test.txt"
 
-        print("Running with verbose=True:")
-        async with automation(verbose=True) as ftl:
+        print("Running with verbose output (default):")
+        async with automation() as ftl:
             await ftl.file(path=str(test_file), state="touch")
             await ftl.command(cmd="echo 'verbose output'")
 

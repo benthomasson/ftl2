@@ -2308,6 +2308,7 @@ def exec_cmd(
             print_summary=False,
             print_errors=False,
             state_file=None,
+            log_file=None,
         ) as ftl:
             results = await ftl.run_on(
                 host_list,
