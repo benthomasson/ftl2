@@ -99,13 +99,13 @@ async def example_error_messages():
 
 
 async def example_continue_on_error():
-    """Continue execution after errors (default behavior)."""
+    """Continue execution after errors with fail_fast=False."""
     print("\n" + "=" * 60)
-    print("Example 4: Continue on Error (Default)")
+    print("Example 4: Continue on Error (fail_fast=False)")
     print("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        async with automation(quiet=True) as ftl:
+        async with automation(quiet=True, fail_fast=False) as ftl:
             # All of these will execute regardless of individual failures
             await ftl.file(path=f"{tmpdir}/file1.txt", state="touch")
             await ftl.command(cmd="echo 'Step 2'")
@@ -122,20 +122,20 @@ async def example_continue_on_error():
 
 
 async def example_fail_fast():
-    """Stop immediately on first error."""
+    """Stop immediately on first error (default behavior)."""
     print("\n" + "=" * 60)
-    print("Example 5: Fail Fast Mode")
+    print("Example 5: Fail Fast Mode (Default)")
     print("=" * 60)
 
-    print("With fail_fast=True, execution stops on first error")
+    print("By default, execution stops on first error")
     print("(In this example, we simulate with a context check)")
 
-    context = AutomationContext(fail_fast=True)
+    context = AutomationContext()
     print(f"fail_fast enabled: {context.fail_fast}")
 
     # Note: In real usage, AutomationError would be raised:
     # try:
-    #     async with automation(fail_fast=True) as ftl:
+    #     async with automation() as ftl:
     #         await ftl.some_failing_module(...)  # Raises AutomationError
     # except AutomationError as e:
     #     print(f"Failed: {e}")
@@ -175,8 +175,8 @@ async def example_error_handling_pattern():
     print("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        async with automation(quiet=True) as ftl:
-            # Execute operations
+        async with automation(quiet=True, fail_fast=False) as ftl:
+            # Execute operations (fail_fast=False to collect all errors)
             await ftl.file(path=f"{tmpdir}/config", state="directory")
             await ftl.file(path=f"{tmpdir}/config/app.yml", state="touch")
             await ftl.command(cmd="echo 'Configuration complete'")
@@ -257,8 +257,8 @@ async def main():
     print("- ftl.failed: True if any module failed")
     print("- ftl.errors: List of failed ExecuteResult objects")
     print("- ftl.error_messages: List of error message strings")
-    print("- fail_fast=True: Stop on first error (raises AutomationError)")
-    print("- Default: Continue execution, collect all errors")
+    print("- Default: fail_fast=True stops on first error (raises AutomationError)")
+    print("- fail_fast=False: Continue execution, collect all errors")
     print("- Check ftl.failed after execution for overall status")
 
 
