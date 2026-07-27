@@ -1210,7 +1210,7 @@ class TestLogFile:
     """Tests for log_file parameter (Python logging configuration)."""
 
     def test_log_file_default_configures_logging(self, tmp_path, monkeypatch):
-        """Default log_file='ftl2.log' sets up file handler."""
+        """Default log_file='ftl2.log' sets up file handler on ftl2 logger."""
         monkeypatch.chdir(tmp_path)
         context = AutomationContext()
         log_path = tmp_path / "ftl2.log"
@@ -1223,14 +1223,14 @@ class TestLogFile:
         del context
 
     def test_log_file_none_skips_logging(self, tmp_path, monkeypatch):
-        """log_file=None skips logging configuration."""
+        """log_file=None does not add a file handler."""
         monkeypatch.chdir(tmp_path)
         import logging
-        root = logging.getLogger()
-        handler_count_before = len(root.handlers)
+        ftl2_logger = logging.getLogger("ftl2")
+        handler_count_before = len(ftl2_logger.handlers)
         _context = AutomationContext(log_file=None)
-        handler_count_after = len(root.handlers)
-        assert handler_count_after <= handler_count_before + 1
+        handler_count_after = len(ftl2_logger.handlers)
+        assert handler_count_after == handler_count_before
         assert not (tmp_path / "ftl2.log").exists()
         del _context
 
@@ -1244,6 +1244,18 @@ class TestLogFile:
         assert log_path.exists()
         assert "custom log test" in log_path.read_text()
         del context
+
+    def test_log_file_idempotent(self, tmp_path):
+        """Multiple contexts don't stack file handlers."""
+        import logging
+        log_path = tmp_path / "test.log"
+        _ctx1 = AutomationContext(log_file=str(log_path))
+        _ctx2 = AutomationContext(log_file=str(log_path))
+        _ctx3 = AutomationContext(log_file=str(log_path))
+        ftl2_logger = logging.getLogger("ftl2")
+        file_handlers = [h for h in ftl2_logger.handlers if getattr(h, "_ftl2_log_file", False)]
+        assert len(file_handlers) == 1
+        del _ctx1, _ctx2, _ctx3
 
     @pytest.mark.asyncio
     async def test_log_file_via_automation(self, tmp_path, monkeypatch):

@@ -395,8 +395,20 @@ class AutomationContext:
         self._secret_bindings = secret_bindings or {}
         self._load_bound_secrets()
         if log_file is not None:
-            from ftl2.logging import configure_logging
-            configure_logging(log_file=log_file, file_level=logging.DEBUG)
+            from ftl2.logging import DEBUG_FORMAT
+            ftl2_logger = logging.getLogger("ftl2")
+            for h in ftl2_logger.handlers[:]:
+                if getattr(h, "_ftl2_log_file", False):
+                    ftl2_logger.removeHandler(h)
+                    h.close()
+            log_path = Path(log_file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(log_path)
+            handler.setLevel(logging.DEBUG)
+            handler.setFormatter(logging.Formatter(DEBUG_FORMAT))
+            handler._ftl2_log_file = True  # type: ignore[attr-defined]
+            ftl2_logger.addHandler(handler)
+            ftl2_logger.setLevel(logging.DEBUG)
         self.check_mode = check_mode
         self.verbose = verbose and not quiet
         self.quiet = quiet
