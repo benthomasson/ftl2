@@ -409,6 +409,8 @@ class AutomationContext:
             handler._ftl2_log_file = True  # type: ignore[attr-defined]
             ftl2_logger.addHandler(handler)
             ftl2_logger.setLevel(logging.DEBUG)
+            if not quiet:
+                print(f"Logging to {log_path.resolve()}")
         self.check_mode = check_mode
         self.verbose = verbose and not quiet
         self.quiet = quiet
