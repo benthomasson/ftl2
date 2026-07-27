@@ -1266,6 +1266,17 @@ class TestLogFile:
         assert (tmp_path / "test.log").exists()
 
     @pytest.mark.asyncio
+    async def test_log_file_cleaned_up_on_exit(self, tmp_path):
+        """File handler is removed and closed on context exit."""
+        import logging
+        log_path = tmp_path / "cleanup.log"
+        async with automation(log_file=str(log_path)) as ftl:
+            await ftl.command(cmd="echo test")
+        ftl2_logger = logging.getLogger("ftl2")
+        file_handlers = [h for h in ftl2_logger.handlers if getattr(h, "_ftl2_log_file", False)]
+        assert len(file_handlers) == 0
+
+    @pytest.mark.asyncio
     async def test_log_file_none_via_automation(self, tmp_path, monkeypatch):
         """log_file=None disables logging through automation()."""
         monkeypatch.chdir(tmp_path)

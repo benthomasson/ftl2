@@ -114,8 +114,8 @@ async def automation(
                  event ("module_start" or "module_complete"), module, host,
                  timestamp, and event-specific data (success, changed, duration).
         fail_fast: Stop execution on first error. Raises AutomationError
-                  immediately when a module fails. Default is False (continue
-                  and collect errors in ftl.errors).
+                  immediately when a module fails. Default is True. Pass
+                  fail_fast=False to collect errors in ftl.errors instead.
         print_summary: Print per-host summary on context exit. Default is True.
                       Shows counts of changed/ok/failed tasks per host.
         print_errors: Print error summary on context exit. Default is True.
@@ -222,22 +222,22 @@ async def automation(
             await ftl.file(path="/tmp/test", state="touch")
         print(f"Collected {len(events)} events")
 
+        # Error handling - fail fast (default)
+        try:
+            async with automation() as ftl:
+                await ftl.file(path="/nonexistent/path", state="touch")
+                # Raises AutomationError, stops here
+        except AutomationError as e:
+            print(f"Failed: {e}")
+
         # Error handling - collect and inspect
-        async with automation() as ftl:
+        async with automation(fail_fast=False) as ftl:
             await ftl.file(path="/nonexistent/path", state="touch")  # May fail
             await ftl.file(path="/tmp/test", state="touch")  # Still runs
 
             if ftl.failed:
                 for error in ftl.errors:
                     print(f"Error in {error.module}: {error.error}")
-
-        # Error handling - fail fast
-        try:
-            async with automation(fail_fast=True) as ftl:
-                await ftl.file(path="/nonexistent/path", state="touch")
-                # Raises AutomationError, stops here
-        except AutomationError as e:
-            print(f"Failed: {e}")
 
         # Secret bindings - inject secrets without script access
         async with automation(

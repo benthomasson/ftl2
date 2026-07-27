@@ -327,8 +327,8 @@ class AutomationContext:
             on_event: Callback function for structured events. Receives dict
                 with keys: event, module, host, timestamp, and event-specific data.
             fail_fast: Stop execution on first error. When True, raises
-                AutomationError on first module failure. Default is False
-                (continue and collect errors).
+                AutomationError on first module failure. Default is True.
+                Pass fail_fast=False to collect errors instead.
             print_summary: Print per-host summary on context exit. Default is True.
                 Shows counts of changed/ok/failed tasks per host.
             print_errors: Print error summary on context exit. Default is True.
@@ -2489,6 +2489,12 @@ class AutomationContext:
             await self._remote_runner.close_all()
 
         await self._close_ssh_connections()
+
+        ftl2_logger = logging.getLogger("ftl2")
+        for h in ftl2_logger.handlers[:]:
+            if getattr(h, "_ftl2_log_file", False):
+                ftl2_logger.removeHandler(h)
+                h.close()
 
     def _write_recorded_deps(self) -> None:
         """Write recorded module dependencies to file.
