@@ -83,6 +83,7 @@ def main(
             click.echo(f"Loaded {len(file_modules)} modules from {from_modules_file}")
 
     if all_modules:
+        count_before = len(modules)
         builtin_modules_dir = Path(__file__).parent / "modules"
         for p in sorted(builtin_modules_dir.glob("*.py")):
             if not p.name.startswith("_"):
@@ -90,7 +91,7 @@ def main(
         from ftl2.ftl_modules.executor import _FTL_MODULE_FILES
         for name in _FTL_MODULE_FILES:
             modules.append(name)
-        click.echo(f"Auto-discovered {len(modules)} modules (--all-modules)")
+        click.echo(f"Auto-discovered {len(modules) - count_before} modules (--all-modules)")
 
     if not modules:
         raise click.ClickException("No modules specified. Use -m, -f, or --all-modules.")

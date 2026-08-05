@@ -347,7 +347,7 @@ class GateBuilder:
                         logger.debug(f"Installed FTL module {module} to {ftl_dir}")
                         continue
                 except Exception as ftl_err:
-                    logger.warning(f"FTL module {module} found in registry but failed to load: {ftl_err}")
+                    logger.warning(f"Failed to load FTL module {module}: {ftl_err}")
                     continue
                 # Neither Ansible nor FTL — skip it
                 logger.debug(f"Skipping {module}: not found as Ansible or FTL module ({e})")
