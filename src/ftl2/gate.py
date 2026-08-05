@@ -346,8 +346,9 @@ class GateBuilder:
                         (ftl_dir / f"{module}.py").write_bytes(ftl_source)
                         logger.debug(f"Installed FTL module {module} to {ftl_dir}")
                         continue
-                except Exception:
-                    pass
+                except Exception as ftl_err:
+                    logger.warning(f"Failed to load FTL module {module}: {ftl_err}")
+                    continue
                 # Neither Ansible nor FTL — skip it
                 logger.debug(f"Skipping {module}: not found as Ansible or FTL module ({e})")
                 continue
