@@ -1483,7 +1483,15 @@ class AutomationContext:
         if result.error:
             print(f"  Error: {result.error}", flush=True)
         if not result.success:
-            observations = result.output.get("observations", {})
+            output = result.output
+            if output.get("cmd"):
+                print(f"  Command: {output['cmd']}", flush=True)
+            if "rc" in output and output["rc"] != 0:
+                print(f"  Exit code: {output['rc']}", flush=True)
+            if output.get("stderr", "").strip():
+                for line in output["stderr"].strip().splitlines()[:20]:
+                    print(f"  stderr: {line}", flush=True)
+            observations = output.get("observations", {})
             for obs_name, obs_data in observations.items():
                 if "error" in obs_data:
                     print(f"  [{obs_name}] error: {obs_data['error']}", flush=True)
@@ -1498,6 +1506,14 @@ class AutomationContext:
     def _log_error(self, module_name: str, result: ExecuteResult) -> None:
         """Log error in normal mode."""
         print(f"[{module_name}] FAILED: {result.error}", flush=True)
+        output = result.output
+        if output.get("cmd"):
+            print(f"  Command: {output['cmd']}", flush=True)
+        if "rc" in output and output["rc"] != 0:
+            print(f"  Exit code: {output['rc']}", flush=True)
+        if output.get("stderr", "").strip():
+            for line in output["stderr"].strip().splitlines()[:20]:
+                print(f"  stderr: {line}", flush=True)
         observations = result.output.get("observations", {})
         for obs_name, obs_data in observations.items():
             if "error" in obs_data:

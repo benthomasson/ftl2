@@ -292,6 +292,13 @@ class HostScopedProxy:
             duration=duration,
             timestamp=start_time,
         )
+        if not exec_result.success:
+            error_msg = result.get("msg", "") or result.get("error", "")
+            if not error_msg:
+                error_msg = result.get("stderr", "").strip()
+            if not error_msg and result.get("rc", 0) != 0:
+                error_msg = f"exit code {result['rc']}"
+            exec_result.error = error_msg
         if params is not None:
             exec_result.params = params
         self._context._results.append(exec_result)

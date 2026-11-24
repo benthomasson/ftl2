@@ -59,6 +59,7 @@ def main():
             "stdout": process.stdout,
             "stderr": process.stderr,
             "rc": process.returncode,
+            "cmd": cmd,
         }
 
         # If command failed, mark as failed

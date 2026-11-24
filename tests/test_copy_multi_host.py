@@ -46,6 +46,7 @@ def _make_context_with_hosts(host_configs):
     ctx._get_ssh_connection = AsyncMock()
     ctx.verbose = False
     ctx.quiet = True
+    ctx.fail_fast = False
     return ctx
 
 
