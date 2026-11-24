@@ -1475,7 +1475,12 @@ class AutomationContext:
         self, module_name: str, result: ExecuteResult, duration: float | None = None
     ) -> None:
         """Log execution result in verbose mode."""
-        status = "ok" if result.success else "FAILED"
+        if result.success:
+            status = "ok"
+        elif result.output.get("timed_out"):
+            status = "TIMED OUT"
+        else:
+            status = "FAILED"
         changed = " (changed)" if result.changed else ""
         check = " [CHECK MODE]" if self.check_mode else ""
         timing = f" ({duration:.2f}s)" if duration is not None else ""
@@ -1505,7 +1510,8 @@ class AutomationContext:
 
     def _log_error(self, module_name: str, result: ExecuteResult) -> None:
         """Log error in normal mode."""
-        print(f"[{module_name}] FAILED: {result.error}", flush=True)
+        label = "TIMED OUT" if result.output.get("timed_out") else "FAILED"
+        print(f"[{module_name}] {label}: {result.error}", flush=True)
         output = result.output
         if output.get("cmd"):
             print(f"  Command: {output['cmd']}", flush=True)

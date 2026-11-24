@@ -106,6 +106,7 @@ def ftl_command(
             f"Command timed out after {timeout}s",
             cmd=cmd,
             timeout=timeout,
+            timed_out=True,
         ) from None
     except FTLModuleError:
         raise

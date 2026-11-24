@@ -44,6 +44,8 @@ def main():
         print(json.dumps(result), flush=True)
         sys.exit(1)
 
+    timeout = args.get("timeout", 300)
+
     # Execute the command
     try:
         process = subprocess.run(
@@ -51,7 +53,7 @@ def main():
             shell=True,
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minute timeout
+            timeout=timeout,
         )
 
         result = {
@@ -65,7 +67,7 @@ def main():
         # If command failed, mark as failed
         if process.returncode != 0:
             result["failed"] = True
-            result["msg"] = f"Command failed with return code {process.returncode}"
+            result["msg"] = f"Command failed with exit code {process.returncode}"
 
         print(json.dumps(result), flush=True)
         sys.exit(0 if process.returncode == 0 else 1)
@@ -73,7 +75,9 @@ def main():
     except subprocess.TimeoutExpired:
         result = {
             "failed": True,
-            "msg": "Command timed out after 300 seconds",
+            "timed_out": True,
+            "msg": f"Command timed out after {timeout}s",
+            "cmd": cmd,
             "rc": -1,
         }
         print(json.dumps(result), flush=True)

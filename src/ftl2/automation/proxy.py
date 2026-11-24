@@ -815,13 +815,29 @@ class HostScopedProxy:
                 return result
 
             # Build and execute locally
-            proc = subprocess.run(
-                [executable, "-c", cmd],
-                cwd=chdir,
-                input=stdin,
-                capture_output=True,
-                text=True,
-            )
+            try:
+                proc = subprocess.run(
+                    [executable, "-c", cmd],
+                    cwd=chdir,
+                    input=stdin,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                result = {
+                    "changed": False,
+                    "failed": True,
+                    "timed_out": True,
+                    "stdout": exc.stdout or "",
+                    "stderr": exc.stderr or "",
+                    "rc": -1,
+                    "cmd": cmd,
+                    "msg": f"Command timed out after {timeout}s",
+                    "delta": time.time() - start_time,
+                }
+                self._track_result("shell", result, start_time)
+                return result
 
             result = {
                 "changed": True,
@@ -896,8 +912,9 @@ class HostScopedProxy:
             run_kwargs["timeout"] = timeout
         stdout, stderr, rc = await ssh.run(full_cmd, **run_kwargs)
 
+        timed_out = rc == -1 and "timed out" in stderr
         result = {
-            "changed": True,
+            "changed": not timed_out,
             "stdout": stdout,
             "stderr": stderr,
             "rc": rc,
@@ -905,6 +922,10 @@ class HostScopedProxy:
             "stdout_lines": stdout.splitlines(),
             "stderr_lines": stderr.splitlines(),
         }
+        if timed_out:
+            result["failed"] = True
+            result["timed_out"] = True
+            result["msg"] = f"Command timed out after {timeout or 3600}s"
         self._track_result("shell", result, start_time)
         return result
 
